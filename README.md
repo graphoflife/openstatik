@@ -71,4 +71,5 @@ Normbezüge und Tabellenwerte (z.B. Mauerwerksfestigkeiten) sind vor der Verwend
 
 ## Lizenz
 
-Noch nicht festgelegt. Vor einer öffentlichen Weitergabe eine Lizenz wählen (z.B. MIT) und als `LICENSE` ablegen.
+Open Source unter der [MIT-Lizenz](LICENSE): Nutzung, Änderung und Weitergabe sind frei erlaubt, solange der
+Copyright-Hinweis erhalten bleibt. Die Software wird ohne jede Gewährleistung bereitgestellt (siehe Haftungsausschluss).
