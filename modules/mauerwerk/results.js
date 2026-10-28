@@ -3,6 +3,7 @@ import { h, stats, checksTable, summaryCard, note, kvTable, resultTable, tabs, f
 import { chartBox } from '../../js/core/chart.js';
 import { buildStrip, bucklingFactor, phiMidEN, shearSIA, shearEN } from './calc.js';
 import { pickCombo } from './view.js';
+import { DERIV_OF } from './derivation.js';
 
 const state = { tab: 'over' };
 
@@ -19,6 +20,7 @@ export function ensureStyle() {
 .mw-verdict.fail { background: var(--fail-soft); color: var(--fail); border-color: var(--fail); }
 .mw-verdict.info { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .mw-verdict small { font-weight: 400; color: var(--text-2); margin-left: auto; }
+.mw-verdict .chk-link { margin-left: 8px; }
 .mw-h { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-2); margin: 14px 0 6px; }
 .mw-lead { color: var(--text-2); font-size: 12px; margin: 0 0 8px; }
 .mw-live { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; margin: 6px 0 10px; }
@@ -37,11 +39,12 @@ const ok = (eta) => Number.isFinite(eta) && eta <= 1.0001;
 const etaTxt = (eta) => (Number.isFinite(eta) ? fmt(eta, 2) : '∞');
 
 /** Klare Aussage «erfüllt / nicht erfüllt». */
-export function verdict(eta, what, extra) {
+export function verdict(eta, what, extra, deriv) {
   if (eta === null || eta === undefined) return h('div', { class: 'mw-verdict info' }, icon('info'), what);
   const good = ok(eta);
   return h('div', { class: `mw-verdict ${good ? 'ok' : 'fail'}` }, icon(good ? 'check' : 'warn'),
-    `${what} ${good ? 'erfüllt' : 'nicht erfüllt'}`, h('small', {}, extra ?? `η = ${etaTxt(eta)}`));
+    `${what} ${good ? 'erfüllt' : 'nicht erfüllt'}`, h('small', {}, extra ?? `η = ${etaTxt(eta)}`),
+    deriv ? h('button', { type: 'button', class: 'chk-link', title: 'Rechenweg mit Formeln und eingesetzten Werten', onclick: () => document.dispatchEvent(new CustomEvent('os-derivation', { detail: deriv })) }, 'Herleitung ›') : null);
 }
 
 function formula(lines) { return h('div', { class: 'mw-formula' }, lines.filter(Boolean).join('\n')); }
@@ -98,7 +101,7 @@ export function renderResults(el, app) {
 
 function tabOverview(el, R) {
   el.append(checksTable(R.checks.map((c) => ({
-    label: c.label, ref: c.ref, Ed: c.Ed, Rd: c.Rd, unit: c.unit, digits: c.digits ?? (c.unit === 'kN/m²' ? 2 : 1), eta: c.eta,
+    label: c.label, ref: c.ref, Ed: c.Ed, Rd: c.Rd, unit: c.unit, digits: c.digits ?? (c.unit === 'kN/m²' ? 2 : 1), eta: c.eta, deriv: DERIV_OF[c.id],
     detail: [c.lc && c.lc !== 'alle' ? `Kombination: ${c.lc}` : null, c.detail, c.id === 'basMin' ? 'Ed = erforderlich, Rd = vorhanden' : null].filter(Boolean).join(' · ') || null,
   }))));
   if (R.notes.length) {
@@ -121,7 +124,7 @@ function tabOverview(el, R) {
 function tabDruck(el, R, app) {
   const ids = ['top', 'bot', 'buck', 'buckEN'];
   const list = R.checks.filter((c) => ids.includes(c.id));
-  el.append(verdict(maxEta(list), 'Nachweis Normalkraft'));
+  el.append(verdict(maxEta(list), 'Nachweis Normalkraft', null, 'buck'));
   const sia = R.method === 'SIA';
   el.append(h('p', { class: 'mw-lead' }, sia
     ? 'Wandstreifen 1 m, gelenkig oben und unten, Werkstoff ohne Zugfestigkeit (linear-elastisch – ideal-plastisch). Die Biegelinie wird nach Theorie 2. Ordnung iteriert und die Vertikallast bis zum Versagen gesteigert (Laststeigerungsfaktor λu). Querschnittswiderstand mit Spannungsblock.'
@@ -240,7 +243,7 @@ function bucklingCurve(c, R) {
 
 function tabSchub(el, R, app) {
   const list = R.checks.filter((c) => ['shear', 'shearEN', 'shearN'].includes(c.id));
-  el.append(verdict(maxEta(list), 'Nachweis Querkraft in Wandebene'));
+  el.append(verdict(maxEta(list), 'Nachweis Querkraft in Wandebene', null, 'shear'));
   const sia = R.shearMethod === 'SIA';
   el.append(h('p', { class: 'mw-lead' }, sia
     ? 'Spannungsfeld: Die Normalkraft N und die Horizontalkraft V werden über ein geneigtes Druckfeld in die Druckzone am Wandfuss geleitet. Fliessbedingungen nach Ganz/Thürlimann (Grundlage SIA 266) ohne Kohäsion und Zugfestigkeit: Druckfeld σx/fxd + σy/fyd ≤ 1, Gleiten τ ≤ μ·σx.'
@@ -306,7 +309,7 @@ function shearChart(R, uls) {
 
 function tabTeil(el, R, app) {
   const list = R.checks.filter((c) => ['conc', 'concMid'].includes(c.id));
-  el.append(verdict(maxEta(list), 'Nachweis Teilflächenbelastung'));
+  el.append(verdict(maxEta(list), 'Nachweis Teilflächenbelastung', null, 'conc'));
   el.append(h('p', { class: 'mw-lead' }, 'Einzellast unter einer Lastfläche Ab am Wandkopf (z.B. Träger- oder Unterzugsauflager), EN 1996-1-1, 6.1.3: Erhöhungsfaktor β für Vollsteine, Lastausbreitung unter 60° bis Wandmitte.'));
   const c = R.combos.filter((x) => x.conc).reduce((a, b) => (b.checks.conc.eta > (a?.checks.conc.eta ?? -1) ? b : a), null);
   if (!c) return;
@@ -327,8 +330,8 @@ function tabTeil(el, R, app) {
     `nRd,m = Φm·t·fxd = ${fmt(c.phiMid, 3)}·${fmt(R.t, 3)}·${fmt(R.fxd, 0)} = ${fmt(q.nRdMid, 1)} kN/m`,
   ]));
   el.append(checksTable([
-    { label: 'Teilflächenpressung', ref: 'EN 1996-1-1 (6.9)', Ed: q.Nc, Rd: q.NRdc, unit: 'kN', eta: c.checks.conc.eta },
-    { label: 'Lastausbreitung bis Wandmitte', ref: 'EN 1996-1-1, 6.1.3 (4)', Ed: q.nEdMid, Rd: q.nRdMid, unit: 'kN/m', eta: c.checks.concMid.eta },
+    { label: 'Teilflächenpressung', ref: 'EN 1996-1-1 (6.9)', Ed: q.Nc, Rd: q.NRdc, unit: 'kN', eta: c.checks.conc.eta, deriv: 'conc' },
+    { label: 'Lastausbreitung bis Wandmitte', ref: 'EN 1996-1-1, 6.1.3 (4)', Ed: q.nEdMid, Rd: q.nRdMid, unit: 'kN/m', eta: c.checks.concMid.eta, deriv: 'conc' },
   ]));
 }
 
@@ -336,7 +339,7 @@ function tabTeil(el, R, app) {
 
 function tabQuer(el, R, app) {
   const list = R.checks.filter((c) => ['lat', 'basMax', 'basMin'].includes(c.id));
-  el.append(verdict(maxEta(list), 'Nachweis Querbelastung'));
+  el.append(verdict(maxEta(list), 'Nachweis Querbelastung', null, R.checks.some((c) => c.id === 'lat') ? 'lat' : 'bas'));
   el.append(h('p', { class: 'mw-lead' }, 'Die Querlast (Wind, Erddruck) wird bis zum Versagen gesteigert (Faktor μu), bei festgehaltenen Vertikallasten der Kombination. Die Stützlinie muss innerhalb der Wanddicke bleiben; die Bogenwirkung zwischen Wandkopf und -fuss wird über die Lage der Resultierenden am Wandfuss berücksichtigt.'));
   const withLat = R.combos.filter((c) => c.lat);
   if (withLat.length) {
@@ -372,7 +375,7 @@ function tabQuer(el, R, app) {
 
 function tabGebrauch(el, R) {
   const list = R.checks.filter((c) => ['slender', 'crack'].includes(c.id));
-  el.append(verdict(maxEta(list), 'Gebrauchstauglichkeit und Konstruktion'));
+  el.append(verdict(maxEta(list), 'Gebrauchstauglichkeit und Konstruktion', null, 'gzg'));
   el.append(formula([
     `Schlankheit hef/t = ${fmt(R.slender, 1)} ≤ ${fmt(R.lambdaLim, 0)}  (EN 1996-1-1, 5.5.1.4)`,
     'Klaffende Fuge unter charakteristischen Lasten: |e| ≤ t/3 (Empfehlung zur Rissbegrenzung)',
@@ -385,5 +388,5 @@ function tabGebrauch(el, R) {
       ['Kombination', { label: 'eo', unit: 'mm', num: true, digits: 1 }, { label: 'em', unit: 'mm', num: true, digits: 1 }, { label: 'eu', unit: 'mm', num: true, digits: 1 }, { label: 't/3', unit: 'mm', num: true, digits: 1 }, 'η'],
       sls.map((c) => [c.name, c.sls.eTop * 1000, c.sls.eMid * 1000, c.sls.eBot * 1000, c.sls.lim * 1000, utilBar(c.checks.crack.eta)])));
   }
-  el.append(checksTable(list.map((c) => ({ label: c.label, ref: c.ref, Ed: c.Ed, Rd: c.Rd, unit: c.unit, digits: 1, eta: c.eta }))));
+  el.append(checksTable(list.map((c) => ({ label: c.label, ref: c.ref, Ed: c.Ed, Rd: c.Rd, unit: c.unit, digits: 1, eta: c.eta, deriv: 'gzg' }))));
 }

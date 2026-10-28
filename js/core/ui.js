@@ -468,7 +468,8 @@ export function etaBadge(eta) {
 }
 
 /**
- * Nachweistabelle. checks: [{label, ref, Ed, Rd, unit, digits, eta, detail}]
+ * Nachweistabelle. checks: [{label, ref, Ed, Rd, unit, digits, eta, detail, deriv}]
+ * deriv: ID eines Abschnitts der Herleitung → Link «Herleitung ›» öffnet den Rechenweg.
  * eta wird aus |Ed|/|Rd| berechnet, falls nicht angegeben.
  */
 export function checksTable(checks, opts = {}) {
@@ -485,6 +486,7 @@ export function checksTable(checks, opts = {}) {
       h('div', { class: 'chk-head' },
         h('span', { class: 'chk-icon', 'aria-hidden': 'true' }, kind === 'fail' ? '✕' : '✓'),
         h('span', { class: 'chk-label' }, c.label),
+        c.deriv ? h('button', { type: 'button', class: 'chk-link', title: 'Rechenweg dieses Nachweises anzeigen', onclick: () => document.dispatchEvent(new CustomEvent('os-derivation', { detail: c.deriv })) }, 'Herleitung ›') : null,
         h('span', { class: `chk-eta ${kind}` }, Number.isFinite(eta) ? fmt(eta, 2) : '∞')),
       sub.length ? h('div', { class: 'chk-sub' }, sub.map((x, k) => [k ? ' · ' : '', x])) : null,
       c.Ed !== undefined || c.Rd !== undefined

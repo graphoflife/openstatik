@@ -29,22 +29,38 @@ export function defaultCombos(opts = {}) {
   return list;
 }
 
-/** Neues, leeres Projekt mit sinnvollen Standardwerten. */
+/**
+ * Neues, neutrales Projekt: Wand 2.60 m × 5.00 m × 150 mm aus Backstein, ohne Lasten und Öffnungen.
+ * Die Lasten werden in der Grafik (Werkzeuge) oder im Register «Lasten» erfasst.
+ */
 export function defaultProject() {
   return {
-    wall: { h: 2.6, t: 150, l: 4.0, support: 'slab', rhoManual: 1.0, sides: 0, ls: 4.0, openings: [] },
+    wall: { h: 2.6, t: 150, l: 5.0, support: 'slab', rhoManual: 1.0, sides: 0, ls: 5.0, openings: [] },
     material: defaultMaterial('MB'),
     loads: {
-      gW: 60, qW: 15, gD: 25, qD: 10,
+      gW: 0, qW: 0, gD: 0, qD: 0,
       eMode: 'centric', aD: 150, eD: 0, eU: 0,
       wind: 0,
       earth: { on: false, he: 2.0, gs: 19, K: 0.5, qs: 5 },
       Vw: 0, Ve: 0, hV: 2.6, topFixed: false,
-      conc: { on: false, G: 30, Q: 10, a: 200, b: 150, x: 1.0, ec: 0 },
+      conc: { on: false, G: 0, Q: 0, a: 200, b: 150, x: 1.0, ec: 0 },
     },
     combos: defaultCombos(),
+    combosAuto: true,
     settings: { method: 'SIA', shearMethod: 'SIA', impN: 450, creep: true, arching: true, sls: true, lambdaLim: 27, basementEN: true, bc: 6.0, openingConc: true },
   };
+}
+
+/**
+ * Hält die Kombinationen im Automatikbetrieb passend zu den erfassten Lasten (SIA 260).
+ * Gibt true zurück, wenn die Kombinationen geändert wurden.
+ */
+export function syncCombos(p, flags) {
+  if (!p.combosAuto) return false;
+  const want = defaultCombos(flags);
+  if (JSON.stringify(want) === JSON.stringify(p.combos)) return false;
+  p.combos = want;
+  return true;
 }
 
 export const EXAMPLES = [

@@ -102,17 +102,17 @@ function bcChecks(R) {
   const g = R.gov;
   const list = [];
   list.push({
-    id: 'bearing', label: 'Grundbruch', hint: HINTS.bearing,
+    id: 'bearing', label: 'Grundbruch', hint: HINTS.bearing, deriv: 'bc-R',
     ref: `EN 1997-1, 6.5.2 / Anh. D · SIA 267 · ${g.gov ? (g.gov.drained ? 'drainiert' : 'undrainiert') : ''}`,
     Ed: g.ld?.V, Rd: g.Rd, unit: unitF(strip), eta: g.eta,
     detail: g.error ? g.error : `V_d ≤ R_d = R_k/γ_R,v; Kombination γ_G = ${fmt(g.ld.gG, 2)}, γ_Q = ${fmt(g.ld.gQ, 2)}`,
   });
   const s = R.govS;
-  list.push({ id: 'sliding', label: 'Gleiten', hint: HINTS.sliding, ref: 'EN 1997-1, 6.5.3 · SIA 267', Ed: s.Hd, Rd: s.Rd, unit: unitF(strip), eta: s.eta, detail: `${s.type}: R_h,d = ${s.type === 'drainiert' ? `γ_G,inf·V_G·tan δ` : "A'·c_u"} / γ_R,h, δ = ${fmt(R.slDelta, 1)}°` });
+  list.push({ id: 'sliding', label: 'Gleiten', hint: HINTS.sliding, deriv: 'bc-slide', ref: 'EN 1997-1, 6.5.3 · SIA 267', Ed: s.Hd, Rd: s.Rd, unit: unitF(strip), eta: s.eta, detail: `${s.type}: R_h,d = ${s.type === 'drainiert' ? `γ_G,inf·V_G·tan δ` : "A'·c_u"} / γ_R,h, δ = ${fmt(R.slDelta, 1)}°` });
   const ep = R.eccPerm, ed = R.eccDesign;
   const rectEcc = R.shape === 'rect';
-  list.push({ id: 'eccPerm', label: 'Ausmittigkeit ständig (Kern)', hint: HINTS.eccPerm, ref: rectEcc ? 'e_B/B + e_L/L ≤ 1/6 (keine klaffende Fuge)' : R.shape === 'circle' ? 'e ≤ r/4 (keine klaffende Fuge)' : 'e ≤ B/6 (keine klaffende Fuge)', Ed: rectEcc ? ep.kern / 6 : ep.e, Rd: rectEcc ? 1 / 6 : ep.limKern, unit: rectEcc ? '' : 'm', digits: 3, eta: ep.kern });
-  if (ed) list.push({ id: 'eccDesign', label: 'Ausmittigkeit Bemessung', hint: HINTS.eccDesign, ref: rectEcc ? '(e_B/B)² + (e_L/L)² ≤ 1/9 · EN 1997-1, 6.5.4' : R.shape === 'circle' ? 'e ≤ 0.59·r (Fuge klafft höchstens bis Schwerpunkt) · EN 1997-1, 6.5.4' : 'e ≤ B/3 (Fuge klafft höchstens bis Schwerpunkt) · EN 1997-1, 6.5.4', Ed: rectEcc ? (ed.gap / 3) ** 2 : ed.e, Rd: rectEcc ? 1 / 9 : ed.limGap, unit: rectEcc ? '' : 'm', digits: 3, eta: ed.gap });
+  list.push({ id: 'eccPerm', label: 'Ausmittigkeit ständig (Kern)', hint: HINTS.eccPerm, deriv: 'bc-ecc', ref: rectEcc ? 'e_B/B + e_L/L ≤ 1/6 (keine klaffende Fuge)' : R.shape === 'circle' ? 'e ≤ r/4 (keine klaffende Fuge)' : 'e ≤ B/6 (keine klaffende Fuge)', Ed: rectEcc ? ep.kern / 6 : ep.e, Rd: rectEcc ? 1 / 6 : ep.limKern, unit: rectEcc ? '' : 'm', digits: 3, eta: ep.kern });
+  if (ed) list.push({ id: 'eccDesign', label: 'Ausmittigkeit Bemessung', hint: HINTS.eccDesign, deriv: 'bc-ecc', ref: rectEcc ? '(e_B/B)² + (e_L/L)² ≤ 1/9 · EN 1997-1, 6.5.4' : R.shape === 'circle' ? 'e ≤ 0.59·r (Fuge klafft höchstens bis Schwerpunkt) · EN 1997-1, 6.5.4' : 'e ≤ B/3 (Fuge klafft höchstens bis Schwerpunkt) · EN 1997-1, 6.5.4', Ed: rectEcc ? (ed.gap / 3) ** 2 : ed.e, Rd: rectEcc ? 1 / 9 : ed.limGap, unit: rectEcc ? '' : 'm', digits: 3, eta: ed.gap });
   return list;
 }
 
@@ -171,7 +171,7 @@ function resST(el, r, p) {
   const sAllow = Number(p.st.sAllow) || 0;
   const eta = sAllow > 0 ? R.sRef / sAllow : NaN;
   const refLabel = R.refKey === 'char' ? 'kennzeichnender Punkt (starres Fundament)' : 'Fundamentmitte (schlaffes Fundament)';
-  const checks = sAllow > 0 ? [{ id: 'settle', label: 'Setzung', hint: HINTS.settle, ref: `s ≤ s_zul (Gebrauchstauglichkeit, SIA 267 / EN 1997-1, 6.6) · ${refLabel}`, Ed: R.sRef, Rd: sAllow, unit: 'mm', eta }] : [];
+  const checks = sAllow > 0 ? [{ id: 'settle', label: 'Setzung', hint: HINTS.settle, deriv: 'st-s', ref: `s ≤ s_zul (Gebrauchstauglichkeit, SIA 267 / EN 1997-1, 6.6) · ${refLabel}`, Ed: R.sRef, Rd: sAllow, unit: 'mm', eta }] : [];
   if (sAllow > 0) el.append(summaryCard(eta, 'Setzung / zulässige Setzung', h('div', {}, h('div', { class: 'big', style: { fontSize: '16px', margin: '2px 0' } }, `s = ${fmt(R.sRef, 1)} mm`), verdict(checks))));
   else el.append(infoCard('Setzung', `s = ${fmt(R.sRef, 1)} mm`, refLabel));
   el.append(stats([
@@ -211,7 +211,7 @@ function resST(el, r, p) {
 function resSL(el, r, p, app) {
   const R = r.sl, n = r.norm;
   const best = R.design.best || R.char.best;
-  const checks = [{ id: 'slope', label: 'Gesamtstabilität', hint: HINTS.slope, ref: `F_d ≥ γ_R · SIA 267 / EN 1997-1, 11.5.1 · Bishop`, Ed: n.gRs, Rd: R.Fd, unit: '', digits: 3, eta: R.eta }];
+  const checks = [{ id: 'slope', label: 'Gesamtstabilität', hint: HINTS.slope, deriv: 'sl-check', ref: `F_d ≥ γ_R · SIA 267 / EN 1997-1, 11.5.1 · Bishop`, Ed: n.gRs, Rd: R.Fd, unit: '', digits: 3, eta: R.eta }];
   el.append(summaryCard(R.eta, 'Gesamtstabilität (Böschungsbruch)', h('div', {}, h('div', { class: 'small', style: { margin: '2px 0 6px' } }, `F = ${fmt(R.F, 3)} (charakteristisch) · F_d = ${fmt(R.Fd, 3)} (Bemessung, Anforderung F_d ≥ ${fmt(n.gRs, 2)})`), verdict(checks))));
   el.append(stats([
     ['F Bishop (charakt.)', R.F, '', 3],
@@ -239,10 +239,10 @@ function resSL(el, r, p, app) {
 function rwChecks(R) {
   const list = [];
   const s = R.govS, b = R.govB;
-  list.push({ id: 'sliding', label: 'Gleiten', hint: HINTS.sliding, ref: 'EN 1997-1, 6.5.3 / 9.7 · SIA 267', Ed: s.Hd, Rd: s.Rd, unit: 'kN/m', eta: s.eta, detail: `R_h,d = γ_G,inf·V_G·tan δ/γ_R,h${s.Ep > 0 ? ` + E_p,Sporn/γ_R,e (${fmt(s.Ep, 1)} kN/m)` : ''}` });
-  list.push({ id: 'bearing', label: 'Grundbruch', hint: HINTS.bearing, ref: 'EN 1997-1, 6.5.2 / Anh. D · SIA 267', Ed: b.ld?.V ?? b.combo?.N, Rd: b.Rd, unit: 'kN/m', eta: b.eta, detail: b.error || `Streifen B' = ${fmt(b.eff?.Bp, 2)} m, Kombination γ_G = ${fmt(b.combo.fG, 2)}, γ_Q = ${fmt(b.combo.fQe, 2)}` });
-  list.push({ id: 'eccPerm', label: 'Kippen: Ausmittigkeit ständig', hint: HINTS.eccPerm, ref: 'e ≤ B/6 (Resultierende im Kern)', Ed: Math.abs(R.eccPerm.e), Rd: R.eccPerm.limKern, unit: 'm', digits: 3, eta: R.eccPerm.kern });
-  if (R.eccDesign) list.push({ id: 'eccDesign', label: 'Kippen: Ausmittigkeit Bemessung', hint: HINTS.eccDesign, ref: 'e ≤ B/3 · EN 1997-1, 6.5.4', Ed: Math.abs(R.eccDesign.e), Rd: R.eccDesign.limGap, unit: 'm', digits: 3, eta: R.eccDesign.gap });
+  list.push({ id: 'sliding', label: 'Gleiten', hint: HINTS.sliding, deriv: 'rw-slide', ref: 'EN 1997-1, 6.5.3 / 9.7 · SIA 267', Ed: s.Hd, Rd: s.Rd, unit: 'kN/m', eta: s.eta, detail: `R_h,d = γ_G,inf·V_G·tan δ/γ_R,h${s.Ep > 0 ? ` + E_p,Sporn/γ_R,e (${fmt(s.Ep, 1)} kN/m)` : ''}` });
+  list.push({ id: 'bearing', label: 'Grundbruch', hint: HINTS.bearing, deriv: 'rw-bearing', ref: 'EN 1997-1, 6.5.2 / Anh. D · SIA 267', Ed: b.ld?.V ?? b.combo?.N, Rd: b.Rd, unit: 'kN/m', eta: b.eta, detail: b.error || `Streifen B' = ${fmt(b.eff?.Bp, 2)} m, Kombination γ_G = ${fmt(b.combo.fG, 2)}, γ_Q = ${fmt(b.combo.fQe, 2)}` });
+  list.push({ id: 'eccPerm', label: 'Kippen: Ausmittigkeit ständig', hint: HINTS.eccPerm, deriv: 'rw-ecc', ref: 'e ≤ B/6 (Resultierende im Kern)', Ed: Math.abs(R.eccPerm.e), Rd: R.eccPerm.limKern, unit: 'm', digits: 3, eta: R.eccPerm.kern });
+  if (R.eccDesign) list.push({ id: 'eccDesign', label: 'Kippen: Ausmittigkeit Bemessung', hint: HINTS.eccDesign, deriv: 'rw-ecc', ref: 'e ≤ B/3 · EN 1997-1, 6.5.4', Ed: Math.abs(R.eccDesign.e), Rd: R.eccDesign.limGap, unit: 'm', digits: 3, eta: R.eccDesign.gap });
   return list;
 }
 

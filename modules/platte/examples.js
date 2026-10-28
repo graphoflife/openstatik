@@ -25,22 +25,24 @@ function finish(p) {
   return p;
 }
 
-/** Neues Projekt: Rechteckplatte 8 × 6 m, allseitig gelenkig gelagert. */
+/**
+ * Neues, leeres Projekt: keine Geometrie, keine Lager, keine Lasten – nur sinnvolle Baustoff- und
+ * Bemessungsvorgaben sowie die üblichen Lastfälle (Eigengewicht wird automatisch angesetzt).
+ */
 export function defaultProject() {
-  const outline = rect(0, 0, 8, 6);
   return finish({
     norm: 'SIA',
-    outline,
+    outline: [],
     openings: [],
-    h: 0.24, concrete: 'C30/37', nu: 0.2, meshSize: 0.4,
+    h: 0.25, concrete: 'C30/37', nu: 0.2, meshSize: 0.4,
     pointSupports: [],
-    lineSupports: wallsAround(outline),
+    lineSupports: [],
     loadCases: [
       lc('LF1', 'Eigengewicht', 'G', { sw: true }),
       lc('LF2', 'Auflast', 'G'),
-      lc('LF3', 'Nutzlast', 'Q', { cat: 'A', psi0: 0.7, psi1: 0.5, psi2: 0.3 }),
+      lc('LF3', 'Nutzlast', 'Q', { cat: 'B', psi0: 0.7, psi1: 0.5, psi2: 0.3 }),
     ],
-    areaLoads: [{ lc: 'LF2', q: 1.5, region: 'all' }, { lc: 'LF3', q: 2.0, region: 'all' }],
+    areaLoads: [],
     loadAreas: [],
     lineLoads: [],
     pointLoads: [],

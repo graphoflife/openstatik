@@ -241,13 +241,21 @@ export function buildReport(app) {
 export const HELP = `
 <h3>Zweck</h3>
 <p>Nachweise für Wände aus unbewehrtem Mauerwerk nach SIA 266 (2015): Normalkraft mit Knicken, Querkraft in Wandebene (Schubwand), Teilflächenbelastung, Querbelastung (z.B. Kellerwand unter Erddruck) und Gebrauchstauglichkeit. Alle Nachweise werden bei jeder Eingabe sofort neu gerechnet.</p>
-<h3>Vorgehen</h3>
-<ol>
-<li><b>Wand</b>: Höhe, Dicke, Länge, Halterung (Decken, Querwände) und Öffnungen.</li>
-<li><b>Material</b>: Mauerwerksart wählen; die Standardwerte (fxk, fyk, Exk …) erscheinen und können überschrieben werden.</li>
-<li><b>Lasten</b>: charakteristische Einwirkungen je Meter Wand und die Lastkombinationen (Lastbeiwerte nach SIA 260).</li>
-<li><b>Nachweise</b>: Verfahren und Optionen. Ergebnisse rechts, Grafik in der Mitte (Ansicht, Schnitt, Schub).</li>
-</ol>
+<h3>Grafische Eingabe</h3>
+<p>Die Ansicht in der Mitte ist der Arbeitsbereich. Ein neues Projekt enthält eine Wand (2.60 × 5.00 m, 150 mm Backstein) ohne Lasten.</p>
+<ul>
+<li><b>Wand</b>: Klick auf die Wandfläche öffnet Abmessungen, Material und Halterung im Eigenschaftsfenster. Die Ecke oben rechts ziehen ändert Höhe und Länge, die Ecke oben links nur die Höhe, die Ecke unten rechts nur die Länge.</li>
+<li><b>Öffnung</b> (O): Rechteck mit zwei Ecken aufziehen. Öffnungen lassen sich ziehen, an den Ecken in der Grösse ändern, kopieren (C) und löschen (Entf).</li>
+<li><b>Auflast</b> (Q): Deckenoberkante anklicken – Auflasten aus der Wand darüber (zentrisch) und dem Deckenauflager (mit Exzentrizität).</li>
+<li><b>Einzellast</b> (F): Stelle auf der Wandkrone anklicken (Teilflächenbelastung); entlang der Krone verschiebbar.</li>
+<li><b>Horizontalkraft</b> (H): Wandrand auf der Höhe der Kraft anklicken (Schubwand); der Pfeil lässt sich senkrecht verschieben.</li>
+<li><b>Querlast</b> (W): Wandfläche anklicken – Wind oder Erddruck senkrecht zur Wand (Symbol ⊗ neben der Wand).</li>
+<li><b>Querwand</b> (K): linken oder rechten Wandrand anklicken – aussteifende Querwand ein/aus.</li>
+<li>Im <b>Schnitt</b> öffnet ein Klick auf den Lastangriff am Wandkopf bzw. -fuss die Exzentrizitäten.</li>
+<li>Fang an Punkten, Kanten und Raster; X/Y binden an eine Achse, Ziffern tippen Koordinaten, Esc bricht ab. Alle Werte sind zusätzlich in den Registern links verfügbar und bleiben synchron.</li>
+<li>Die Lastkombinationen nach SIA 260 werden automatisch passend zu den erfassten Lasten erzeugt, solange sie nicht von Hand geändert werden.</li>
+</ul>
+<p>Unter <b>Herleitung</b> (rechts oben) steht der vollständige Rechenweg jedes Nachweises mit allgemeiner Formel, eingesetzten Werten, Ergebnis und Normbezug; «Herleitung ›» in den Nachweistabellen springt direkt dorthin.</p>
 <h3>Verfahren</h3>
 <ul>
 <li><b>Bemessungswerte</b>: fxd = fxk/γM, fyd = fyk/γM mit γM = 2.0 (SIA 266, 2.2.5).</li>
@@ -278,8 +286,8 @@ export const HELP = `
 
 export const INTRO = `<h4>So funktioniert's</h4>
 <ol>
-<li><b>Wand</b>: Höhe, Dicke und Halterung eingeben.</li>
-<li><b>Material</b>: Mauerwerksart wählen – Kennwerte werden vorgeschlagen.</li>
-<li><b>Lasten</b>: Auflasten, Querlasten und Horizontalkräfte (charakteristisch) erfassen.</li>
-<li>Rechts die Nachweise lesen, Grafik umschalten, <b>Bericht</b> erstellen.</li>
+<li>Die Wand ist angelegt: <b>Ecke oben rechts ziehen</b> ändert Höhe und Länge, Klick auf die Wand zeigt Abmessungen und Material.</li>
+<li>Lasten mit den Werkzeugen über der Grafik setzen: <b>Auflast</b> (Q) auf die Deckenoberkante, <b>Einzellast</b> (F), <b>Horizontalkraft</b> (H), <b>Querlast</b> (W); <b>Öffnung</b> (O) aufziehen.</li>
+<li>Angeklicktes im Eigenschaftsfenster bearbeiten – alle Werte auch in den Registern links.</li>
+<li>Rechts Nachweise und <b>Herleitung</b> lesen, Schnitt/Schub umschalten, Bericht erstellen.</li>
 </ol>`;

@@ -1,7 +1,7 @@
 // Grafik: System, Schnittgrössen, Verformung, Querschnitt (zeichnet in SvgView, Farben nur über CSS-Variablen)
 import { fmt } from '../../js/core/format.js';
 import { sectionProps, plasticNeutralAxis } from './profiles.js';
-import { systemGeometry, normLoad } from './beam.js';
+import { beamModel, normLoad } from './beam.js';
 import { latRestraintPositions } from './calc.js';
 
 const CAT_COLOR = { G: 'var(--c-series-1)', Nutzlast: 'var(--c-load)', Schnee: 'var(--c-series-6)', Wind: 'var(--c-series-5)' };
@@ -45,70 +45,109 @@ function restraintMark(v, x, y, label) {
 
 // ------------------------------------------------------------------ System
 
+export const LOAD_COLOR = CAT_COLOR;
+const SELF_KN_M3 = 78.5;
+
+/**
+ * Lage aller Elemente der Systemansicht in Weltkoordinaten (m) – gemeinsam für Zeichnung und Editor.
+ * Träger auf y = 0 von 0 bis L; Linienlasten in Spuren darüber, Einzellasten als Pfeile bis yP,
+ * Normalkraft rechts vom Trägerende, seitliche Halterungen unter dem Träger (yR).
+ */
+export function systemLayout(p, sec) {
+  const b = p.beam || {};
+  const m = beamModel(b);
+  const L = m.L;
+  if (!(L > 0)) throw new Error('Bitte eine Spannweite bzw. Trägerlänge grösser als 0 eingeben.');
+  const u = Math.max(L, 2) / 10;
+  const all = (b.loads || []).map((l, idx) => ({ ...normLoad(l, L), idx }));
+  const qs = all.filter((l) => l.type === 'q');
+  if (b.selfWeight && sec) { const gk = sec.A * 1e-6 * SELF_KN_M3; qs.unshift({ lc: 'EG', type: 'q', dir: 'z', v1: gk, v2: gk, x1: 0, x2: L, self: true, idx: -1 }); }
+  const laneH = 0.55 * u, gap = 0.32 * u;
+  let y = 0.18 * u;
+  const lanes = [];
+  for (const ld of qs) {
+    const mx = Math.max(Math.abs(ld.v1), Math.abs(ld.v2)) || 1;
+    const hMin = 0.12 * laneH;
+    const h1 = Math.max(hMin, laneH * Math.abs(ld.v1) / mx), h2 = Math.max(hMin, laneH * Math.abs(ld.v2) / mx);
+    const a = Math.min(ld.x1, ld.x2), bb = Math.max(ld.x1, ld.x2);
+    lanes.push({ ld, a, b: bb, yb: y, h1, h2, ring: [[a, y], [a, y + h1], [bb, y + h2], [bb, y]] });
+    y += laneH + gap;
+  }
+  const yP = Math.max(y, 0.2 * u) + 0.7 * u;
+  const points = [];
+  for (const ld of all.filter((l) => l.type === 'P')) {
+    const k = points.filter((q) => Math.abs(q.x - ld.x1) < 0.08 * u).length;
+    points.push({ ld, x: ld.x1, y0: 0.04 * u, y1: yP + k * 0.45 * u });
+  }
+  const axial = all.filter((l) => l.type === 'N');
+  const Nsum = axial.reduce((t, l) => t + l.v1, 0);
+  const nArrow = axial.length ? { x0: L + 0.12 * u, x1: L + 1.3 * u, y: 0, sum: Nsum, ring: [[L + 0.08 * u, -0.16 * u], [L + 1.34 * u, -0.16 * u], [L + 1.34 * u, 0.16 * u], [L + 0.08 * u, 0.16 * u]] } : null;
+  const yTop = Math.max(y, ...points.map((q) => q.y1), 1.2 * u);
+  return { L, u, model: m, lanes, points, axial, nArrow, yTop, yR: -0.42 * u };
+}
+
 export function drawSystem(v, app) {
   const p = app.project;
   if (p.mode === 'forces') return drawForcesSystem(v, app);
-  let geo;
-  try { geo = systemGeometry(p.beam); } catch (e) { app.showViewMessage?.(e.message); return; }
-  const L = geo.L, u = Math.max(L, 2) / 10;
-  const labels = app.viewOpts.labels !== false;
   let sec = null;
   try { sec = sectionProps(p.section); } catch { /* Eingabe unvollständig */ }
-  // Lasten in Spuren über dem Träger
-  const loads = (p.beam.loads || []).map((l) => normLoad(l, L)).filter((l) => l.type !== 'N');
-  if (p.beam.selfWeight && sec) {
-    const gk = sec.A * 1e-6 * 78.5;
-    loads.unshift({ lc: 'EG', type: 'q', dir: 'z', v1: gk, v2: gk, x1: 0, x2: L, self: true });
-  }
+  let lay;
+  try { lay = systemLayout(p, sec); } catch (e) { app.showViewMessage?.(e.message); return; }
+  const { L, u, model: geo } = lay;
+  const labels = app.viewOpts.labels !== false;
   const lcOf = (id) => (id === 'EG' ? { name: 'Eigengewicht', cat: 'G' } : (p.beam.loadCases || []).find((l) => l.id === id) || { name: id, cat: 'G' });
-  let y = 0.18 * u;
-  const laneH = 0.55 * u, gap = 0.32 * u;
-  const pts = [];
-  for (const ld of loads.filter((l) => l.type === 'q')) {
+  // Linienlasten
+  for (const ln of lay.lanes) {
+    const { ld, a, b, yb, h1, h2 } = ln;
     const lc = lcOf(ld.lc);
     const col = CAT_COLOR[lc.cat] || 'var(--c-load)';
-    const m = Math.max(Math.abs(ld.v1), Math.abs(ld.v2)) || 1;
-    const a = ld.x1, b = ld.x2;
-    const h1 = laneH * Math.abs(ld.v1) / m, h2 = laneH * Math.abs(ld.v2) / m;
-    const yb = y;
-    const poly = [[a, yb], [a, yb + h1], [b, yb + h2], [b, yb]];
-    v.polygon(poly, { fill: col, fillOpacity: 0.16, stroke: col, width: 1.2, dash: ld.self ? '4 3' : undefined });
+    v.polygon(ln.ring, { fill: col, fillOpacity: 0.16, stroke: col, width: 1.2, dash: ld.self ? '4 3' : undefined });
     const n = Math.max(2, Math.round((b - a) / (0.45 * u)));
     for (let i = 0; i <= n; i++) {
       const xx = a + (b - a) * i / n, hh = h1 + (h2 - h1) * i / n;
-      if (hh > 0.05 * laneH) { v.line(xx, yb + hh, xx, yb + 0.02 * u, { stroke: col, width: 1 }); tick(v, null, xx, yb, 6, col, ld.v1 + ld.v2 < 0); }
+      v.line(xx, yb + hh, xx, yb + 0.02 * u, { stroke: col, width: 1 });
+      tick(v, null, xx, yb, 6, col, ld.v1 + ld.v2 < 0);
     }
     if (labels) {
       const val = Math.abs(ld.v1 - ld.v2) < 1e-9 ? `${fmt(ld.v1, 2)} kN/m` : `${fmt(ld.v1, 2)} … ${fmt(ld.v2, 2)} kN/m`;
       v.text(b, yb + Math.max(h1, h2) / 2, `${ld.dir === 'y' ? 'horizontal (y): ' : ''}${val} · ${lc.name}`, { anchor: 'start', dx: 8, color: col, size: 11 });
     }
-    pts.push([a, yb + laneH]);
-    y += laneH + gap;
   }
-  for (const ld of loads.filter((l) => l.type === 'P')) {
-    const lc = lcOf(ld.lc);
+  // Einzellasten (Schaft in Weltkoordinaten, damit der Griff zum Ziehen oben am Pfeil liegt)
+  for (const pt of lay.points) {
+    const lc = lcOf(pt.ld.lc);
     const col = CAT_COLOR[lc.cat] || 'var(--c-load)';
-    v.arrow(ld.x1, 0.03 * u, 0, ld.v1 >= 0 ? -1 : 1, { color: col, length: 42, label: labels ? `${fmt(Math.abs(ld.v1), 1)} kN${ld.dir === 'y' ? ' (y)' : ''}` : '' , width: 2 });
+    const down = pt.ld.v1 >= 0;
+    v.line(pt.x, pt.y0, pt.x, pt.y1, { stroke: col, width: 2 });
+    if (down) v.arrow(pt.x, pt.y0, 0, -1, { color: col, length: 10, head: 10, width: 2 });
+    else v.arrow(pt.x, pt.y1, 0, 1, { color: col, length: 10, head: 10, width: 2 });
+    v.dot(pt.x, pt.y1, 3, { fill: col });
+    if (labels) v.text(pt.x, pt.y1, `${fmt(Math.abs(pt.ld.v1), 1)} kN${pt.ld.dir === 'y' ? ' (y)' : ''} · ${lc.name}`, { dy: -10, color: col, size: 11 });
   }
-  const yTop = Math.max(y, 1.2 * u);
   // Normalkraft
-  const Nsum = (p.beam.loads || []).filter((l) => l.type === 'N').reduce((s, l) => s + (Number(l.v1) || 0), 0);
-  if (Math.abs(Nsum) > 1e-9) {
-    const xr = L;
-    v.arrow(xr, 0, Nsum > 0 ? -1 : 1, 0, { color: 'var(--c-series-4)', length: 46, tail: Nsum < 0, label: labels ? `N = ${fmt(Math.abs(Nsum), 1)} kN` : '' });
+  if (lay.nArrow && Math.abs(lay.nArrow.sum) > 1e-9) {
+    const na = lay.nArrow, comp = na.sum > 0, col = 'var(--c-series-4)';
+    v.line(na.x0, 0, na.x1, 0, { stroke: col, width: 2 });
+    if (comp) v.arrow(na.x0, 0, -1, 0, { color: col, length: 10, head: 10, width: 2 });
+    else v.arrow(na.x1, 0, 1, 0, { color: col, length: 10, head: 10, width: 2 });
+    if (labels) v.text(na.x1, 0, `N = ${fmt(Math.abs(na.sum), 1)} kN ${comp ? '(Druck)' : '(Zug)'}`, { anchor: 'start', dx: 8, color: col, size: 11 });
   }
   // Träger
   v.line(0, 0, L, 0, { stroke: 'var(--c-steel)', width: 4.5 });
+  v.dot(L, 0, 3.2, { fill: 'var(--c-steel)', title: 'Trägerende – ziehen ändert die Länge' });
+  let firstPin = true;
   for (const s of geo.supports) {
-    if (s.type === 'fix') v.support(s.x, 0, 'fixed', s.x < L / 2 ? 0 : 180);
-    else v.support(s.x, 0, s.x === geo.supports[0].x ? 'pinned' : 'roller', 90);
+    if (s.type === 'fix') v.support(s.x, 0, 'fixed', s.x < 1e-9 ? 0 : s.x > L - 1e-9 ? 180 : 90);
+    else { v.support(s.x, 0, firstPin ? 'pinned' : 'roller', 90); firstPin = false; }
   }
   // Seitliche Halterungen
   const restr = latRestraintPositions(p, L, geo.supports, geo.freeEnds);
-  if (!p.stab?.contRestraint) for (const x of restr) restraintMark(v, x, -0.42 * u, 'seitliche Halterung (Gabellager)');
+  // Auflager sind immer Gabellager – Zeichen nur für zusätzliche Halterungen
+  const extra = restr.filter((x) => !geo.supports.some((s) => Math.abs(s.x - x) < 1e-6));
+  if (!p.stab?.contRestraint) for (const x of extra) restraintMark(v, x, lay.yR, 'seitliche Halterung (Gabellager)');
   else v.line(0, 0.06 * u, L, 0.06 * u, { stroke: 'var(--c-highlight)', width: 2, dash: '2 4' });
   // Bemassung Felder
-  for (const f of geo.fields) v.dimension(f.x0, 0, f.x1, 0, `${fmt(f.L, 2)} m`, -54);
+  for (const f of geo.fields) v.dimension(f.x0, 0, f.x1, 0, `${fmt(f.L, 2)} m${f.cant ? ' (Kragarm)' : ''}`, -54);
   // Kippsegmente
   if (labels && !p.stab?.contRestraint && restr.length) {
     const segs = [];
@@ -118,16 +157,18 @@ export function drawSystem(v, app) {
     if (ptsR[ptsR.length - 1] < L - 1e-9) segs.push([ptsR[ptsR.length - 1], L]);
     if (segs.length > 1 || geo.fields.length > 1) for (const [a, b] of segs) v.dimension(a, 0, b, 0, `Kipplänge ${fmt(b - a, 2)} m`, -92, { color: 'var(--c-highlight)' });
   }
+  const noLoads = !(p.beam.loads || []).length;
+  if (labels && noLoads) v.text(L / 2, lay.yTop, 'Werkzeug «Streckenlast» (Q) wählen und auf den Träger klicken', { color: 'var(--text-3)', size: 12 });
   if (labels) {
-    const cats = [...new Set(loads.map((l) => lcOf(l.lc).cat))];
+    const cats = [...new Set(lay.lanes.map((l) => lcOf(l.ld.lc).cat).concat(lay.points.map((q) => lcOf(q.ld.lc).cat)))];
     const names = { G: 'ständige Lasten', Nutzlast: 'Nutzlast', Schnee: 'Schnee', Wind: 'Wind' };
     const items = cats.map((c) => ({ label: names[c] || c, color: CAT_COLOR[c] || 'var(--c-load)', type: 'fill' }));
-    if (!p.stab?.contRestraint && restr.length) items.push({ label: 'seitliche Halterung (Gabellager)', color: 'var(--c-highlight)', type: 'dot' });
+    if (!p.stab?.contRestraint && extra.length) items.push({ label: 'seitliche Halterung (Gabellager)', color: 'var(--c-highlight)', type: 'dot' });
     else if (p.stab?.contRestraint) items.push({ label: 'Druckgurt durchgehend gehalten', color: 'var(--c-highlight)', dash: '2 4' });
     if (items.length) v.keyLegend(items);
     if (sec) v.caption(`${sec.name} · ${p.steel}`);
   }
-  v.setBounds(-0.06 * L, -1.9 * u, L * 1.06 + (labels ? 2.6 * u : 0), yTop + 0.2 * u);
+  v.setBounds(-0.06 * L - 0.4 * u, -1.9 * u, L * 1.06 + (labels ? 2.6 * u : 0) + (lay.nArrow ? 1.6 * u : 0), lay.yTop + 0.5 * u);
   v.scaleBar();
 }
 
@@ -147,6 +188,7 @@ function drawForcesSystem(v, app) {
   v.line(...P(0, 0), ...P(L, 0), { stroke: 'var(--c-steel)', width: 4.5 });
   v.support(...P(0, 0), 'pinned', vert ? 90 : 90);
   v.support(...P(L, 0), 'roller', vert ? 270 : 90);
+  v.dot(...P(L, 0), 3.2, { fill: 'var(--c-steel)', title: 'Stabende – ziehen ändert die Länge' });
   // Momentenverlauf schematisch
   if (c && res) {
     const cb = res.member.combos[ci];
@@ -175,11 +217,11 @@ function drawForcesSystem(v, app) {
     if (labels) v.caption(`${c.name || `Situation ${ci + 1}`}: N = ${fmt(c.N || 0, 1)} kN · My = ${fmt(c.My || 0, 1)} kNm · Mz = ${fmt(c.Mz || 0, 1)} kNm · Vz = ${fmt(c.Vz || 0, 1)} kN`);
   }
   const restr = latRestraintPositions(p, L, [{ x: 0 }, { x: L }], []);
-  if (!p.stab?.contRestraint) for (const x of restr) restraintMark(v, ...P(x, vert ? 0.0 : -0.0), 'seitliche Halterung (Gabellager)');
+  if (!p.stab?.contRestraint) for (const x of restr) if (x > 1e-6 && x < L - 1e-6) restraintMark(v, ...P(x, 0), 'seitliche Halterung (Gabellager)');
   if (vert) v.dimension(...P(0, 0), ...P(L, 0), `L = ${fmt(L, 2)} m`, 70);
   else v.dimension(...P(0, 0), ...P(L, 0), `L = ${fmt(L, 2)} m`, -54);
   const b = [P(0, -2.6 * u), P(L, 2.6 * u), P(0, 2.6 * u), P(L, -2.6 * u)];
-  v.setBounds(Math.min(...b.map((q) => q[0])) - (vert ? 0 : 0.05 * L), Math.min(...b.map((q) => q[1])) - (vert ? 0.05 * L : 0), Math.max(...b.map((q) => q[0])) + (vert ? 0 : 0.05 * L), Math.max(...b.map((q) => q[1])) + (vert ? 0.05 * L : 0));
+  v.setBounds(Math.min(...b.map((q) => q[0])) - (vert ? 0 : 0.05 * L), Math.min(...b.map((q) => q[1])) - (vert ? 0.05 * L : 0), Math.max(...b.map((q) => q[0])) + (vert ? 0 : 0.05 * L), Math.max(...b.map((q) => q[1])) + (vert ? 0.16 * L : 0));
   v.scaleBar();
 }
 

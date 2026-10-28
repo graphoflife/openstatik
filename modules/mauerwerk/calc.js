@@ -485,6 +485,32 @@ export const CHECK_INFO = {
   crack: { label: 'Klaffende Fuge (Gebrauch)', ref: 'Empfehlung e ≤ t/3' },
 };
 
+/** Seitliche Halterungen {L, R} (ältere Projekte: Anzahl «sides», eine Querwand liegt links). */
+export function sideFlags(W) {
+  if (W.sideL !== undefined || W.sideR !== undefined) return { L: !!W.sideL, R: !!W.sideR };
+  const n = +W.sides || 0;
+  return { L: n >= 1, R: n >= 2 };
+}
+
+/** Setzt die seitlichen Halterungen und hält die Anzahl «sides» synchron. */
+export function setSides(W, L, R) {
+  W.sideL = !!L; W.sideR = !!R;
+  W.sides = (L ? 1 : 0) + (R ? 1 : 0);
+}
+
+/** Ist mindestens eine Einwirkung erfasst? (sonst ist das Projekt noch unvollständig) */
+export function hasLoads(p) {
+  const L = p.loads || {};
+  const conc = L.conc?.on && ((+L.conc.G || 0) + (+L.conc.Q || 0) > 0);
+  return !!(+L.gW || +L.qW || +L.gD || +L.qD || +L.wind || (L.earth?.on && L.earth.he > 0) || +L.Vw || +L.Ve || conc);
+}
+
+/** Flags für die Standardkombinationen aus den erfassten Lasten. */
+export function loadFlags(p) {
+  const L = p.loads || {};
+  return { wind: !!(+L.wind || +L.Vw), earth: !!(L.earth?.on && L.earth.he > 0), quake: !!+L.Ve };
+}
+
 /** Normiert eine Kombinationszeile. */
 function comboFactors(c) {
   const num = (v, d = 0) => (Number.isFinite(+v) ? +v : d);
@@ -542,7 +568,8 @@ export function computeWall(p) {
   // Knicklänge (mit massgebender Kopfexzentrizität bei Volllast)
   const nWk = (L.gW || 0) + (L.qW || 0), nDk = (L.gD || 0) + (L.qD || 0);
   const eTopChar = nWk + nDk > 0 ? nDk * eD / (nWk + nDk) : 0;
-  const eff = effectiveHeight({ h, t, mode: W.support, rhoManual: W.rhoManual, sides: +W.sides || 0, ls: W.ls > 0 ? W.ls : l, eTop: eTopChar });
+  const sf = sideFlags(W);
+  const eff = effectiveHeight({ h, t, mode: W.support, rhoManual: W.rhoManual, sides: (sf.L ? 1 : 0) + (sf.R ? 1 : 0), ls: W.ls > 0 ? W.ls : l, eTop: eTopChar });
   const hef = eff.hef;
   const slender = hef / t;
   notes.push(...eff.notes);

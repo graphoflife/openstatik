@@ -151,7 +151,7 @@ export function renderView(v, app, mode) {
   return viewSystem(v, app, p, R, li);
 }
 
-function panelGeometry(p, mode = 'system') {
+export function panelGeometry(p, mode = 'system') {
   let hw = 0.15, hz = 0.15;
   try {
     const g = sectionGeometry(p.section);
@@ -165,7 +165,8 @@ function panelGeometry(p, mode = 'system') {
 
 function panelTitle(v, x, L, ax, two) {
   if (!two) return;
-  v.text(x, L * 1.24 + 0.35, ax === 'y' ? 'Biegung um y  (Ausbiegung in z)' : 'Biegung um z  (Ausbiegung in y)', { bold: true, size: 11.5, color: 'var(--text-2)' });
+  v.text(x, L * 1.24 + 0.35, ax === 'y' ? 'Biegung um y' : 'Biegung um z', { bold: true, size: 11.5, color: 'var(--text-2)' });
+  v.text(x, L * 1.24 + 0.35, ax === 'y' ? 'Ausbiegung in z' : 'Ausbiegung in y', { dy: 14, size: 10.5, color: 'var(--text-3)' });
 }
 
 function axisTriad(v, x, y, ax) {
@@ -180,34 +181,75 @@ function axisTriad(v, x, y, ax) {
   });
 }
 
-function viewSystem(v, app, p, R, li) {
+/** Form der (überhöht gezeichneten) Imperfektion je Lagerung, t = 0 … 1 vom Fuss zum Kopf. */
+function impShape(bc) {
+  if (bc.sway) return (t) => t;
+  if (bc.key === 'fixedFixed') return (t) => (1 - Math.cos(2 * Math.PI * t)) / 2;
+  if (bc.key === 'fixedPinned') return fpMode;
+  return (t) => Math.sin(Math.PI * t);
+}
+
+/**
+ * Lage aller Elemente der Darstellung «System» in Weltkoordinaten (m). Wird für die Zeichnung und für
+ * die grafische Bearbeitung (Trefferflächen im Editor) gemeinsam verwendet.
+ */
+export function systemLayout(p, R, li) {
   const L = p.L > 0 ? p.L : 1;
-  const lc = p.loadCases[li] || p.loadCases[0] || {};
+  const lc = p.loadCases[li] || p.loadCases[0] || null;
   const pg = panelGeometry(p);
-  const labels = app.viewOpts.labels !== false;
   const thetaI = inclination(p.norm, L, p.imperfection);
-  let xmax = 0, xmin = 0;
+  const panels = {};
   for (const ax of pg.axes) {
     const x0 = pg.x0(ax), hw = pg.hw[ax];
     const bc = bcOf(p, ax);
-    const ld = lcLoads(lc, ax, p.biaxial);
+    const ld = lc ? lcLoads(lc, ax, p.biaxial) : { H: 0, q: 0, Mt: 0, Mb: 0 };
     const res = R?.lcs?.[li]?.[ax.toUpperCase()];
     const beta = res ? res.beta : (p.betaMode === 'user' ? (ax === 'y' ? p.betaY : p.betaZ) : bc.beta);
-    panelTitle(v, x0, L, ax, pg.axes.length > 1);
+    const shape = impShape(bc);
+    const sgn = res && res.w0 ? (Math.sign(res.w0[extremeIndex(res.w0)]) || 1) : 1;
+    const amp = 0.07 * L * sgn;
+    const imp = [];
+    for (let i = 0; i <= 40; i++) { const t = i / 40; imp.push([x0 + amp * shape(t), t * L]); }
+    const tl = ld.q && ld.q > 0 ? 0.3 : 0.62;
+    const impLabel = [x0 - hw, tl * L];
+    const impHandle = imp[Math.round(tl * 40)];
+    let qRing = null, xs = null;
+    if (ld.q) {
+      const d = Math.sign(ld.q);
+      xs = x0 - d * (hw + 0.12 * L);
+      qRing = [[x0 - d * hw, 0], [xs, 0], [xs, L], [x0 - d * hw, L]];
+    }
+    panels[ax] = { ax, x0, hw, bc, ld, beta, imp, impLabel, impHandle, qRing, xs };
+  }
+  let inset = null;
+  let right = pg.x0(pg.axes[pg.axes.length - 1]) + Math.max(pg.hw.y, pg.hw.z);
+  try {
+    const geo = sectionGeometry(p.section);
+    const sc = Math.min(3.5, Math.max(1, 0.22 * L / Math.max(geo.b, geo.h)));
+    const cx = right + 0.18 * L + 0.9 + geo.b * sc / 2, cy = L * 0.78;
+    inset = { geo, sc, cx, cy, ring: geo.poly.map(([y, z]) => [cx + y * sc, cy + z * sc]), bars: geo.bars.map((b) => [cx + b.y * sc, cy + b.z * sc]) };
+    right = cx + geo.b * sc / 2 + 0.3;
+  } catch { /* ungültiger Querschnitt */ }
+  return { L, lc, axes: pg.axes, panels, inset, thetaI, right };
+}
+
+function viewSystem(v, app, p, R, li) {
+  const lay = systemLayout(p, R, li);
+  const { L, thetaI } = lay;
+  const lc = lay.lc || {};
+  const labels = app.viewOpts.labels !== false;
+  let xmax = 0, xmin = 0;
+  for (const ax of lay.axes) {
+    const { x0, hw, bc, ld, beta, imp, impLabel, qRing, xs } = lay.panels[ax];
+    panelTitle(v, x0, L, ax, lay.axes.length > 1);
     // Stützenkörper
     v.rect(x0 - hw, 0, 2 * hw, L, { fill: 'var(--c-concrete)', stroke: 'var(--c-concrete-line)', width: 1.2 });
     v.line(x0, -0.03 * L, x0, 1.03 * L, { stroke: 'var(--c-concrete-line)', width: 0.8, dash: '6 3 1.5 3' });
     // Imperfektion (überhöht)
-    const shape = (t) => (bc.sway ? t : bc.key === 'fixedFixed' ? (1 - Math.cos(2 * Math.PI * t)) / 2 : bc.key === 'fixedPinned' ? fpMode(t) : Math.sin(Math.PI * t));
-    const sgn = res && res.w0 ? (Math.sign(res.w0[extremeIndex(res.w0)]) || 1) : 1;
-    const amp = 0.07 * L * sgn;
-    const pts = [];
-    for (let i = 0; i <= 40; i++) { const t = i / 40; pts.push([x0 + amp * shape(t), t * L]); }
-    v.polyline(pts, { stroke: 'var(--c-deform)', width: 1.3, dash: '5 4' });
+    v.polyline(imp, { stroke: 'var(--c-deform)', width: 1.3, dash: '5 4' });
     if (labels && thetaI > 0) {
       const lab = bc.sway ? `θi = 1/${Math.round(1 / thetaI)} (überhöht)` : `ei = ${beta ? mm(thetaI * beta * L / 2) : '–'} (überhöht)`;
-      const yl = (ld.q && ld.q > 0 ? 0.3 : 0.62) * L;
-      v.text(x0 - hw, yl, lab, { dx: -10, anchor: 'end', size: 10.5, color: 'var(--c-deform)' });
+      v.text(impLabel[0], impLabel[1], lab, { dx: -10, anchor: 'end', size: 10.5, color: 'var(--c-deform)' });
     }
     drawSupports(v, bc, x0, hw, L);
     // Lasten
@@ -216,9 +258,9 @@ function viewSystem(v, app, p, R, li) {
       const d = Math.sign(ld.H);
       v.arrow(x0 - d * hw, L * 0.985, d, 0, { length: 44, label: labels ? `H = ${kN(Math.abs(ld.H))}` : '' });
     }
-    if (ld.q) {
-      const d = Math.sign(ld.q), off = 0.12 * L, xs = x0 - d * (hw + off);
-      v.polygon([[x0 - d * hw, 0], [xs, 0], [xs, L], [x0 - d * hw, L]], { fill: 'var(--c-load-fill)', stroke: 'none', width: 0 });
+    if (qRing) {
+      const d = Math.sign(ld.q);
+      v.polygon(qRing, { fill: 'var(--c-load-fill)', stroke: 'none', width: 0 });
       v.line(xs, 0, xs, L, { stroke: 'var(--c-load)', width: 1.2 });
       for (let i = 1; i < 8; i++) {
         v.line(xs, L * i / 8, x0 - d * hw, L * i / 8, { stroke: 'var(--c-load)', width: 1.1 });
@@ -237,11 +279,9 @@ function viewSystem(v, app, p, R, li) {
     xmin = Math.min(xmin, -hw);
   }
   // Querschnitt-Einsatz rechts
-  let right = pg.x0(pg.axes[pg.axes.length - 1]) + Math.max(pg.hw.y, pg.hw.z);
-  try {
-    const geo = sectionGeometry(p.section);
-    const sc = Math.min(3.5, Math.max(1, 0.22 * L / Math.max(geo.b, geo.h)));
-    const cx = right + 0.18 * L + 0.9 + geo.b * sc / 2, cy = L * 0.78;
+  const ins = lay.inset;
+  if (ins) {
+    const { geo, sc, cx, cy } = ins;
     drawSection(v, geo, p.section, cx, cy, sc);
     if (labels) {
       v.text(cx, cy - geo.h * sc / 2, geo.shape === 'circle' ? `Ø ${fmt(geo.D * 1000, 0)} mm` : `${fmt(geo.b * 1000, 0)} × ${fmt(geo.h * 1000, 0)} mm`, { dy: 14, size: 10.5, color: 'var(--text-2)' });
@@ -253,10 +293,13 @@ function viewSystem(v, app, p, R, li) {
       v.arrow(cx, cy + geo.h * sc / 2 + 0.05, 0, 1, { length: 22, tail: true, color: 'var(--text-3)', head: 6, width: 1.1 });
       v.text(cx, cy + geo.h * sc / 2 + 0.05, 'z', { dx: 8, dy: -20, size: 10.5, color: 'var(--text-3)' });
     }
-    right = cx + geo.b * sc / 2 + 0.3;
-  } catch { /* ungültiger Querschnitt */ }
-  v.setBounds(Math.min(-0.5, xmin - 0.4 - 0.12 * L), -0.15 * L, right + 0.2, L * (pg.axes.length > 1 ? 1.3 : 1.22) + 0.4);
-  if (labels) v.caption(`${p.loadCases[li]?.name || ''} · Bemessungswerte · ${p.norm === 'EC' ? 'EN 1992-1-1' : 'SIA 262'}`);
+  }
+  // Beim Ziehen des Stützenkopfs nicht neu einpassen (der Kopf bleibt dort, wo er losgelassen wurde)
+  const noFit = !!app.stzNoFit;
+  app.stzNoFit = false;
+  v.setBounds(Math.min(-0.5, xmin - 0.4 - 0.12 * L), -0.15 * L, lay.right + 0.2, L * (lay.axes.length > 1 ? 1.3 : 1.22) + 0.4, { noFit });
+  if (!p.loadCases.length) v.caption('Noch keine Lasten – Werkzeug «Last» (F) wählen und den Stützenkopf anklicken');
+  else if (labels) v.caption(`${p.loadCases[li]?.name || ''} · Bemessungswerte · ${p.norm === 'EC' ? 'EN 1992-1-1' : 'SIA 262'} · Elemente anklicken zum Bearbeiten`);
 }
 
 /** Knickfigur eingespannt – gelenkig (k = 4.4934, tan k = k), normiert auf max = 1. */

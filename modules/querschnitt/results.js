@@ -27,14 +27,14 @@ export function caseChecks(R, c) {
     const u = c.uls;
     const M = Math.hypot(c.My, c.Mz), MR = Math.hypot(u.MyR, u.MzR);
     if (u.outside || M < 0.01) {
-      rows.push({ label: `${c.name} · Normalkraft`, ref: bendingRef(R), Ed: c.N, Rd: u.NR, unit: 'kN', eta: u.eta, digits: 0, detail: u.outside ? 'Normalkraft grösser als der zentrische Widerstand' : '' });
+      rows.push({ label: `${c.name} · Normalkraft`, ref: bendingRef(R), Ed: c.N, Rd: u.NR, unit: 'kN', eta: u.eta, digits: 0, detail: u.outside ? 'Normalkraft grösser als der zentrische Widerstand' : '', deriv: `gzt:${c.i}` });
     } else {
-      rows.push({ label: `${c.name} · Biegung mit Normalkraft`, ref: bendingRef(R), Ed: M, Rd: MR, unit: 'kNm', eta: u.eta, digits: 1, detail: `bei N = ${fmt(c.N, 0)} kN${Math.abs(c.Mz) > 1e-6 && Math.abs(c.My) > 1e-6 ? ' (schiefe Biegung, Resultierende)' : ''}` });
+      rows.push({ label: `${c.name} · Biegung mit Normalkraft`, ref: bendingRef(R), Ed: M, Rd: MR, unit: 'kNm', eta: u.eta, digits: 1, detail: `bei N = ${fmt(c.N, 0)} kN${Math.abs(c.Mz) > 1e-6 && Math.abs(c.My) > 1e-6 ? ' (schiefe Biegung, Resultierende)' : ''}`, deriv: `gzt:${c.i}` });
     }
-    if (c.shear) for (const ch of c.shear.checks) rows.push({ ...ch, label: `${c.name} · ${ch.label}`, digits: 0 });
+    if (c.shear) for (const ch of c.shear.checks) rows.push({ ...ch, label: `${c.name} · ${ch.label}`, digits: 0, deriv: `v:${c.i}` });
   } else if (c.sls) {
-    if (c.sls.error) rows.push({ label: `${c.name} · Gebrauchszustand`, detail: c.sls.error, eta: Infinity });
-    for (const ch of c.sls.checks) rows.push({ ...ch, label: `${c.name} · ${ch.label}` });
+    if (c.sls.error) rows.push({ label: `${c.name} · Gebrauchszustand`, detail: c.sls.error, eta: Infinity, deriv: `gzg:${c.i}` });
+    for (const ch of c.sls.checks) rows.push({ ...ch, label: `${c.name} · ${ch.label}`, deriv: `gzg:${c.i}` });
   }
   return rows;
 }

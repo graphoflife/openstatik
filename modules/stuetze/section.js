@@ -86,28 +86,14 @@ export function columnConcreteLaw(c, kind, Ecd, phiEf = 0) {
   return { type: 'concrete', sigma, tangent, epsMin: -ecu, epsMax: Infinity, ec2, ecu, fc, Ec: E0, kind, name: c.name };
 }
 
-/**
- * Betonstahl bilinear (fsd), unempfindlich gegen Rundungsfehler an der Grenzdehnung εud:
- * Das Kerngesetz liefert für |ε| > εud die Spannung 0 (Bruch). Die Bruchebenen des Kerns legen die
- * äussersten Stäbe genau auf εud; wegen cos(3π/2) ≠ 0 liegen einzelne Stäbe um ~1e-17 darüber und
- * fielen sonst aus (Sprünge im Interaktionsdiagramm). Dehnungen bis εud·(1 + 1e-9) zählen daher noch.
- */
-function steelLaw(m) {
-  const law = rebarLaw(m.s, { kind: 'design' });
-  const eu = law.eu, lim = eu * (1 + 1e-9);
-  const sigma = (e) => (e > lim || e < -lim ? 0 : law.sigma(Math.max(-eu, Math.min(eu, e))));
-  const tangent = (e) => (e > lim || e < -lim ? 0 : law.tangent(Math.max(-eu, Math.min(eu, e))));
-  return { ...law, sigma, tangent };
-}
-
 /** Bemessungsgesetze für den Querschnittswiderstand (Parabel-Rechteck, bilinearer Stahl ohne Verfestigung). */
 export function designLaws(m) {
-  return { c: concreteLaw(m.c, { kind: 'design' }), s: steelLaw(m) };
+  return { c: concreteLaw(m.c, { kind: 'design' }), s: rebarLaw(m.s, { kind: 'design' }) };
 }
 
 /** Gesetze für die Stützenberechnung (Verformungen nach Theorie 2. Ordnung). */
 export function columnLaws(m, kind, phiEf) {
-  return { c: columnConcreteLaw(m.c, kind, m.Ecd, phiEf), s: steelLaw(m) };
+  return { c: columnConcreteLaw(m.c, kind, m.Ecd, phiEf), s: rebarLaw(m.s, { kind: 'design' }) };
 }
 
 // ------------------------------------------------------------------ Geometrie

@@ -1,21 +1,21 @@
-// Statischer Bericht Stahlbau: Eingaben, Querschnitt, Schnittgrössen, alle Nachweise mit Formeln und Zwischenwerten
+// Statischer Bericht Stahlbau: Eingaben, Querschnitt, Schnittgrössen, Nachweisübersicht.
+// Den vollständigen Rechenweg (Formeln, eingesetzte Werte, Normbezüge) hängt der Rahmen als
+// «Herleitung der Berechnung» aus derivation.js an.
 import { h } from '../../js/core/ui.js';
 import { fmt } from '../../js/core/format.js';
-import { repTable, repKV, repFigure, repFormula, repP } from '../../js/core/report.js';
+import { repTable, repKV, repFigure, repP } from '../../js/core/report.js';
 import { SYSTEMS, CATEGORIES, normLoad } from './beam.js';
 import { SHAPE_OPTIONS, ref, E_STEEL, G_STEEL } from './calc.js';
 
 const f0 = (x) => fmt(x, 0), f1 = (x) => fmt(x, 1), f2 = (x) => fmt(x, 2), f3 = (x) => fmt(x, 3);
-const kN = (n) => n / 1e3, kNm = (m) => m / 1e6;
+const kNm = (m) => m / 1e6;
 const status = (eta) => (Number.isFinite(eta) && eta <= 1.0001 ? 'erfüllt' : 'nicht erfüllt');
-const etaLine = (Ed, Rd, unit, eta) => `η = ${Ed} / ${Rd} = ${f3(eta)} ${eta <= 1.0001 ? '≤ 1.0 → erfüllt' : '> 1.0 → NICHT ERFÜLLT'}${unit ? '' : ''}`;
-const h3 = (t) => h('h3', {}, t);
 
-/** Momentaufnahme einer Ansicht mit fester Kombinationswahl. */
+/** Momentaufnahme einer Ansicht mit fester Kombinationswahl, ohne Raster und Auswahl des Editors. */
 function snap(app, mode, combo = 'gov') {
-  const prev = app.viewOpts.combo;
-  app.viewOpts.combo = combo;
-  try { return app.snapshot(mode); } finally { app.viewOpts.combo = prev; }
+  const svg = app.snapshot(mode, { viewOpts: { combo } });
+  for (const g of svg.querySelectorAll('.gridlayer, .interact')) g.remove();
+  return svg;
 }
 
 export function buildReport(app) {
@@ -122,157 +122,41 @@ export function buildReport(app) {
   });
   let sec = p.mode === 'forces' ? 5 : 6;
 
-  // ---------------------------------------------------------------- Klassifizierung
-  const u = r.govUls;
-  const kl = u.klass;
-  const clsContent = [
-    repP(`Massgebende Kombination: ${u.combo.name}. Beanspruchung für die Klassifizierung: N = ${f1(Math.max(0, u.Nc))} kN (Druck), My = ${f1(u.MyMax)} kNm, Mz = ${f1(u.MzMax)} kNm.`),
-    repFormula(`ε = √(235 / fy) = √(235 / ${mat.fy}) = ${f3(kl.eps)}`),
+  // ---------------------------------------------------------------- Nachweise (Übersicht)
+  const u = r.govUls, kl = u.klass;
+  const clsRows = kl.parts.filter((pp, i, a) => a.findIndex((q) => q.label === pp.label && q.cls === pp.cls && Math.abs(q.ct - pp.ct) < 1e-9) === i).map((pp) => [
+    pp.label, pp.kind === 'internal' ? 'beidseitig gestützt' : pp.kind === 'tube' ? 'Rohr (d/t)' : 'einseitig gestützt', f2(pp.ct),
+    Number.isFinite(pp.lim[0]) ? f1(pp.lim[0]) : '–', Number.isFinite(pp.lim[1]) ? f1(pp.lim[1]) : '–', Number.isFinite(pp.lim[2]) ? f1(pp.lim[2]) : '–', pp.tension ? '1 (Zug)' : String(pp.cls)]);
+  const st = u.st;
+  const segs = st.segments.filter((x) => x.Mcr);
+  const nachw = [
+    h('h3', {}, `Querschnittsklassifizierung (${ref('class', norm)})`),
+    repP(`Massgebende Kombination ${u.combo.name}: N = ${f1(Math.max(0, u.Nc))} kN (Druck), My = ${f1(u.MyMax)} kNm, Mz = ${f1(u.MzMax)} kNm; ε = ${f3(kl.eps)} → Querschnittsklasse ${u.cls}.`),
+    clsRows.length ? repTable(['Teil', 'Art', { label: 'c/t', num: true }, { label: 'Kl. 1', num: true }, { label: 'Kl. 2', num: true }, { label: 'Kl. 3', num: true }, 'Klasse'], clsRows) : null,
   ];
-  if (kl.parts.length) {
-    clsContent.push(repTable(['Teil', 'Art', { label: 'c/t', num: true }, { label: 'α / ψ', num: true }, { label: 'Grenze Kl. 1', num: true }, { label: 'Kl. 2', num: true }, { label: 'Kl. 3', num: true }, 'Klasse'],
-      kl.parts.filter((pp, i, a) => a.findIndex((q) => q.label === pp.label && q.cls === pp.cls && Math.abs(q.ct - pp.ct) < 1e-9) === i).map((pp) => [
-        pp.label, pp.kind === 'internal' ? 'beidseitig gestützt' : pp.kind === 'tube' ? 'Rohr (d/t)' : 'einseitig gestützt', f2(pp.ct),
-        pp.tension ? 'Zug' : pp.kind === 'tube' ? '–' : `${f2(pp.alpha)} / ${f2(pp.psi)}`,
-        Number.isFinite(pp.lim[0]) ? f1(pp.lim[0]) : '–', Number.isFinite(pp.lim[1]) ? f1(pp.lim[1]) : '–', Number.isFinite(pp.lim[2]) ? f1(pp.lim[2]) : '–', String(pp.cls)])));
-  } else clsContent.push(repP(`Querschnittsklasse ${u.cls} (${kl.note || 'vorgegeben'}).`));
-  clsContent.push(repP(`→ Querschnittsklasse ${u.cls}: ${u.cls <= 2 ? 'plastische Widerstände' : u.cls === 3 ? 'elastische Widerstände' : 'wirksamer Querschnitt nach EN 1993-1-5'}.`));
-  if (u.cls === 4 && u.effs.N) {
-    clsContent.push(repKV([
-      ['Aeff (zentrischer Druck)', u.effs.N.A / 100, 'cm²', 2],
-      ['Weff,y (Biegung y)', u.effs.My.Wy / 1e3, 'cm³', 1],
-      ['Weff,z (Biegung z)', u.effs.Mz.Wz / 1e3, 'cm³', 1],
-      ['Schwerpunktverschiebung eN,y / eN,z', `${f1(u.effs.N.eNy)} / ${f1(u.effs.N.eNz)}`, 'mm'],
+  for (const grp of ['Querschnitt', 'Stabilität']) {
+    const list = r.checks.filter((c) => c.group === grp);
+    if (!list.length) continue;
+    nachw.push(h('h3', {}, grp === 'Querschnitt' ? 'Querschnittsnachweise' : 'Stabilitätsnachweise'));
+    nachw.push(repTable(['Nachweis', 'Norm', 'Kombination / Stelle', { label: 'Ed', num: true }, { label: 'Rd', num: true }, { label: 'η', num: true }],
+      list.map((c) => [c.label, c.ref, [c.comboName, Number.isFinite(c.x) && grp === 'Querschnitt' ? `x = ${f2(c.x)} m` : null, c.seg ? `Segment ${f2(c.seg.x0)} … ${f2(c.seg.x1)} m` : null].filter(Boolean).join(', '), c.Ed !== undefined ? `${f1(c.Ed)} ${c.unit || ''}` : '–', c.Rd !== undefined ? `${f1(c.Rd)} ${c.unit || ''}` : '–', f2(c.eta)])));
+  }
+  if (r.uls.some((x) => x.Nc > 1e-9) || segs.length) {
+    nachw.push(h('h3', {}, 'Kennwerte der Stabilität'));
+    nachw.push(repKV([
+      ['Knicklängen Lcr,y / Lcr,z', `${f2(st.LcrY / 1000)} / ${f2(st.LcrZ / 1000)}`, 'm'],
+      ['Knicklinien y / z', `${st.curveY} / ${st.curveZ}`, ''],
+      ['λ̄y / χy', `${f3(st.lamY)} / ${f3(st.chiY)}`, ''],
+      ['λ̄z / χz', `${f3(st.lamZ)} / ${f3(st.chiZ)}`, ''],
+      st.torsional ? ['λ̄T / χT', `${f3(st.lamT)} / ${f3(st.chiT)}`, ''] : null,
     ]));
-    clsContent.push(repFormula('λ̄p = (c/t) / (28.4·ε·√kσ);  innen: ρ = (λ̄p − 0.055·(3 + ψ)) / λ̄p² ≤ 1;  aussen: ρ = (λ̄p − 0.188) / λ̄p² ≤ 1  (EN 1993-1-5 4.4)'));
-  }
-  out.push({ title: `${sec++} Querschnittsklassifizierung (${ref('class', norm)})`, content: clsContent });
-
-  // ---------------------------------------------------------------- Querschnittsnachweise
-  const ck = (id) => r.checks.find((c) => c.id === id);
-  const csContent = [];
-  const at = (c) => `${c.comboName}${Number.isFinite(c.x) ? `, x = ${f2(c.x)} m` : ''}`;
-  const cN = ck('N');
-  if (cN) {
-    const R = cN.u.R;
-    csContent.push(h3(`Normalkraft (${ref('N', norm)}) – ${at(cN)}`));
-    csContent.push(repFormula(cN.label.includes('Zug')
-      ? `Npl,Rd = A·fy/γM0 = ${f0(s.A)}·${mat.fy}/${f2(g0)} = ${f1(kN(R.NtRd))} kN\nNEd = ${f1(cN.Ed)} kN → ${etaLine(f1(cN.Ed), f1(cN.Rd), 'kN', cN.eta)}`
-      : `Nc,Rd = ${R.cls === 4 ? 'Aeff' : 'A'}·fy/γM0 = ${f0(R.Aeff)}·${mat.fy}/${f2(g0)} = ${f1(kN(R.NcRd))} kN\nNEd = ${f1(cN.Ed)} kN → ${etaLine(f1(cN.Ed), f1(cN.Rd), 'kN', cN.eta)}`));
-  }
-  const cV = ck('Vz');
-  if (cV) {
-    const R = cV.u.R;
-    csContent.push(h3(`Querkraft Vz (${ref('V', norm)}) – ${at(cV)}`));
-    csContent.push(repFormula(`Av,z = ${f0(R.Avz)} mm²\nVpl,z,Rd = Av,z·(fy/√3)/γM0 = ${f0(R.Avz)}·(${mat.fy}/√3)/${f2(g0)} = ${f1(kN(R.VplzRd))} kN\nVEd = ${f1(cV.Ed)} kN → ${etaLine(f1(cV.Ed), f1(cV.Rd), 'kN', cV.eta)}${R.hwtw ? `\nSchubbeulen: hw/tw = ${f1(R.hwtw)} ${R.hwtw <= R.hwtwLim ? '≤' : '>'} 72·ε/η = ${f1(R.hwtwLim)}${R.hwtw <= R.hwtwLim ? ' → kein Schubbeulnachweis erforderlich' : ` → λ̄w = ${f3(R.lamw)}, χw = ${f3(R.chiw)}, Vb,Rd = ${f1(kN(R.VbRd))} kN`}` : ''}`));
-  }
-  const cVy = ck('Vy');
-  if (cVy) {
-    const R = cVy.u.R;
-    csContent.push(h3(`Querkraft Vy – ${at(cVy)}`));
-    csContent.push(repFormula(`Vpl,y,Rd = Av,y·(fy/√3)/γM0 = ${f0(R.Avy)}·(${mat.fy}/√3)/${f2(g0)} = ${f1(kN(R.VplyRd))} kN\n${etaLine(f1(cVy.Ed), f1(cVy.Rd), 'kN', cVy.eta)}`));
-  }
-  const cMy = ck('My');
-  if (cMy) {
-    const R = cMy.u.R, csr = cMy.u.cs.My;
-    const W = R.cls <= 2 ? 'Wpl,y' : R.cls === 3 ? 'Wel,y' : 'Weff,y';
-    let t = `Mc,y,Rd = ${W}·fy/γM0 = ${f0(R.Wy / 1e3)}·10³·${mat.fy}/${f2(g0)} = ${f1(kNm(R.McyRd))} kNm`;
-    if (csr.rho > 0) t += `\nVEd > 0.5·Vpl,Rd → ρ = (2·VEd/Vpl,Rd − 1)² = ${f3(csr.rho)}\nMy,V,Rd = (${W} − ρ·Aw²/(4·tw))·fy/γM0 = ${f1(cMy.Rd)} kNm`;
-    t += `\nMy,Ed = ${f1(cMy.Ed)} kNm → ${etaLine(f1(cMy.Ed), f1(cMy.Rd), 'kNm', cMy.eta)}`;
-    csContent.push(h3(`Biegung um y (${ref('M', norm)}) – ${at(cMy)}`), repFormula(t));
-  }
-  const cMz = ck('Mz');
-  if (cMz) {
-    const R = cMz.u.R;
-    const W = R.cls <= 2 ? 'Wpl,z' : R.cls === 3 ? 'Wel,z' : 'Weff,z';
-    csContent.push(h3(`Biegung um z (${ref('M', norm)}) – ${at(cMz)}`), repFormula(`Mc,z,Rd = ${W}·fy/γM0 = ${f1(R.Wz / 1e3)}·10³·${mat.fy}/${f2(g0)} = ${f1(kNm(R.MczRd))} kNm\nMz,Ed = ${f1(cMz.Ed)} kNm → ${etaLine(f1(cMz.Ed), f1(cMz.Rd), 'kNm', cMz.eta)}`));
-  }
-  const cNM = ck('NM');
-  if (cNM) {
-    const nm = cNM.u.cs.NM, R = cNM.u.R;
-    let t = `Stelle massgebend: NEd = ${f1(nm.N)} kN, My,Ed = ${f1(nm.My)} kNm, Mz,Ed = ${f1(nm.Mz)} kNm\nVerfahren: ${nm.method}`;
-    if (nm.MNy !== undefined) {
-      t += `\nn = NEd/Npl,Rd = ${f3(nm.n)}${nm.a !== undefined ? `,  a = (A − 2·b·tf)/A ≤ 0.5 = ${f3(nm.a)}` : ''}`;
-      t += `\nMN,y,Rd = ${f1(kNm(nm.MNy))} kNm,  MN,z,Rd = ${f1(kNm(nm.MNz))} kNm,  α = ${f2(nm.alpha)},  β = ${f2(nm.beta)}`;
-      t += `\n[My,Ed/MN,y,Rd]^α + [Mz,Ed/MN,z,Rd]^β → η = ${f3(cNM.eta)} → ${status(cNM.eta)}`;
-    } else {
-      t += `\nNEd/NRd + (My,Ed + ΔMy)/My,Rd + (Mz,Ed + ΔMz)/Mz,Rd = ${f3(cNM.eta)} → ${status(cNM.eta)}`;
-      if (R.cls === 4) t += `\nΔMy = NEd·eN,z = ${f2(kNm(nm.dMy || 0))} kNm, ΔMz = NEd·eN,y = ${f2(kNm(nm.dMz || 0))} kNm`;
+    if (segs.length) {
+      nachw.push(repTable(['Kippsegment [m]', { label: 'My,Ed [kNm]', num: true }, { label: 'Mcr [kNm]', num: true }, 'Ermittlung', { label: 'λ̄LT', num: true }, { label: 'χLT', num: true }, { label: 'Mb,Rd [kNm]', num: true }],
+        segs.map((x) => [`${f2(x.x0)} … ${f2(x.x1)}`, f1(x.MyEd), f1(kNm(x.Mcr)), x.mcrBy === 'formula' ? `C1 = ${f3(x.C1)}, C2 = ${f3(x.C2)}` : 'Eigenwertanalyse', f3(x.lamLT), f3(x.chiLT), f1(kNm(x.MbRd))])));
     }
-    csContent.push(h3(`${cNM.label} (${ref('NM', norm)}) – ${at(cNM)}`), repFormula(t));
-  }
-  out.push({ title: `${sec++} Querschnittsnachweise`, content: csContent.length ? csContent : [repP('Keine Querschnittsbeanspruchung.')] });
-
-  // ---------------------------------------------------------------- Stabilität
-  const stContent = [];
-  const cNb = ck('Nbz') || ck('Nby');
-  if (cNb) {
-    const st = cNb.u.st;
-    const NRk = st.NRk;
-    stContent.push(h3(`Biegeknicken (${ref('Nb', norm)}) – ${cNb.comboName}`));
-    stContent.push(repFormula(
-      `NEd = ${f1(kN(st.NEd))} kN,  NRk = ${cNb.u.R.cls === 4 ? 'Aeff' : 'A'}·fy = ${f1(kN(NRk))} kN\n`
-      + `y-y: Lcr,y = ${f3(st.LcrY / 1000)} m,  Ncr,y = π²·E·Iy/Lcr,y² = ${f1(kN(st.NcrY))} kN,  λ̄y = √(NRk/Ncr,y) = ${f3(st.lamY)}\n`
-      + `     Knicklinie ${st.curveY} (α = ${f2(st.alphaY)}),  Φy = 0.5·[1 + α·(λ̄y − 0.2) + λ̄y²] = ${f3(st.PhiY)},  χy = 1/(Φy + √(Φy² − λ̄y²)) = ${f3(st.chiY)}\n`
-      + `     Nb,y,Rd = χy·NRk/γM1 = ${f1(kN(st.NbyRd))} kN → η = ${f3(st.NEd / st.NbyRd)}\n`
-      + `z-z: Lcr,z = ${f3(st.LcrZ / 1000)} m,  Ncr,z = π²·E·Iz/Lcr,z² = ${f1(kN(st.NcrZ))} kN,  λ̄z = √(NRk/Ncr,z) = ${f3(st.lamZ)}\n`
-      + `     Knicklinie ${st.curveZ} (α = ${f2(st.alphaZ)}),  Φz = ${f3(st.PhiZ)},  χz = ${f3(st.chiZ)}\n`
-      + `     Nb,z,Rd = χz·NRk/γM1 = ${f1(kN(st.NbzRd))} kN → η = ${f3(st.NEd / st.NbzRd)}`));
-    if (st.torsional) {
-      stContent.push(h3(`${s.type === 'U' ? 'Biegedrillknicken unter Druck' : 'Drillknicken'} (${ref('NbT', norm)})`));
-      stContent.push(repFormula(
-        `i0² = iy² + iz²${s.type === 'U' ? ' + y0²' : ''} = ${f0(st.i02)} mm²,  LT = kw·L = ${f3(st.LT / 1000)} m\n`
-        + `Ncr,T = (G·It + π²·E·Iw/LT²)/i0² = ${f1(kN(st.NcrT))} kN${s.type === 'U' ? `,  Ncr,TF (gekoppelt mit Ncr,y) = ${f1(kN(st.NcrTF))} kN` : ''}\n`
-        + `λ̄T = √(NRk/Ncr) = ${f3(st.lamT)},  Knicklinie ${st.curveZ}: χT = ${f3(st.chiT)},  Nb,Rd = ${f1(kN(st.NbTRd))} kN → η = ${f3(st.NEd / st.NbTRd)}`));
-    }
-  }
-  const cLT = ck('Mb');
-  if (cLT) {
-    const sg = cLT.seg, st = cLT.u.st;
-    stContent.push(h3(`Biegedrillknicken – Kippen (${ref('Mb', norm)}) – ${cLT.comboName}`));
-    let t = `Kippsegment ${f2(sg.x0)} … ${f2(sg.x1)} m (L = ${f3(sg.L)} m), My,Ed = ${f1(sg.MyEd)} kNm\n`;
-    if (sg.mcrBy === 'formula') {
-      const fo = sg.formula;
-      t += `C1 = ${f3(sg.C1)}, C2 = ${f3(sg.C2)} (${sg.csrc}),  k = ${f2(sg.k)}, kw = ${f2(sg.kw)},  zg = ${f0(sg.zg)} mm\n`
-        + `Mcr = C1·π²·E·Iz/(k·L)²·{√[(k/kw)²·Iw/Iz + (k·L)²·G·It/(π²·E·Iz) + (C2·zg)²] − C2·zg}\n`
-        + `    = ${f3(sg.C1)}·${f1(kN(fo.Ncrz))} kN·{√[${f0(fo.t1)} + ${f0(fo.t2)} + ${f0(fo.t3)}] − ${f1(sg.C2 * sg.zg)}} mm = ${f1(kNm(sg.Mcr))} kNm\n`;
-    } else {
-      t += `Mcr aus Eigenwertanalyse (${sg.csrc}): αcr = ${f3(sg.lambdaCr)} → Mcr = αcr·My,Ed = ${f1(kNm(sg.Mcr))} kNm (entspricht C1 = ${f3(sg.C1eq)} bezogen auf das konstante Moment)\n`;
-    }
-    const lt = sg.lt;
-    const W = cLT.u.R.cls <= 2 ? 'Wpl,y' : cLT.u.R.cls === 3 ? 'Wel,y' : 'Weff,y';
-    const meth = { general: 'EN 1993-1-1 6.3.2.2 (allgemein)', rolled: 'EN 1993-1-1 6.3.2.3 (Walzprofile)', sia: 'SIA 263 (αLT = 0.21 gewalzt / 0.49 geschweisst, λ̄LT,0 = 0.4)' }[st.ltbMethod];
-    t += `λ̄LT = √(${W}·fy/Mcr) = √(${f0(cLT.u.R.Wy / 1e3)}·10³·${mat.fy}/${f1(kNm(sg.Mcr))}·10⁶) = ${f3(sg.lamLT)}\n`
-      + `Verfahren: ${meth}; Kipplinie ${sg.curveLT}, αLT = ${f2(sg.alphaLT)}, λ̄LT,0 = ${f2(lt.lam0)}, β = ${f2(lt.beta)}\n`
-      + `ΦLT = 0.5·[1 + αLT·(λ̄LT − λ̄LT,0) + β·λ̄LT²] = ${f3(lt.Phi)},  χLT = 1/(ΦLT + √(ΦLT² − β·λ̄LT²)) = ${f3(lt.chi)}`;
-    if (st.ltbMethod === 'rolled') t += `\nkc = ${f3(sg.kc)},  f = 1 − 0.5·(1 − kc)·[1 − 2·(λ̄LT − 0.8)²] = ${f3(lt.f)},  χLT,mod = χLT/f = ${f3(lt.chiMod)}`;
-    t += `\nMb,Rd = χLT·${W}·fy/γM1 = ${f1(cLT.Rd)} kNm\nMy,Ed = ${f1(cLT.Ed)} kNm → ${etaLine(f1(cLT.Ed), f1(cLT.Rd), 'kNm', cLT.eta)}`;
-    stContent.push(repFormula(t));
-    if (cLT.u.st.segments.length > 1) {
-      stContent.push(repTable(['Segment [m]', { label: 'My,Ed [kNm]', num: true }, { label: 'Mcr [kNm]', num: true }, 'Ermittlung', { label: 'λ̄LT', num: true }, { label: 'χLT', num: true }, { label: 'Mb,Rd [kNm]', num: true }, { label: 'η', num: true }],
-        cLT.u.st.segments.filter((x) => x.Mcr).map((x) => [`${f2(x.x0)} … ${f2(x.x1)}`, f1(x.MyEd), f1(kNm(x.Mcr)), x.mcrBy === 'formula' ? `C1 = ${f3(x.C1)}` : 'FE', f3(x.lamLT), f3(x.chiLT), f1(kNm(x.MbRd)), f2(x.etaLT)])));
-    }
-  } else if (!r.govUls.st.ltbActive) stContent.push(h3('Biegedrillknicken – Kippen'), repP(`Kein Kippnachweis erforderlich: ${r.govUls.st.ltbReason || 'nicht massgebend'}.`));
-  const c61 = ck('int61'), c62 = ck('int62');
-  if (c61 || c62) {
-    const c = (c62 && (!c61 || c62.eta >= c61.eta)) ? c62 : c61;
-    const sg = c.seg, R = c.u.R, st = c.u.st;
-    stContent.push(h3(`Interaktion Normalkraft und Biegung (${ref('int', norm)}) – ${c.comboName}`));
-    stContent.push(repFormula(
-      `Segment ${f2(sg.x0)} … ${f2(sg.x1)} m: NEd = ${f1(sg.NEd)} kN, My,Ed = ${f1(sg.MyEd)} kNm, Mz,Ed = ${f1(sg.MzEd)} kNm\n`
-      + `Querschnittsklasse ${R.cls} → ${R.cls <= 2 ? 'plastische' : 'elastische'} Interaktionsbeiwerte, ${sg.susceptible ? 'verdrehweich (Tab. B.2)' : 'verdrehsteif bzw. gehalten (Tab. B.1)'}\n`
-      + `Cmy = ${f3(sg.Cmy.Cm)}, Cmz = ${f3(sg.Cmz.Cm)}, CmLT = ${f3(Math.max(0.4, sg.CmLT.Cm))}  (Tab. B.3)\n`
-      + `nY = NEd/(χy·NRk/γM1) = ${f3(sg.nY)},  nZ = NEd/(χz·NRk/γM1) = ${f3(sg.nZ)},  χLT = ${f3(sg.chiLT)}\n`
-      + `kyy = ${f3(sg.kf.kyy)}, kyz = ${f3(sg.kf.kyz)}, kzy = ${f3(sg.kf.kzy)}, kzz = ${f3(sg.kf.kzz)}\n`
-      + `(6.61): NEd/(χy·NRk/γM1) + kyy·(My,Ed + ΔMy)/(χLT·My,Rk/γM1) + kyz·(Mz,Ed + ΔMz)/(Mz,Rk/γM1)\n`
-      + `      = ${f3(sg.terms.tN1)} + ${f3(sg.kf.kyy)}·${f3(sg.terms.tMy)} + ${f3(sg.kf.kyz)}·${f3(sg.terms.tMz)} = ${f3(sg.int61)} → ${status(sg.int61)}\n`
-      + `(6.62): NEd/(χz·NRk/γM1) + kzy·(My,Ed + ΔMy)/(χLT·My,Rk/γM1) + kzz·(Mz,Ed + ΔMz)/(Mz,Rk/γM1)\n`
-      + `      = ${f3(sg.terms.tN2)} + ${f3(sg.kf.kzy)}·${f3(sg.terms.tMy)} + ${f3(sg.kf.kzz)}·${f3(sg.terms.tMz)} = ${f3(sg.int62)} → ${status(sg.int62)}`
-      + (st.torsional && sg.chiZN < st.chiZ ? `\n(im Normalkraftterm von 6.62 ist χz durch χT = ${f3(st.chiT)} ersetzt, da Drillknicken massgebend)` : '')));
-  }
-  const cT = ck('intT');
-  if (cT) stContent.push(h3('Kippen mit Biegung um z bei Zugkraft'), repFormula(`My,Ed/Mb,Rd + Mz,Ed/Mz,Rd = ${f3(cT.eta)} → ${status(cT.eta)} (Zugkraft günstig vernachlässigt)`));
-  out.push({ title: `${sec++} Stabilitätsnachweise`, content: stContent.length ? stContent : [repP('Keine Stabilitätsnachweise erforderlich (keine Druckkraft und kein kippgefährdendes Moment).')] });
+  } else if (!st.ltbActive) nachw.push(repP(`Kippen: kein Nachweis erforderlich (${st.ltbReason || 'nicht massgebend'}).`));
+  nachw.push(repP('Der vollständige Rechenweg aller Nachweise steht im Abschnitt «Herleitung der Berechnung» am Ende des Berichts.'));
+  out.push({ title: `${sec++} Nachweise der Tragsicherheit`, content: nachw.filter(Boolean) });
 
   // ---------------------------------------------------------------- Gebrauchstauglichkeit
   if (p.mode !== 'forces' && r.sls.length) {

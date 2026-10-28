@@ -9,8 +9,10 @@ import {
 import { linearTable, materials, sectionGeometry, fiberSection, designLaws, layerize, mkTable, evalMK, axisProps } from '../modules/stuetze/section.js';
 import {
   compute, prepare, analyzeAxis, defaultProject, simplifiedMethod, inclination, lambdaLimEC,
-  biaxialExponent, nominalStiffness,
+  biaxialExponent, nominalStiffness, missingInput, suggestN, supportState, presetFor, setSupportState, SUPPORT_PRESETS, normalize,
 } from '../modules/stuetze/calc.js';
+import { editorSpec } from '../modules/stuetze/editing.js';
+import { derivation } from '../modules/stuetze/derivation.js';
 import { EXAMPLES } from '../modules/stuetze/examples.js';
 import { capacityAtN } from '../js/core/rcsection.js';
 
@@ -330,4 +332,101 @@ test('Achswerte: Trägheitsradius und Nutzhöhe', () => {
   near(pz.i, 0.3 / Math.sqrt(12), 1e-12, 'i_z');
   near(py.d, 0.45, 1e-9, 'd_y = h − a');
   near(pz.d, 0.25, 1e-9, 'd_z = b − a');
+});
+
+// ------------------------------------------------------------------ Leeres Projekt, grafische Bearbeitung, Herleitung
+
+test('Startprojekt ist neutral: Stütze ohne Lasten, Berechnung meldet fehlende Eingabe', () => {
+  const p = defaultProject();
+  assert.equal(p.loadCases.length, 0);
+  assert.equal(p.L, 3);
+  assert.equal(p.support, 'pinned');
+  assert.deepEqual([p.section.b, p.section.h, p.section.nb, p.section.nh, p.section.dia], [300, 300, 2, 2, 16]);
+  assert.match(missingInput(p).hint, /Werkzeug «Last»/);
+  assert.match(missingInput({ ...p, loadCases: [{ name: 'LF 1', N: 0 }] }).msg, /enthält noch keine Lasten/);
+  assert.equal(missingInput({ ...p, loadCases: [{ name: 'LF 1', N: 0, Hz: 5 }] }), null);
+  for (const ex of EXAMPLES) assert.equal(missingInput(ex.project()), null, ex.name);
+  // Vorschlag N ≈ 0.3·A_c·f_cd = 0.3·0.09·20·1000 = 540 kN → 550 kN
+  assert.equal(suggestN(p), 550);
+});
+
+test('Lagerung je Stützenende: Standardfälle werden erkannt, sonst benutzerdefiniert', () => {
+  for (const key of Object.keys(SUPPORT_PRESETS).filter((k) => k !== 'custom')) {
+    assert.equal(presetFor(supportState({ ...defaultProject(), support: key }, 'y')), key, key);
+  }
+  const p = defaultProject();
+  setSupportState(p, 'y', { ...supportState(p, 'y'), bot: 'fixed', top: 'pinned', sway: true });
+  assert.equal(p.support, 'cantilever');
+  setSupportState(p, 'y', { ...supportState(p, 'y'), top: 'spring', kTop: 15 });
+  assert.equal(p.support, 'custom');
+  assert.deepEqual([p.custom.bot, p.custom.top, p.custom.sway, p.custom.kTop], ['fixed', 'spring', true, 15]);
+  // Änderung für Biegung um z trennt die Lagerung der Richtungen, y bleibt
+  setSupportState(p, 'z', { ...supportState(p, 'z'), top: 'fixed', sway: false });
+  assert.equal(p.supportZ, 'fixedFixed');
+  assert.equal(p.support, 'custom');
+});
+
+function fakeApp(project, mode = 'system') {
+  const log = [];
+  return { project: normalize(project), viewMode: mode, viewOpts: { lc: 0 }, results: null, view: { px: (n) => n / 100 }, status: (t) => log.push(t), log };
+}
+
+test('Grafische Bearbeitung: Kopf ziehen ändert L, Werkzeuge legen Lasten an', () => {
+  const app = fakeApp(defaultProject());
+  const g = editorSpec.geometry(app);
+  const top = g.points.find((q) => q.id === 'top:y');
+  assert.deepEqual(top.p, [0, 3]);
+  assert.ok(top.movable && !g.points.find((q) => q.id === 'bot:y').movable);
+  assert.ok(g.regions.some((r) => r.id === 'col:y') && g.regions.some((r) => r.id === 'sec'));
+  // Last auf den Kopf: Lastfall mit vorgeschlagener Normalkraft
+  assert.deepEqual(editorSpec.pick(app, 'load', { type: 'point', id: 'top:y', item: top }), ['top:y']);
+  assert.equal(app.project.loadCases.length, 1);
+  assert.equal(app.project.loadCases[0].N, 550);
+  // Streckenlast auf die Stütze
+  assert.deepEqual(editorSpec.pick(app, 'dist', { type: 'region', id: 'col:y' }), ['q:y']);
+  assert.equal(app.project.loadCases[0].qz, 5);
+  const g2 = editorSpec.geometry(app);
+  assert.ok(g2.regions.some((r) => r.id === 'q:y') && g2.points.some((q) => q.id === 'N:y'));
+  // Kopf ziehen
+  editorSpec.move(app, ['top:y'], [0.3, 1.5]);
+  assert.equal(app.project.L, 4.5);
+  editorSpec.move(app, ['top:y'], [0, -10]);
+  assert.equal(app.project.L, 4.5, 'zu kurze Stütze wird abgelehnt');
+  editorSpec.move(app, ['col:y'], [0, 1]);
+  assert.equal(app.project.L, 4.5, 'nur der Kopf ist verschiebbar');
+  // Querschnittsansicht: Stäbe und Querschnitt sind anklickbar
+  const gs = editorSpec.geometry({ ...app, viewMode: 'section' });
+  assert.equal(gs.points.filter((q) => q.id.startsWith('bar:')).length, 4);
+  assert.equal(gs.regions[0].id, 'qs');
+  // Zwei Biegeebenen: Elemente je Achse
+  const two = fakeApp({ ...EXAMPLES[1].project(), supportZ: 'pinned' });
+  const ids = editorSpec.geometry(two).points.map((q) => q.id);
+  assert.ok(ids.includes('top:y') && ids.includes('top:z'));
+});
+
+test('Herleitung: alle Nachweise verlinkt, Werte stimmen mit der Berechnung überein', () => {
+  const R = compute(handProject({ norm: 'SIA', creep: { phi: 2, ratio: 0.7 } }));
+  const app = { results: R, project: R.p, viewOpts: { lc: 0 }, editor: null, derivTarget: null };
+  const secs = derivation(app);
+  const ids = new Set(secs.map((x) => x.id));
+  for (const c of [...R.lcs[0].checks, ...R.lcs[0].simpChecks]) {
+    if (c.deriv.endsWith('-z')) continue;
+    assert.ok(ids.has(c.deriv), `Abschnitt ${c.deriv}`);
+  }
+  const txt = JSON.stringify(secs);
+  assert.ok(!/NaN|undefined|Infinity/.test(txt), 'keine ungültigen Zahlen');
+  // f_cd = (30/30)^(1/3)·30/1.5 = 20.00 MPa, E_cd = 10 000·38^(1/3)/1.2 = 33 619.8/1.2 = 28 016 MPa
+  const bs = secs.find((x) => x.id === 'baustoffe').steps.filter(Boolean);
+  assert.ok(bs.some((st) => /20[.,]00 MPa/.test(st.r)), 'f_cd');
+  assert.ok(bs.some((st) => /28.?016 MPa/.test(st.r)), 'E_cd');
+  const A = R.lcs[0].Y;
+  assert.equal(secs.find((x) => x.id === 'allg-y').result.eta, A.etaU);
+  assert.equal(secs.find((x) => x.id === 'vereinf-y').result.eta, A.simp.eta);
+  // Link auf die z-Achse zeigt die Herleitung für Biegung um z
+  const secZ = derivation({ ...app, derivTarget: 'allg-z' });
+  assert.ok(secZ.some((x) => x.id === 'allg-z') && !secZ.some((x) => x.id === 'allg-y'));
+  // EC: Nennkrümmungsverfahren mit K_r und K_φ
+  const RE = compute(handProject());
+  const se = derivation({ ...app, results: RE, project: RE.p });
+  assert.ok(se.find((x) => x.id === 'vereinf-y').steps.some((st) => /K_r/.test(st.f || '')));
 });

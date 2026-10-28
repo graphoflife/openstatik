@@ -440,17 +440,21 @@ export const LAMBDA_GRID = (() => {
  * Traglastsuche durch proportionale Laststeigerung: alle Lasten (N, H, q, M) werden mit λ
  * multipliziert, die Vorverformung bleibt geometrisch fest. Für jede Laststufe wird die
  * M-κ-Beziehung bei N = λ·Nd neu ermittelt (tableAt(λ)).
- * Liefert {lambdaU, reason, capped, states:[{lambda, u}], at1 (Zustand bei λ = 1 oder null)}.
+ * Liefert {lambdaU, reason, capped, states:[{lambda, u}], at1 (Zustand bei λ = 1 oder null),
+ * stats: {solves (Gleichgewichtslösungen), iters (Newton-Iterationen gesamt)}}.
  */
 export function ultimateScan(model, tableAt, Nd, Fd, g0, opts = {}) {
   const grid = opts.grid || LAMBDA_GRID;
   const states = [];
   let uOk = new Float64Array(model.n), lamOk = 0, lamFail = null, reason = null, at1 = null;
   const F = (lam) => Fd.map((v) => v * lam);
+  const stats = { solves: 0, iters: 0 };
   const trial = (lam, u0) => {
     const tab = tableAt(lam);
     if (!tab) return { ok: false, reason: 'axial' };
-    return solveNonlinear(model, tab, lam * Nd, F(lam), g0, u0);
+    const r = solveNonlinear(model, tab, lam * Nd, F(lam), g0, u0);
+    stats.solves++; stats.iters += r.iter || 0;
+    return r;
   };
   for (const lam of grid) {
     if (opts.stopAt !== undefined && lam > opts.stopAt + 1e-12) break;
@@ -458,11 +462,11 @@ export function ultimateScan(model, tableAt, Nd, Fd, g0, opts = {}) {
     if (r.ok) {
       states.push({ lambda: lam, u: r.u, kapMax: r.kapMax });
       uOk = r.u; lamOk = lam;
-      if (Math.abs(lam - 1) < 1e-12) at1 = { lambda: 1, u: r.u, kapMax: r.kapMax };
+      if (Math.abs(lam - 1) < 1e-12) at1 = { lambda: 1, u: r.u, kapMax: r.kapMax, iter: r.iter };
     } else { lamFail = lam; reason = r.reason; break; }
   }
-  if (opts.stopAt !== undefined) return { lambdaU: lamOk, states, at1, reason, capped: lamFail === null };
-  if (lamFail === null) return { lambdaU: lamOk, reason: 'capped', capped: true, states, at1 };
+  if (opts.stopAt !== undefined) return { lambdaU: lamOk, states, at1, reason, capped: lamFail === null, stats };
+  if (lamFail === null) return { lambdaU: lamOk, reason: 'capped', capped: true, states, at1, stats };
   const bis = opts.bisections ?? 10;
   for (let i = 0; i < bis; i++) {
     const lam = (lamOk + lamFail) / 2;
@@ -470,5 +474,5 @@ export function ultimateScan(model, tableAt, Nd, Fd, g0, opts = {}) {
     if (r.ok) { states.push({ lambda: lam, u: r.u, kapMax: r.kapMax }); uOk = r.u; lamOk = lam; } else { lamFail = lam; reason = r.reason; }
   }
   states.sort((a, b) => a.lambda - b.lambda);
-  return { lambdaU: lamOk, reason, capped: false, states, at1 };
+  return { lambdaU: lamOk, reason, capped: false, states, at1, stats };
 }

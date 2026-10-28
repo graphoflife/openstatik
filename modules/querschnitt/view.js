@@ -1,6 +1,7 @@
-// Querschnitt – Grafik: Geometrie, Dehnungen, Spannungen; Vorzeichenskizze; Trefferprüfung
+// Querschnitt – Grafik: Geometrie, Dehnungen, Spannungen; Vorzeichenskizze
 //
-// Weltkoordinaten der Grafik in m (y nach rechts, z nach oben). Farbgebung der Zustände:
+// Weltkoordinaten der Grafik in mm (y nach rechts, z nach oben) – dieselben Einheiten wie die Eingabe und der
+// grafische Editor. Der Rechenkern liefert m; Dehnungsgradienten werden auf 1/mm umgerechnet. Farbgebung der Zustände:
 // Druck (negativ) blau = var(--c-pos…), Zug (positiv) rosé = var(--c-neg…) – passend zur
 // divergierenden Farbskala aus colormap.js (negativ blau, positiv rosé).
 
@@ -9,8 +10,11 @@ import { diverging } from '../../js/core/colormap.js';
 import { fmt } from '../../js/core/format.js';
 import { projectGeometry, bounds } from './shapes.js';
 import { grossProps } from './calc.js';
+import { hasOutline } from './model.js';
 
 const MM = 1e-3;
+/** m → mm */
+const toMm = (v) => v / MM;
 
 export const STATE_OPTIONS = [
   { value: 'auto', label: 'nach Lastfalltyp' },
@@ -45,12 +49,6 @@ export function viewState(app, c) {
 }
 
 // ------------------------------------------------------------------ Hilfen
-
-const toM = (pts) => pts.map(([y, z]) => [y * MM, z * MM]);
-
-function geomM(g) {
-  return { outer: toM(g.outer), holes: g.holes.map(toM), bars: g.bars.map((b) => ({ y: b.y * MM, z: b.z * MM, d: b.d, i: b.i })) };
-}
 
 /** Polygon auf den Bereich g(p) ≥ 0 beschneiden (Sutherland–Hodgman, g linear). */
 function clipHalf(pts, g) {
@@ -132,10 +130,21 @@ function caption(v, text) { if (text) v.caption(text); }
  * Modellgrenzen setzen und Platz für Bildschirmelemente freihalten (Farblegende oben rechts,
  * Zeichenerklärung unten links), indem die Grenzen um die geschätzte Pixelbreite erweitert werden.
  */
-function setBoundsReserved(v, x0, y0, x1, y1, padR = 0, padB = 0) {
+function setBoundsReserved(v, x0, y0, x1, y1, padR = 0, padB = 0, fitKey = null) {
   const s = Math.min((v.width - 96 - padR) / Math.max(x1 - x0, 1e-6), (v.height - 96 - padB) / Math.max(y1 - y0, 1e-6));
   if (s > 0 && Number.isFinite(s)) { x1 += padR / s; y0 -= padB / s; }
-  v.setBounds(x0, y0, x1, y1);
+  // Beim Bearbeiten (Ziehen von Punkten, Setzen von Stäben) nicht neu einpassen – nur wenn sich Darstellung,
+  // Form oder Vorlagenmasse ändern bzw. ein Projekt geladen wird.
+  const same = fitKey !== null && fitKey === lastFitKey;
+  lastFitKey = fitKey;
+  v.setBounds(x0, y0, x1, y1, { noFit: same });
+}
+let lastFitKey = null;
+
+/** Schlüssel für das automatische Einpassen. */
+function fitKeyOf(app, mode) {
+  const sh = app.project.shape;
+  return `${mode}|${sh.type}|${sh.type === 'poly' ? hasOutline(app.project) : JSON.stringify(sh[sh.type])}`;
 }
 
 // ------------------------------------------------------------------ Geometrie
@@ -208,7 +217,6 @@ function drawAxes(v, gp, size) {
 }
 
 function drawBars(v, app, bars, opts = {}) {
-  const sel = app.selection?.kind === 'bar' ? app.selection.index : -1;
   const showLabels = app.viewOpts.labels && bars.length <= 48;
   // Beschriftungen ausdünnen: gleiche Werte in der Nähe nur einmal (z.B. Stablagen)
   const placed = [];
@@ -220,11 +228,10 @@ function drawBars(v, app, bars, opts = {}) {
     return true;
   };
   for (const b of bars) {
-    const r = b.d * MM / 2;
+    const r = b.d / 2;
     const fill = opts.fill ? opts.fill(b) : 'var(--c-rebar)';
     const el = v.circle(b.y, b.z, r, { fill, stroke: opts.stroke || 'var(--c-struct)', width: opts.stroke ? 1 : 0.6 });
-    el.append(svgEl('title', { text: opts.title ? opts.title(b) : `Stab ${b.i + 1}: Ø${b.d} mm, y = ${fmt(b.y / MM, 0)} mm, z = ${fmt(b.z / MM, 0)} mm` }));
-    if (b.i === sel) v.circle(b.y, b.z, r + v.px(4), { fill: 'none', stroke: 'var(--c-highlight)', width: 2.5 });
+    el.append(svgEl('title', { text: opts.title ? opts.title(b) : `Stab ${b.i + 1}: Ø${b.d} mm, y = ${fmt(b.y, 0)} mm, z = ${fmt(b.z, 0)} mm` }));
     if (showLabels && opts.label) {
       const lab = opts.label(b);
       if (lab && free(b, lab)) {
@@ -236,41 +243,57 @@ function drawBars(v, app, bars, opts = {}) {
   }
 }
 
+/** Leeres Projekt: Zeichenfläche mit Ursprung, allfälligen Stäben/Aussparungen und Hinweis. */
+function renderEmpty(v, app, g) {
+  const p = app.project;
+  const pts = [...g.bars.map((b) => [b.y, b.z]), ...g.holes.flat()];
+  const bb = pts.length ? bounds(pts) : null;
+  const x0 = Math.min(-400, bb ? bb.ymin - 100 : 0), x1 = Math.max(400, bb ? bb.ymax + 100 : 0);
+  const y0 = Math.min(-100, bb ? bb.zmin - 100 : 0), y1 = Math.max(700, bb ? bb.zmax + 100 : 0);
+  setBoundsReserved(v, x0, y0, x1, y1, 0, 0, fitKeyOf(app, 'geometrie'));
+  for (const h of g.holes) v.polygon(h, { fill: 'none', stroke: 'var(--c-concrete-line)', width: 1, dash: '5 3' });
+  // Begonnenes Polygon (weniger als 3 Eckpunkte) andeuten
+  const part = (p.shape.poly || []).filter((r) => Number.isFinite(r?.y) && Number.isFinite(r?.z)).map((r) => [r.y, r.z]);
+  if (part.length) { v.polyline(part, { stroke: 'var(--c-concrete-line)', width: 1.2, dash: '4 3' }); for (const q of part) v.dot(q[0], q[1], 3, { fill: 'var(--c-concrete-line)', stroke: 'var(--surface)' }); }
+  drawBars(v, app, g.bars, { label: (b) => String(b.i + 1), cy: 0, cz: 0 });
+  originSymbol(v);
+  caption(v, 'Leeres Projekt – «Rechteck» (Q) oder «Polygon» (U) wählen und den Beton zeichnen · mm');
+}
+
 function renderGeometry(v, app) {
   const p = app.project;
   const g = projectGeometry(p);
+  if (!hasOutline(p)) { app.showViewMessage(''); renderEmpty(v, app, g); return; }
   if (g.errors.length) {
     app.showViewMessage(`Der Querschnitt kann nicht dargestellt werden: ${g.errors[0]}`);
     return;
   }
-  const gm = geomM(g);
-  const gp = grossProps(gm.outer, gm.holes);
-  const bb = bounds(gm.outer);
+  app.showViewMessage('');
+  const gp = grossProps(g.outer, g.holes);
+  const bb = bounds(g.outer);
   const size = Math.max(bb.b, bb.h);
-  setBoundsReserved(v, bb.ymin, bb.zmin, bb.ymax, bb.zmax, 0, 40);
-  drawConcrete(v, gm); // Aussparungen sind als Löcher im Pfad enthalten
-  for (const h of gm.holes) v.polygon(h, { fill: 'none', stroke: 'var(--c-concrete-line)', width: 1, dash: '5 3' });
+  setBoundsReserved(v, bb.ymin, bb.zmin, bb.ymax, bb.zmax, 0, 40, fitKeyOf(app, 'geometrie'));
+  drawConcrete(v, g); // Aussparungen sind als Löcher im Pfad enthalten
+  for (const h of g.holes) v.polygon(h, { fill: 'none', stroke: 'var(--c-concrete-line)', width: 1, dash: '5 3' });
   if (app.viewOpts.axes !== false) drawAxes(v, gp, size);
   // Polygonecken
   if (p.shape.type === 'poly') {
-    const selV = app.selection?.kind === 'vertex' ? app.selection.index : -1;
     (p.shape.poly || []).forEach((row, i) => {
       if (!Number.isFinite(row.y) || !Number.isFinite(row.z)) return;
-      const y = row.y * MM, z = row.z * MM;
-      v.dot(y, z, i === selV ? 5 : 3, { fill: i === selV ? 'var(--c-highlight)' : 'var(--c-concrete-line)', stroke: 'var(--surface)', title: `Eckpunkt ${i + 1}: y = ${fmt(row.y, 0)} mm, z = ${fmt(row.z, 0)} mm` });
+      v.dot(row.y, row.z, 3, { fill: 'var(--c-concrete-line)', stroke: 'var(--surface)', title: `Eckpunkt ${i + 1}: y = ${fmt(row.y, 0)} mm, z = ${fmt(row.z, 0)} mm` });
       if (app.viewOpts.labels) {
-        const dy0 = y - gp.cy, dz0 = z - gp.cz, L = Math.hypot(dy0, dz0) || 1;
-        v.text(y, z, String(i + 1), { dx: dy0 / L * 13, dy: -dz0 / L * 13, size: 10, color: 'var(--c-concrete-line)', bold: true, track: false });
+        const dy0 = row.y - gp.cy, dz0 = row.z - gp.cz, L = Math.hypot(dy0, dz0) || 1;
+        v.text(row.y, row.z, String(i + 1), { dx: dy0 / L * 13, dy: -dz0 / L * 13, size: 10, color: 'var(--c-concrete-line)', bold: true, track: false });
       }
     });
   }
-  drawBars(v, app, gm.bars, { label: (b) => String(b.i + 1), cy: gp.cy, cz: gp.cz });
-  centroidSymbol(v, gp.cy, gp.cz, 'S', `Schwerpunkt Beton: y = ${fmt(gp.cy / MM, 1)} mm, z = ${fmt(gp.cz / MM, 1)} mm`);
+  drawBars(v, app, g.bars, { label: (b) => String(b.i + 1), cy: gp.cy, cz: gp.cz });
+  centroidSymbol(v, gp.cy, gp.cz, 'S', `Schwerpunkt Beton: y = ${fmt(gp.cy, 1)} mm, z = ${fmt(gp.cz, 1)} mm`);
   const R = app.results;
-  if (R && R.refMode !== 'gross') refSymbol(v, R.ref[0], R.ref[1]);
+  if (R && R.refMode !== 'gross') refSymbol(v, toMm(R.ref[0]), toMm(R.ref[1]));
   originSymbol(v);
   if (app.viewOpts.dims !== false) {
-    for (const [y1, z1, y2, z2, label, off] of dimsFor(p.shape, g)) v.dimension(y1 * MM, z1 * MM, y2 * MM, z2 * MM, label, off);
+    for (const [y1, z1, y2, z2, label, off] of dimsFor(p.shape, g)) v.dimension(y1, z1, y2, z2, label, off);
   }
   const As = g.bars.reduce((s, b) => s + Math.PI * b.d * b.d / 4, 0);
   v.keyLegend([
@@ -278,14 +301,14 @@ function renderGeometry(v, app) {
     { label: 'Bewehrungsstab', color: 'var(--c-rebar)', type: 'dot' },
     { label: gp.isotropic || Math.abs(Math.sin(2 * gp.alpha)) <= 1e-6 ? 'Schwerachsen y, z' : 'Hauptachsen 1, 2', color: 'var(--c-dim)', type: 'line', dash: '10 4 2 4', width: 1.2 },
   ]);
-  caption(v, `A = ${fmt(gp.A * 1e6 / 1e3, 1)}·10³ mm²   ·   ${g.bars.length} Stäbe, As = ${fmt(As, 0)} mm² (ρ = ${fmt(As / (gp.A * 1e6) * 100, 2)} %)   ·   Masse in mm`);
+  caption(v, `A = ${fmt(gp.A / 1e3, 1)}·10³ mm²   ·   ${g.bars.length} Stäbe, As = ${fmt(As, 0)} mm² (ρ = ${fmt(As / gp.A * 100, 2)} %)   ·   Masse in mm`);
 }
 
 // ------------------------------------------------------------------ Dehnungen / Spannungen
 
 function renderState(v, app, mode) {
   const R = app.results;
-  const gm = R.geom;
+  const gm = { outer: R.geom.mm.outer, holes: R.geom.mm.holes, bars: R.geom.mm.bars };
   const bb = bounds(gm.outer);
   const size = Math.max(bb.b, bb.h);
   const i = caseIndex(app);
@@ -298,15 +321,18 @@ function renderState(v, app, mode) {
     return;
   }
   const vs = viewState(app, c);
-  const st = vs.st;
-  if (!st || !st.ok) {
+  const st0 = vs.st;
+  if (!st0 || !st0.ok) {
     v.setBounds(bb.ymin, bb.zmin, bb.ymax, bb.zmax);
     drawConcrete(v, gm, { opacity: 0.6 });
     drawBars(v, app, gm.bars);
-    app.showViewMessage(`${c.name}: ${st?.msg || 'Kein Zustand verfügbar.'} Die Ausnutzung steht rechts im Ergebnisbereich.`);
+    app.showViewMessage(`${c.name}: ${st0?.msg || 'Kein Zustand verfügbar.'} Die Ausnutzung steht rechts im Ergebnisbereich.`);
     return;
   }
-  const ref = R.secRef; // Dehnungsebene bezogen auf den Betonschwerpunkt
+  app.showViewMessage('');
+  // Dehnungsebene in Weltkoordinaten (mm), bezogen auf den Betonschwerpunkt
+  const st = { ...st0, ky: st0.ky * MM, kz: st0.kz * MM, bars: st0.bars.map((b) => ({ ...b, y: toMm(b.y), z: toMm(b.z) })) };
+  const ref = [toMm(R.secRef[0]), toMm(R.secRef[1])];
   const epsAt = (pt) => st.e0 + st.ky * (pt[0] - ref[0]) + st.kz * (pt[1] - ref[1]);
   const k = Math.hypot(st.ky, st.kz);
   const g = k > 1e-12 ? [st.ky / k, st.kz / k] : [0, -1];
@@ -399,7 +425,7 @@ function renderState(v, app, mode) {
       lbl(P(U([bMax.y, bMax.z]), v0 + bMax.eps * sc), `εs = ${fmt(bMax.eps * 1000, 2)} ‰`, bMax.eps < 0 ? 'var(--c-pos)' : 'var(--c-neg)', bMax.eps < 0 ? dx2 : -4, 15, bMax.eps < 0 ? an2 : 'end');
     }
     // Stäbe mit Dehnung
-    drawBars(v, app, gm.bars, { cy: R.gross.cy, cz: R.gross.cz, size, label: (b) => { const s = barsById.get(b.i); return s ? `${fmt(s.eps * 1000, 2)}‰` : ''; }, labelColor: 'var(--text)', mono: true });
+    drawBars(v, app, gm.bars, { cy: toMm(R.gross.cy), cz: toMm(R.gross.cz), size, label: (b) => { const s = barsById.get(b.i); return s ? `${fmt(s.eps * 1000, 2)}‰` : ''; }, labelColor: 'var(--text)', mono: true });
   } else {
     // Betonspannungsblock (Druck links der Grundlinie) und Stahlspannungen (Zug rechts)
     const v0 = vmax + gap + W;
@@ -433,7 +459,7 @@ function renderState(v, app, mode) {
     line([P(umin, v0), P(umax, v0)], { stroke: 'var(--text-2)', width: 1.2 });
     diagPts.push(P(umin, v0 + 0.75 * W), P(umax, v0 - W));
     drawBars(v, app, gm.bars, {
-      cy: R.gross.cy, cz: R.gross.cz, stroke: 'var(--c-struct)', size,
+      cy: toMm(R.gross.cy), cz: toMm(R.gross.cz), stroke: 'var(--c-struct)', size,
       fill: (b) => { const s = barsById.get(b.i); return s ? diverging(0.5 + 0.5 * s.sigma / sMaxAbs) : 'var(--c-rebar)'; },
       label: (b) => { const s = barsById.get(b.i); return s ? fmt(s.sigma, 0) : ''; }, labelColor: 'var(--text)', mono: true,
     });
@@ -453,7 +479,7 @@ function renderState(v, app, mode) {
       v.text(end[0], end[1], Number.isFinite(st.x) ? `Nulllinie, x = ${fmt(st.x / MM, 0)} mm` : 'Nulllinie', { dx: left ? 4 : -4, dy: -9, anchor: left ? 'start' : 'end', size: 10.5, color: 'var(--text-2)', track: false });
     }
   }
-  setBoundsReserved(v, x0, y0, x1, y1, isStress ? 130 : 0, 58);
+  setBoundsReserved(v, x0, y0, x1, y1, isStress ? 130 : 0, 58, `${fitKeyOf(app, mode)}|${i}|${vs.key}`);
   v.keyLegend(isStress ? [
     { label: 'Betondruckspannung σc', color: 'var(--c-pos)', type: 'fill' },
     { label: 'Stahl: Zug / Druck', color: 'var(--c-neg)', type: 'line' },
@@ -464,7 +490,7 @@ function renderState(v, app, mode) {
     { label: 'Nulllinie (ε = 0)', color: 'var(--text-2)', type: 'line', dash: '7 4', width: 1.2 },
   ]);
   centroidSymbol(v, ref[0], ref[1], '', 'Schwerpunkt Beton');
-  if (R.refMode !== 'gross') refSymbol(v, R.ref[0], R.ref[1]);
+  if (R.refMode !== 'gross') refSymbol(v, toMm(R.ref[0]), toMm(R.ref[1]));
 
   const head = `${c.name}: N = ${fmt(c.N, 0)} kN, My = ${fmt(c.My, 1)}, Mz = ${fmt(c.Mz, 1)} kNm`;
   const tail = isStress
@@ -475,34 +501,8 @@ function renderState(v, app, mode) {
 
 /** Zeichenfunktion für createApp.renderView. */
 export function renderView(v, app, mode) {
-  if (mode === 'dehnungen' || mode === 'spannungen') {
-    if (!app.results) return renderGeometry(v, app);
-    return renderState(v, app, mode);
-  }
+  if ((mode === 'dehnungen' || mode === 'spannungen') && app.results && hasOutline(app.project)) return renderState(v, app, mode);
   return renderGeometry(v, app);
-}
-
-// ------------------------------------------------------------------ Trefferprüfung
-
-/** Stab oder Eckpunkt an der Stelle (x, y) [m]. Rückgabe {kind, index} oder null. */
-export function hitTest(app, x, y) {
-  const p = app.project;
-  const tol = app.view.px(9);
-  let best = null, dmin = Infinity;
-  (p.bars || []).forEach((b, i) => {
-    if (!Number.isFinite(b.y) || !Number.isFinite(b.z)) return;
-    const d = Math.hypot(b.y * MM - x, b.z * MM - y);
-    if (d < Math.max(tol, (b.d || 0) * MM / 2 + app.view.px(3)) && d < dmin) { dmin = d; best = { kind: 'bar', index: i }; }
-  });
-  if (best) return best;
-  if (p.shape.type === 'poly') {
-    (p.shape.poly || []).forEach((r, i) => {
-      if (!Number.isFinite(r.y) || !Number.isFinite(r.z)) return;
-      const d = Math.hypot(r.y * MM - x, r.z * MM - y);
-      if (d < tol && d < dmin) { dmin = d; best = { kind: 'vertex', index: i }; }
-    });
-  }
-  return best;
 }
 
 // ------------------------------------------------------------------ Vorzeichenskizze

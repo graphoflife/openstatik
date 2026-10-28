@@ -13,6 +13,7 @@ export const SYSTEMS = [
   { value: 'cont', label: 'Durchlaufträger' },
   { value: 'fix-pin', label: 'Eingespannt – gelenkig' },
   { value: 'fix-fix', label: 'Beidseitig eingespannt' },
+  { value: 'free', label: 'Frei – Lager beliebig (grafisch)' },
 ];
 
 export const CATEGORIES = [
@@ -22,35 +23,126 @@ export const CATEGORIES = [
   { value: 'Wind', label: 'Wind (Q)' },
 ];
 
-/** Geometrie des Systems: Gesamtlänge, Auflager, Felder. */
-export function systemGeometry(beam) {
+/**
+ * Unvollständige Eingabe (kein Fehler): Der Rahmen zeigt Meldung und Hinweis freundlich an
+ * (gleiche Kennzeichnung wie IncompleteInput aus app.js, aber DOM-frei).
+ */
+export class Incomplete extends Error {
+  constructor(msg, hint) { super(msg); this.incomplete = true; this.hint = hint; }
+}
+
+const TOL = 1e-6;
+
+/** Bereinigte Lagerliste: innerhalb 0 … L, sortiert, ohne Doppel (eingespannt gewinnt). */
+export function normSupports(list, L) {
+  const out = [];
+  for (const s of list || []) {
+    const x = Number(s?.x);
+    if (!Number.isFinite(x) || x < -TOL || x > L + TOL) continue;
+    const q = { x: Math.max(0, Math.min(L, +x.toFixed(6))), type: s.type === 'fix' ? 'fix' : 'pin' };
+    const d = out.find((o) => Math.abs(o.x - q.x) < TOL);
+    if (d) { if (q.type === 'fix') d.type = 'fix'; } else out.push(q);
+  }
+  return out.sort((a, b) => a.x - b.x);
+}
+
+/** Felder zwischen den Lagern; Überstände an den Enden sind Kragarme. */
+function fieldsOf(L, sup) {
+  const fields = [];
+  const push = (x0, x1, cant = false) => { if (x1 - x0 > TOL) fields.push({ x0, x1, L: x1 - x0, cant }); };
+  if (!sup.length) { push(0, L, true); return fields; }
+  push(0, sup[0].x, true);
+  for (let i = 0; i < sup.length - 1; i++) push(sup[i].x, sup[i + 1].x);
+  push(sup[sup.length - 1].x, L, true);
+  return fields;
+}
+function freeEndsOf(L, sup) {
+  const f = [];
+  if (!sup.some((s) => Math.abs(s.x) < 1e-9)) f.push(0);
+  if (!sup.some((s) => Math.abs(s.x - L) < 1e-9)) f.push(L);
+  return f;
+}
+
+/** Länge und Lager eines Vorlagen-Systems (ohne Prüfung der Stabilität). */
+function presetSupports(beam) {
   const sys = beam.system || 'ss';
   const spans = (beam.spans || [6]).map(Number).filter((v) => v > 0);
   if (!spans.length) throw new Error('Bitte eine Spannweite grösser als 0 eingeben (Register «Belastung»).');
-  const sup = [], fields = [];
-  let L;
-  const push = (x0, x1, cant = false) => fields.push({ x0, x1, L: x1 - x0, cant });
   switch (sys) {
-    case 'cant': L = spans[0]; sup.push({ x: 0, type: 'fix' }); push(0, L, true); break;
+    case 'cant': return { L: spans[0], sup: [{ x: 0, type: 'fix' }] };
     case 'ss-cant': {
       const a = Number(beam.overhang) || 0;
       if (!(a > 0)) throw new Error('Einfeldträger mit Kragarm: Bitte eine Kraglänge grösser als 0 eingeben.');
-      L = spans[0] + a; sup.push({ x: 0, type: 'pin' }, { x: spans[0], type: 'pin' }); push(0, spans[0]); push(spans[0], L, true); break;
+      return { L: spans[0] + a, sup: [{ x: 0, type: 'pin' }, { x: spans[0], type: 'pin' }] };
     }
     case 'cont': {
       if (spans.length < 2) throw new Error('Durchlaufträger: Bitte mindestens zwei Felder eingeben.');
-      let x = 0; sup.push({ x: 0, type: 'pin' });
-      for (const s of spans) { push(x, x + s); x += s; sup.push({ x, type: 'pin' }); }
-      L = x; break;
+      let x = 0; const sup = [{ x: 0, type: 'pin' }];
+      for (const sp of spans) { x += sp; sup.push({ x, type: 'pin' }); }
+      return { L: x, sup };
     }
-    case 'fix-pin': L = spans[0]; sup.push({ x: 0, type: 'fix' }, { x: L, type: 'pin' }); push(0, L); break;
-    case 'fix-fix': L = spans[0]; sup.push({ x: 0, type: 'fix' }, { x: L, type: 'fix' }); push(0, L); break;
-    default: L = spans[0]; sup.push({ x: 0, type: 'pin' }, { x: L, type: 'pin' }); push(0, L);
+    case 'fix-pin': return { L: spans[0], sup: [{ x: 0, type: 'fix' }, { x: spans[0], type: 'pin' }] };
+    case 'fix-fix': return { L: spans[0], sup: [{ x: 0, type: 'fix' }, { x: spans[0], type: 'fix' }] };
+    default: return { L: spans[0], sup: [{ x: 0, type: 'pin' }, { x: spans[0], type: 'pin' }] };
   }
-  const freeEnds = [];
-  if (!sup.some((s) => Math.abs(s.x) < 1e-9)) freeEnds.push(0);
-  if (!sup.some((s) => Math.abs(s.x - L) < 1e-9)) freeEnds.push(L);
-  return { system: sys, L, supports: sup, fields, freeEnds };
+}
+
+/**
+ * Länge, Lager und Felder ohne Stabilitätsprüfung – auch für unvollständige freie Systeme
+ * (Darstellung und grafische Bearbeitung). Wirft nur bei ungültigen Vorlagen-Eingaben.
+ */
+export function beamModel(beam) {
+  let L, sup;
+  if ((beam.system || 'ss') === 'free') {
+    L = Number(beam.length) || 0;
+    sup = L > 0 ? normSupports(beam.supports, L) : [];
+  } else ({ L, sup } = presetSupports(beam));
+  return { system: beam.system || 'ss', L, supports: sup, fields: L > 0 ? fieldsOf(L, sup) : [], freeEnds: freeEndsOf(L, sup) };
+}
+
+/** Geometrie des Systems: Gesamtlänge, Auflager, Felder (mit Prüfung, ob der Träger gehalten ist). */
+export function systemGeometry(beam) {
+  const m = beamModel(beam);
+  if (m.system === 'free') {
+    if (!(m.L > 0)) throw new Error('Bitte eine Trägerlänge grösser als 0 eingeben (Register «Belastung»).');
+    if (!m.supports.length) throw new Incomplete('Der Träger hat noch keine Lager.', 'Werkzeug «Lager» (Taste A) wählen und den Träger an der gewünschten Stelle anklicken – oder im Register «Belastung» ein System wählen.');
+    if (m.supports.length === 1 && m.supports[0].type !== 'fix') throw new Incomplete('Ein einzelnes gelenkiges Lager hält den Träger nicht.', 'Ein zweites Lager setzen (Werkzeug «Lager», Taste A) oder das Lager anklicken und im Eigenschaftsfenster «eingespannt» wählen.');
+  }
+  return m;
+}
+
+/** Feldweise Laststellung nötig (mehrere Felder bzw. Kragarm)? */
+export function patternLoading(beam) {
+  try { return systemGeometry(beam).fields.length > 1; } catch { return false; }
+}
+
+const r6 = (v) => +(+v).toFixed(6);
+
+/**
+ * Übernimmt Länge und Lager aus der grafischen Bearbeitung. Entspricht das Ergebnis einer Vorlage
+ * (Einfeldträger, Kragarm, Durchlaufträger …), wird diese gespeichert – sonst das freie System.
+ */
+export function setBeamModel(beam, L, supports) {
+  L = r6(L);
+  const S = normSupports(supports, L);
+  const at = (s, x) => Math.abs(s.x - x) < TOL;
+  const n = S.length, pins = S.every((s) => s.type === 'pin');
+  let preset = null;
+  if (n === 2 && at(S[0], 0) && at(S[1], L)) {
+    const t = S.map((s) => s.type).join('-');
+    preset = { pin: 'ss', 'fix-pin': 'fix-pin', 'fix-fix': 'fix-fix' }[t === 'pin-pin' ? 'pin' : t] || null;
+    if (preset) preset = { system: preset, spans: [L] };
+  } else if (n === 1 && at(S[0], 0) && S[0].type === 'fix') preset = { system: 'cant', spans: [L] };
+  else if (n === 2 && pins && at(S[0], 0) && S[1].x < L - TOL) preset = { system: 'ss-cant', spans: [S[1].x], overhang: r6(L - S[1].x) };
+  else if (n >= 3 && pins && at(S[0], 0) && at(S[n - 1], L)) preset = { system: 'cont', spans: S.slice(1).map((s, i) => r6(s.x - S[i].x)) };
+  if (preset) {
+    beam.system = preset.system;
+    beam.spans = preset.spans;
+    if (preset.overhang) beam.overhang = preset.overhang;
+  } else beam.system = 'free';
+  beam.length = L;
+  beam.supports = S.map((s) => ({ ...s }));
+  return beam.system;
 }
 
 /** Normierte Last (fehlende Werte ergänzt). */

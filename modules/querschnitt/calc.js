@@ -185,7 +185,69 @@ function buildWithLaws(gm, laws, mesh, ref) {
   });
 }
 
+// ------------------------------------------------------------------ Vollständigkeit der Eingabe
+
+/**
+ * Fehlt noch etwas für die Berechnung? Rückgabe {msg, hint} des nächsten Arbeitsschritts oder null.
+ * Reihenfolge: Querschnitt → Bewehrung → Lastfall (geführter Ablauf bei leerem Projekt).
+ */
+export function missingInput(project) {
+  const sh = project.shape || {};
+  const hasOutline = sh.type && (sh.type !== 'poly' || (sh.poly || []).filter((r) => Number.isFinite(r?.y) && Number.isFinite(r?.z)).length >= 3);
+  if (!hasOutline) {
+    return {
+      msg: 'Noch kein Querschnitt vorhanden.',
+      hint: 'Querschnitt zeichnen mit «Rechteck» (Taste Q: zwei Ecken anklicken) oder «Polygon» (Taste U: Eckpunkte anklicken, Enter schliesst). Vorlagen wie Plattenbalken oder Kreis gibt es im Register «Querschnitt», fertige Projekte unter «Beispiele».',
+    };
+  }
+  if (!(project.bars || []).some((b) => b.d > 0 && Number.isFinite(b.y) && Number.isFinite(b.z))) {
+    return {
+      msg: 'Es fehlt noch die Bewehrung.',
+      hint: 'Bewehrung setzen mit «Stab» (Taste B: Stabmitte anklicken) oder «Stabreihe» (Taste L: Anfangs- und Endpunkt anklicken). Die Fangpunkte ○ liegen im Achsabstand c + Øw + Ø/2 vom Rand. Ganze Lagen erzeugt das Register «Bewehrung».',
+    };
+  }
+  if (!(project.loads || []).length) {
+    return {
+      msg: 'Es fehlt noch ein Lastfall.',
+      hint: 'Lastfall erfassen: im Register «Lasten» mit «+ Zeile» N, My und Mz eintragen – oder im Eigenschaftsfenster (nichts ausgewählt) «Lastfall anlegen».',
+    };
+  }
+  return null;
+}
+
 // ------------------------------------------------------------------ Dehnungszustände
+
+/**
+ * Zerlegung der inneren Kräfte einer Dehnungsebene {e0, ky, kz} (e0 im Bezugspunkt des Fasermodells):
+ * Betonkraft Fc, Stahlzugkraft Fst und Stahldruckkraft Fsc [kN] mit Angriffspunkten [y, z] in m
+ * (Koordinaten der Eingabe). Momente um den Bezugspunkt in Benutzerkonvention (My > 0 Zug unten).
+ */
+export function forceResultants(sec, plane) {
+  const { y, z, A, law, laws, isBar } = sec;
+  const acc = () => ({ F: 0, Fy: 0, Fz: 0, n: 0 });
+  const C = acc(), T = acc(), S = acc();
+  for (let i = 0; i < sec.nFibers; i++) {
+    const e = plane.e0 + plane.ky * y[i] + plane.kz * z[i];
+    const f = laws[law[i]].sigma(e) * A[i] * 1000;
+    if (!f) continue;
+    const b = isBar[i] ? (f > 0 ? T : S) : C;
+    b.F += f; b.Fy += f * y[i]; b.Fz += f * z[i]; b.n++;
+  }
+  const point = (b) => (Math.abs(b.F) > 1e-9 ? [b.Fy / b.F + sec.ref[0], b.Fz / b.F + sec.ref[1]] : null);
+  const My = -(C.Fz + T.Fz + S.Fz), Mz = C.Fy + T.Fy + S.Fy;
+  // Gesamte Druckkraft (Beton + Druckstäbe) und Hebelarm zur Zugkraft in Richtung des Dehnungsgradienten
+  const Fcomp = C.F + S.F;
+  const pComp = Math.abs(Fcomp) > 1e-9 ? [(C.Fy + S.Fy) / Fcomp + sec.ref[0], (C.Fz + S.Fz) / Fcomp + sec.ref[1]] : null;
+  const pT = point(T);
+  const k = Math.hypot(plane.ky, plane.kz);
+  let lever = null;
+  if (pComp && pT && k > 1e-12) lever = Math.abs((pT[0] - pComp[0]) * plane.ky / k + (pT[1] - pComp[1]) * plane.kz / k);
+  return {
+    Fc: C.F, Fst: T.F, Fsc: S.F, N: C.F + T.F + S.F, My, Mz,
+    pc: point(C), pst: pT, psc: point(S), pComp, Fcomp, lever, nTension: T.n, nCompression: S.n,
+  };
+}
+
 
 /** Kennwerte einer Dehnungsebene {e0, ky, kz} (e0 im Bezugspunkt). */
 export function stateInfo(sec, plane) {
@@ -250,31 +312,14 @@ function rayHit(curve, from, dir) {
 }
 
 /**
- * Ausnutzung bei konstanter Normalkraft (Kernkonvention), Erweiterung von rcsection.utilization:
- * Liegt der Bezugspunkt (Momente 0/0) ausserhalb des My-Mz-Bereichs bei diesem N (z.B. stark exzentrischer
- * Bezugspunkt), wird der Strahl vom Flächenschwerpunkt des Bereichs aus gezogen, damit η > 1 korrekt erkannt wird.
- * Rückgabe wie utilization plus {from: [My, Mz] Strahlursprung, shifted}.
+ * Ausnutzung bei konstanter Normalkraft (Kernkonvention) nach rcsection.utilization: η = max(ηM, ηN).
+ * Liegt (0/0) bei diesem N ausserhalb des My-Mz-Bereichs, steigert der Kern die Momente vom Flächenschwerpunkt
+ * des Bereichs aus. Rückgabe wie utilization plus {from: [My, Mz] Strahlursprung, shifted}.
  */
 export function utilizationAtN(sec, N, My, Mz, nAngles = 96) {
   const util = rc.utilization(sec, N, My, Mz, nAngles);
-  // Normalkraftanteil η_N = N/NRd (zentrisch); stetig auch für M → 0
-  const etaN = N > 0 ? (util.Nt > 0 ? N / util.Nt : Infinity) : N < 0 ? N / util.Nc : 0;
-  if (util.outside || util.curve.length < 3) return { ...util, etaM: util.eta, etaN, from: [0, 0], shifted: false };
-  const poly = util.curve.map((p) => [p.My, p.Mz]);
-  let res;
-  if (rc.pointInPolygon([0, 0], poly)) {
-    const etaM = Math.hypot(My, Mz) < 1e-9 ? 0 : util.eta;
-    res = { ...util, etaM, from: [0, 0], shifted: false };
-  } else {
-    const pp = rc.polygonProps(poly);
-    const from = [pp.cy, pp.cz];
-    const d = [My - from[0], Mz - from[1]], L = Math.hypot(d[0], d[1]);
-    const hit = L < 1e-9 ? null : rayHit(util.curve, from, [d[0] / L, d[1] / L]);
-    if (L < 1e-9) res = { ...util, etaM: 0, MyR: from[0], MzR: from[1], from, shifted: true };
-    else if (!hit) res = { ...util, etaM: Infinity, MyR: 0, MzR: 0, from, shifted: true };
-    else res = { ...util, etaM: L / hit.s, MyR: from[0] + d[0] / L * hit.s, MzR: from[1] + d[1] / L * hit.s, from, shifted: true };
-  }
-  return { ...res, etaN, eta: Math.max(res.etaM, etaN) };
+  const from = util.origin || [0, 0];
+  return { ...util, etaM: util.etaM ?? util.eta, etaN: util.etaN ?? 0, from, shifted: Math.hypot(from[0], from[1]) > 1e-9 };
 }
 
 /** Dehnungsebene im Bruchzustand am Widerstandspunkt (radiale Skalierung bei konstantem N). */

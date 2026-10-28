@@ -1,14 +1,17 @@
 // Modul «Platte» – FE-Plattenberechnung (Oberfläche)
-import { createApp } from '../../js/core/app.js';
+import { createApp, IncompleteInput } from '../../js/core/app.js';
 import { h, group, stats, checksTable, summaryCard, note, resultTable, kvTable, badge, selectField, clone } from '../../js/core/ui.js';
 import { fmt } from '../../js/core/format.js';
 import { repTable, repKV, repFigure, repFormula, repP } from '../../js/core/report.js';
 import {
-  analyse, withDefaults, estimateNodes, meshProject, locate, interpolate, layerLabel, comboTypeLabel, LOAD_CATEGORIES,
+  analyse, withDefaults, estimateNodes, meshProject, locate, interpolate, layerLabel, comboTypeLabel, LOAD_CATEGORIES, geometryOf,
 } from './calc.js';
+import { editorSpec } from './editing.js';
+import { derivation } from './derivation.js';
+import { activeLoadCase } from './model.js';
 import { EXAMPLES, defaultProject } from './examples.js';
 import { geometryTab, supportTab, loadTab, designTab } from './inputs.js';
-import { drawSystem, drawMesh, drawContour, drawPrincipalCrosses, drawReactions, drawProbe, slabBounds } from './views.js';
+import { drawSystem, drawMesh, drawContour, drawPrincipalCrosses, drawReactions, drawProbe, slabBounds, defaultSet, setOptions, currentSet } from './views.js';
 import { principalMoments } from './design.js';
 import { INTRO, HELP } from './help.js';
 
@@ -20,18 +23,35 @@ const AUTO_COMPUTE_NODES = 4000;
 
 // ------------------------------------------------------------------ Hilfen
 
-function defaultSet(r, prefer = 'ULS') {
-  return r.sets.find((s) => s.kind === 'combo' && s.type === prefer) || r.sets.find((s) => s.kind === 'combo') || r.sets[0];
+/** Fehlt noch etwas Grundlegendes? → IncompleteInput mit Hinweis, wie es weitergeht. */
+function checkComplete(p) {
+  if (geometryOf(p).outline.length < 3) {
+    throw new IncompleteInput('Noch keine Platte vorhanden.', 'Werkzeug «Umriss» (Taste U) wählen und die Eckpunkte der Platte in die Grafik klicken – oder im Register «Geometrie» «Rechteck …» verwenden. Fertige Systeme finden Sie oben unter «Beispiele».');
+  }
+  if (!(p.pointSupports || []).length && !(p.lineSupports || []).length) {
+    throw new IncompleteInput('Es fehlen noch Lager.', 'Werkzeug «Wand» (W) entlang der gelagerten Ränder zeichnen oder «Stütze» (S) setzen. Tipp: Plattenfläche anklicken › «Wände an allen Rändern».');
+  }
+  if (!(p.loadCases || []).length) {
+    throw new IncompleteInput('Es ist kein Lastfall vorhanden.', 'Im Register «Lasten» einen Lastfall anlegen, z.B. «Eigengewicht» mit automatischem Eigengewicht (EG).');
+  }
 }
 
-function setOptions(r) {
-  return r.sets.map((s) => ({ value: s.key, label: s.kind === 'lc' ? `LF: ${s.name}` : `${s.name}${s.type === 'ULS' && !/GZT|Trag/i.test(s.name) ? ' (GZT)' : ''}` }));
+function isComplete(p) {
+  try { checkComplete(p); return true; } catch { return false; }
 }
 
-function currentSet(app) {
-  const r = app.results;
-  if (!r) return null;
-  return r.sets.find((s) => s.key === app.viewOpts.res) || defaultSet(r);
+function compute(project) {
+  checkComplete(project);
+  return analyse(project);
+}
+
+/** Bearbeitungshilfen (Raster, Auswahl) aus einer Momentaufnahme entfernen. */
+function stripEditor(svg) {
+  for (const c of [...svg.children]) {
+    const cls = c.getAttribute('class') || '';
+    if (cls === 'gridlayer' || cls === 'interact') c.remove();
+  }
+  return svg;
 }
 
 const meshCache = { key: null, mesh: null, error: null, elemFactor: null };
@@ -80,8 +100,16 @@ function designValues(r, layer) {
 // ------------------------------------------------------------------ Darstellung
 
 function renderView(view, app, mode) {
-  const b = slabBounds(app.project);
-  if (b) view.setBounds(b.x0, b.y0, b.x1, b.y1);
+  const p = app.project;
+  if (geometryOf(p).outline.length < 3) {
+    // Leeres Projekt: Zeichenfläche ca. 10 × 8 m mit Raster, Hinweis zum ersten Schritt
+    view.setBounds(-1, -1, 11, 9);
+    for (const q of p.outline) if (Number.isFinite(+q.x) && Number.isFinite(+q.y)) view.dot(+q.x, +q.y, 3.5, { fill: 'var(--c-struct)' });
+    view.caption('Leeres Projekt – «Umriss» (U) wählen und die Eckpunkte der Platte anklicken');
+    return;
+  }
+  const b = slabBounds(p);
+  if (b) view.setBounds(b.x0, b.y0, b.x1, b.y1, { noFit: true });
   const r = app.results;
   if (!mode || mode === 'system' || (!r && mode !== 'mesh')) {
     drawSystem(view, app);
@@ -177,7 +205,7 @@ function punchingChecks(r) {
     const detail = r.norm === 'SIA'
       ? `u = ${fmt(pc.u, 2)} m · ke = ${fmt(pc.ke, 2)} · d = ${fmt(pc.d, 0)} mm · ψ = ${fmt(pc.res.psi * 1000, 2)} ‰ · kr = ${fmt(pc.res.kr, 2)}`
       : `u₁ = ${fmt(pc.u, 2)} m · β = ${fmt(pc.beta, 2)} · d = ${fmt(pc.d, 0)} mm · ρl = ${fmt(pc.rhoL * 100, 2)} %`;
-    rows.push({ label: `${pc.name} · ${t}`, ref: `${r.norm === 'SIA' ? 'SIA 262, 4.3.6' : 'EN 1992-1-1, 6.4.4'} · ${pc.combo}`, Ed: pc.Vd, Rd: pc.VRd, unit: 'kN', detail, eta: pc.eta });
+    rows.push({ label: `${pc.name} · ${t}`, ref: `${r.norm === 'SIA' ? 'SIA 262, 4.3.6' : 'EN 1992-1-1, 6.4.4'} · ${pc.combo}`, Ed: pc.Vd, Rd: pc.VRd, unit: 'kN', detail, eta: pc.eta, deriv: `p-${pc.name}` });
   }
   return rows;
 }
@@ -267,7 +295,7 @@ function renderResults(el, app) {
         h('div', {}, L.label, h('div', { class: 'muted small' }, `d = ${fmt(L.d, 0)} mm`)),
         fmt(L.mMax, 1),
         h('span', {}, Number.isFinite(L.asMax) ? fmt(Math.max(L.asMax, L.asMin), 0) : '–', minGov ? h('span', { class: 'muted small' }, ' min') : null),
-        L.bars.label,
+        h('span', {}, L.bars.label, h('button', { type: 'button', class: 'chk-link', title: 'Rechenweg am massgebenden Punkt', onclick: () => app.showDerivation?.(`as-${k}`) }, ' Herleitung ›')),
         ...(anyBase ? [d.asBasic[k] > 0 ? `${fmt(L.extraShare * 100, 0)} %` : '–'] : []),
       ];
     });
@@ -281,7 +309,7 @@ function renderResults(el, app) {
   if (r.sls) {
     const sl = r.sls;
     el.append(group('Durchbiegung', [
-      checksTable([{ label: `w∞ = ${fmt(sl.factor, 1)} · w_el ≤ L/${fmt(sl.limit, 0)}`, ref: `${sl.combo} · L = ${fmt(sl.Lspan, 2)} m${sl.autoSpan ? ' (automatisch)' : ''}`, Ed: sl.wLong * 1000, Rd: sl.wLim * 1000, unit: 'mm' }], { edLabel: 'w∞', rdLabel: 'w,lim' }),
+      checksTable([{ label: `w∞ = ${fmt(sl.factor, 1)} · w_el ≤ L/${fmt(sl.limit, 0)}`, ref: `${sl.combo} · L = ${fmt(sl.Lspan, 2)} m${sl.autoSpan ? ' (automatisch)' : ''}`, Ed: sl.wLong * 1000, Rd: sl.wLim * 1000, unit: 'mm', deriv: 'sls' }], { edLabel: 'w∞', rdLabel: 'w,lim' }),
       h('div', { class: 'muted small', style: { marginTop: '4px' } }, `Elastisch: w_el = ${fmt(sl.wEl * 1000, 2)} mm bei x = ${fmt(sl.x, 2)}, y = ${fmt(sl.y, 2)} m.`),
     ], { info: 'Vereinfachter Nachweis: elastische Durchbiegung der quasi-ständigen Kombination mal Langzeitfaktor k (Kriechen, Rissbildung), verglichen mit L/Grenzwert. Einstellungen im Register «Bemessung».' }));
   }
@@ -348,7 +376,7 @@ function report(app) {
   const r = app.results;
   const p = app.project;
   const c = r.conc, st = r.steel;
-  const fig = (mode, opts, caption) => repFigure(withView(app, { iso: true, vals: false, meshOv: false, labels: true, punch: true, ...opts }, () => cropFigure(app.snapshot(mode), app)), caption);
+  const fig = (mode, opts, caption) => repFigure(withView(app, { iso: true, vals: false, meshOv: false, labels: true, punch: true, ...opts }, () => cropFigure(stripEditor(app.snapshot(mode)), app)), caption);
   const uls = defaultSet(r, 'ULS'), sls = defaultSet(r, 'SLS');
   const ulsSets = r.sets.filter((s) => s.kind === 'combo' && s.type === 'ULS');
   const sections = [];
@@ -510,7 +538,15 @@ const app = createApp({
   viewOptions: (a) => {
     const m = a.viewMode, r = a.results;
     const out = [];
-    if (m === 'system') out.push({ key: 'labels', label: 'Beschriftung', type: 'check', default: true });
+    if (m === 'system') {
+      out.push({ key: 'labels', label: 'Beschriftung', type: 'check', default: true });
+      const lcs = a.project.loadCases || [];
+      if (lcs.length) {
+        const def = activeLoadCase(a.project, null);
+        if (!lcs.some((l) => l.id === a.viewOpts.lc)) a.viewOpts.lc = def;
+        out.push({ key: 'lc', label: 'Neue Lasten in', type: 'select', default: def, options: lcs.map((l) => ({ value: l.id, label: l.name || l.id })) });
+      }
+    }
     if (r && RESULT_MODES.has(m)) {
       const opts = setOptions(r);
       const def = (m === 'w' ? defaultSet(r, 'SLS') : defaultSet(r)).key;
@@ -527,9 +563,11 @@ const app = createApp({
     if (r && m === 'react' && r.punching.length) out.push({ key: 'punch', label: 'Durchstanzen', type: 'check', default: true });
     return out;
   },
+  editor: editorSpec,
+  derivation,
   renderView,
   onViewClick,
-  compute: (project) => analyse(project),
+  compute,
   renderResults,
   report,
 });
@@ -538,13 +576,13 @@ const app = createApp({
 const baseSetProject = app.setProject;
 app.setProject = (p, opts) => {
   baseSetProject(p, opts);
-  if (estimateNodes(app.project) <= AUTO_COMPUTE_NODES) setTimeout(() => { if (!app.results) app.compute(); }, 0);
+  if (isComplete(app.project) && estimateNodes(app.project) <= AUTO_COMPUTE_NODES) setTimeout(() => { if (!app.results) app.compute(); }, 0);
 };
 {
   // Start: kleine Projekte gleich berechnen und eine per URL verlangte Ergebnisansicht (?ansicht=mx) danach öffnen
   const startView = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('ansicht') || new URLSearchParams(location.search).get('view') : null;
   setTimeout(() => {
-    if (!app.results && estimateNodes(app.project) <= AUTO_COMPUTE_NODES) app.compute();
+    if (!app.results && isComplete(app.project) && estimateNodes(app.project) <= AUTO_COMPUTE_NODES) app.compute();
     if (startView && app.results && app.viewMode !== startView) app.setViewMode(startView);
   }, 0);
 }

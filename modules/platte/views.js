@@ -41,6 +41,22 @@ function ringPath(r) {
 
 const lcName = (p, id) => p.loadCases.find((l) => l.id === id)?.name || id || '?';
 
+// ------------------------------------------------------------------ Ergebnisauswahl
+
+export function defaultSet(r, prefer = 'ULS') {
+  return r.sets.find((s) => s.kind === 'combo' && s.type === prefer) || r.sets.find((s) => s.kind === 'combo') || r.sets[0];
+}
+
+export function setOptions(r) {
+  return r.sets.map((s) => ({ value: s.key, label: s.kind === 'lc' ? `LF: ${s.name}` : `${s.name}${s.type === 'ULS' && !/GZT|Trag/i.test(s.name) ? ' (GZT)' : ''}` }));
+}
+
+export function currentSet(app) {
+  const r = app.results;
+  if (!r) return null;
+  return r.sets.find((s) => s.key === app.viewOpts.res) || defaultSet(r);
+}
+
 // ------------------------------------------------------------------ System
 
 export function drawSystem(view, app) {

@@ -9,6 +9,12 @@ import {
   analyze, createCache, grossProps, idealSectionProps, userToCore, coreToUser, thetaForUserMoment, shearCheck, materialSet,
   steelStressLimit, interpTable, SIA_FIG31, mkCurve, chooseMesh, tensionLayerSpacing,
 } from '../modules/querschnitt/calc.js';
+import {
+  editableOutline, convertToPoly, createOutline, addOpening, addDuct, setDuct, addBars, moveSelection, removeSelection, insertVertex,
+  setVertex, groupBars, rowCount, circleCount, touchesTemplate, hasOutline,
+} from '../modules/querschnitt/model.js';
+import { defaultProject, EXAMPLES } from '../modules/querschnitt/examples.js';
+import { missingInput, forceResultants } from '../modules/querschnitt/calc.js';
 import * as rc from '../js/core/rcsection.js';
 import { concrete, rebar } from '../js/core/materials.js';
 
@@ -429,4 +435,139 @@ test('Bezugspunkt: Ausnutzung und Zustand unabhängig vom Bezugspunkt (statisch 
   // Exzentrische Druckkraft an der Unterkante ist nicht aufnehmbar (zu wenig obere Bewehrung): η > 1
   const pR = rectProject(300, 500, bars, { calc: { ref: 'origin' }, loads: [{ name: 'R', type: 'GZT', N: -1000, My: 0, Mz: 0 }] });
   assert.ok(analyze(pR).cases[0].eta > 1);
+});
+
+// ------------------------------------------------------------------ Leeres Projekt, Editor-Operationen, Herleitung
+
+test('Leeres Projekt: geführter Ablauf Querschnitt → Bewehrung → Lastfall', () => {
+  const p = defaultProject();
+  assert.equal(hasOutline(p), false);
+  assert.equal(p.bars.length, 0);
+  assert.equal(p.loads.length, 0);
+  assert.match(missingInput(p).msg, /Querschnitt/);
+  assert.match(missingInput(p).hint, /Rechteck/);
+  const r = createOutline(p, [[-150, 0], [150, 0], [150, 500], [-150, 500]]);
+  assert.equal(r.replaced, false);
+  assert.match(missingInput(p).msg, /Bewehrung/);
+  addBars(p, groupBars({ kind: 'row', a: [-100, 50], b: [100, 50], n: 3, d: 20 }));
+  assert.match(missingInput(p).msg, /Lastfall/);
+  p.loads.push({ name: 'LF 1', type: 'GZT', N: 0, My: 100, Mz: 0 });
+  assert.equal(missingInput(p), null);
+  const R = analyze(p);
+  near(R.grossMm.A, 150000, 1e-12, 'A');
+  assert.ok(R.cases[0].eta > 0.3 && R.cases[0].eta < 1);
+  // Alle Beispiele sind vollständig
+  for (const ex of EXAMPLES) assert.equal(missingInput(ex.project()), null, ex.name);
+});
+
+test('Editor: Rechteck wird Vorlage, sonst Polygon; Selbstüberschneidung abgelehnt', () => {
+  const p = defaultProject();
+  createOutline(p, [[-200, 0], [200, 0], [200, 700], [-200, 700]]);
+  assert.equal(p.shape.type, 'rect');
+  assert.deepEqual(p.shape.rect, { b: 400, h: 700 });
+  const r = createOutline(p, [[0, 0], [0, 300], [200, 300], [200, 0]]); // im Uhrzeigersinn, nicht zentriert
+  assert.equal(r.replaced, true);
+  assert.equal(p.shape.type, 'poly');
+  assert.ok(signedArea(p.shape.poly.map((q) => [q.y, q.z])) > 0, 'Gegenuhrzeigersinn');
+  assert.throws(() => createOutline(p, [[0, 0], [200, 100], [200, 0], [0, 150]]), /schneidet sich selbst/);
+  assert.throws(() => createOutline(p, [[0, 0], [100, 0], [200, 0]]), /keine Fläche/);
+});
+
+test('Editor: Ziehen eines Vorlagen-Eckpunkts wandelt in «Polygon frei» um', () => {
+  const p = defaultProject();
+  p.shape.type = 'T';
+  p.shape.T = { b: 1200, hf: 200, bw: 300, h: 800 };
+  const eo = editableOutline(p);
+  assert.equal(eo.template, true);
+  assert.equal(eo.outer.length, 8);
+  const before = eo.outer.map((q) => q.slice());
+  assert.equal(touchesTemplate(p, ['v:2']), true);
+  assert.equal(touchesTemplate(p, ['b:0']), false);
+  const r = moveSelection(p, ['v:2'], [0, 50]);
+  assert.equal(r.converted, 'Plattenbalken');
+  assert.equal(p.shape.type, 'poly');
+  const after = p.shape.poly.map((q) => [q.y, q.z]);
+  before.forEach((q, i) => {
+    near(after[i][0], q[0], 1e-12, `y${i}`);
+    near(after[i][1], q[1] + (i === 2 ? 50 : 0), 1e-12, `z${i}`);
+  });
+  // Hohlkasten: Hohlraum der Vorlage zuerst, danach eigene Aussparungen
+  const b = defaultProject();
+  b.shape.type = 'box';
+  const k = addOpening(b, [[-100, 800], [100, 800], [100, 900], [-100, 900]]);
+  assert.equal(k, 1, 'eigene Aussparung nach dem Hohlraum der Vorlage');
+  moveSelection(b, ['o:1'], [10, 0]);
+  assert.equal(b.shape.type, 'box', 'eigene Aussparung verschieben wandelt nicht um');
+  near(b.openings[0].pts[0].y, -90, 1e-12);
+  moveSelection(b, ['ov:0:0'], [0, -20]);
+  assert.equal(b.shape.type, 'poly');
+  assert.equal(b.openings.length, 2);
+  assert.equal(b.openings[0].fromTemplate, true);
+  assert.equal(b.openings[1].pts[0].y, -90, 'eigene Aussparung bleibt erhalten');
+});
+
+test('Editor: Kopieren, Löschen und Eckpunkt einfügen', () => {
+  const p = defaultProject();
+  createOutline(p, [[0, 0], [400, 0], [400, 600], [0, 600]]);
+  addBars(p, [{ y: 50, z: 50, d: 16 }, { y: 350, z: 50, d: 16 }]);
+  const c = moveSelection(p, ['b:0', 'b:1'], [0, 500], true);
+  assert.deepEqual(c.ids, ['b:2', 'b:3']);
+  assert.equal(p.bars[3].z, 550);
+  assert.equal(p.bars.length, 4);
+  removeSelection(p, ['b:0', 'b:2']);
+  assert.deepEqual(p.bars.map((b) => [b.y, b.z]), [[350, 50], [350, 550]]);
+  const ins = insertVertex(p, 'e:0');
+  assert.equal(ins.id, 'v:1');
+  assert.deepEqual(p.shape.poly[1], { y: 200, z: 0 });
+  setVertex(p, 'v:1', 200, -100);
+  assert.equal(p.shape.poly.length, 5);
+  near(analyze({ ...p, loads: [] }).grossMm.A, 400 * 600 + 400 * 100 / 2, 1e-12, 'Fläche mit Spitze');
+  // Eckpunkte löschen bis unter 3 → Umriss weg, Bewehrung bleibt
+  removeSelection(p, ['v:0', 'v:1', 'v:2']);
+  assert.equal(hasOutline(p), false);
+  assert.equal(p.bars.length, 2);
+  createOutline(p, [[0, 0], [400, 0], [400, 600], [0, 600]]);
+  addOpening(p, [[100, 200], [300, 200], [300, 400], [100, 400]]);
+  const res = removeSelection(p, ['c']);
+  assert.equal(res.outline, true);
+  assert.equal(p.openings.length, 0);
+  assert.equal(p.bars.length, 2);
+});
+
+test('Editor: Stabgruppen und Hüllrohr', () => {
+  const row = groupBars({ kind: 'row', a: [-120, 46], b: [120, 46], n: 4, d: 20 });
+  assert.deepEqual(row.map((b) => b.y), [-120, -40, 40, 120]);
+  const circ = groupBars({ kind: 'circle', a: [0, 0], b: [0, 200], n: 8, d: 16 });
+  assert.equal(circ.length, 8);
+  near(circ[0].y, 0, 1e-9); near(circ[0].z, 200, 1e-9, 'erster Stab am zweiten Punkt');
+  near(circ[2].y, -200, 1e-9, 'Gegenuhrzeigersinn');
+  assert.equal(rowCount(240), 3);
+  assert.equal(circleCount(200), 8);
+  const p = defaultProject();
+  createOutline(p, [[-300, 0], [300, 0], [300, 800], [-300, 800]]);
+  const k = addDuct(p, [0, 400], 120);
+  const A = (o) => Math.abs(signedArea(o.pts.map((q) => [q.y, q.z])));
+  near(A(p.openings[0]), Math.PI * 60 * 60, 2e-3, 'flächengleiches 32-Eck');
+  setDuct(p, k, { D: 200 });
+  near(A(p.openings[0]), Math.PI * 100 * 100, 2e-3);
+  assert.equal(p.openings[0].name, 'Hüllrohr Ø200');
+  moveSelection(p, [`o:${k}`], [50, 0]);
+  assert.equal(p.openings[0].circle.y, 50, 'Mittelpunkt wandert mit');
+  moveSelection(p, [`ov:${k}:0`], [5, 0]);
+  assert.equal(p.openings[0].circle, undefined, 'einzelner Eckpunkt → freie Aussparung');
+});
+
+test('Herleitung: innere Kräfte im Bruchzustand ergeben N und MRd (Rechteck 300×500, 3Ø20)', () => {
+  const bars = [-100, 0, 100].map((y) => ({ y, z: 50, d: 20 }));
+  for (const N of [0, -400]) {
+    const p = rectProject(300, 500, bars, { loads: [{ name: 'LF', type: 'GZT', N, My: 100, Mz: 0 }] });
+    const R = analyze(p);
+    const u = R.cases[0].uls;
+    const fr = forceResultants(R.secs.uls, u.rstate);
+    near(fr.N, N, 1e-3, 'Gleichgewicht N (Bisektion)');
+    near(fr.My, u.MyR, 2e-3, 'MRd aus den inneren Kräften');
+    near(fr.Fst, 3 * A20 * 500 / 1.15 / 1000, 1e-9, 'Stahl fliesst: Fs = As·fsd');
+    near(fr.pst[1], 0.05, 1e-9, 'Angriffspunkt der Zugkraft');
+    if (N === 0) near(fr.My, fr.Fst * fr.lever, 1e-6, 'M = Fs·z bei N = 0');
+  }
 });

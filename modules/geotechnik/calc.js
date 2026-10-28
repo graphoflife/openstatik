@@ -14,6 +14,43 @@ export const ANALYSES = [
   { id: 'stuetzmauer', label: 'Stützmauer', short: 'Stützmauer', desc: 'Winkelstützmauer: Gleiten, Kippen, Grundbruch, Schnittkräfte' },
 ];
 
+/**
+ * Unvollständige Eingabe (z.B. leeres Projekt): wird vom Rahmen als freundlicher Hinweis statt als Fehler
+ * angezeigt (gleiche Schnittstelle wie IncompleteInput in js/core/app.js, hier DOM-frei).
+ */
+export class IncompleteInput extends Error {
+  constructor(msg, hint) { super(msg); this.incomplete = true; this.hint = hint; }
+}
+
+/** Prüft, ob die wesentlichen Eingaben der gewählten Analyse vorhanden sind. */
+export function checkComplete(project) {
+  const type = project.analysis || 'erddruck';
+  if (!project.soil?.layers?.length) throw new IncompleteInput('Es ist noch keine Bodenschicht definiert.', 'Im Register «Baugrund» eine Schicht hinzufügen (z.B. über «Vorlage»).');
+  const pos = (v) => Number(v) > 0;
+  if (type === 'erddruck' && !pos(project.ep?.H)) {
+    throw new IncompleteInput('Noch keine Wand definiert.', 'Werkzeug «Wand» (Taste N) wählen und Wandkopf und Wandfuss in der Grafik anklicken – oder die Wandhöhe H im Register «Analyse» eingeben.');
+  }
+  if (type === 'grundbruch' || type === 'setzung') {
+    const f = type === 'grundbruch' ? project.bc : project.st;
+    if (!pos(f?.B) || (f.shape === 'rect' && !pos(f.L))) throw new IncompleteInput('Noch kein Fundament definiert.', 'Werkzeug «Fundament» (Taste F) wählen und zwei gegenüberliegende Ecken im Schnitt anklicken – oder Breite und Länge im Register «Analyse» eingeben.');
+    if (type === 'grundbruch') {
+      const L = f.loads || {};
+      const any = ['G', 'Q'].some((k) => ['V', 'HB', 'HL', 'MB', 'ML'].some((c) => Number(L[k]?.[c]) !== 0 && Number.isFinite(Number(L[k]?.[c]))));
+      if (!any) throw new IncompleteInput('Noch keine Lasten auf dem Fundament.', 'Die Stütze bzw. das Fundament in der Grafik anklicken und im Eigenschaftsfenster die charakteristischen Lasten V, H und M (ständig G, veränderlich Q) eingeben.');
+    }
+    if (type === 'setzung' && !(f.loadMode === 'V' ? pos(f.V) : pos(f.p0))) throw new IncompleteInput('Noch keine setzungswirksame Last.', 'Fundament anklicken und im Eigenschaftsfenster die Sohlspannung σ₀ bzw. die Vertikalkraft V eingeben.');
+  }
+  if (type === 'boeschung') {
+    const pts = (project.sl?.surface || []).filter((q) => Number.isFinite(Number(q.x)) && Number.isFinite(Number(q.y)));
+    if (pts.length < 2) throw new IncompleteInput('Noch keine Geländelinie.', 'Werkzeug «Gelände» (Taste G) wählen und die Punkte der Geländeoberfläche anklicken (Doppelklick beendet) – oder im Register «Analyse» eine Böschung erzeugen.');
+    const ys = pts.map((q) => Number(q.y));
+    if (Math.max(...ys) - Math.min(...ys) < 1e-6) throw new IncompleteInput('Die Geländelinie ist noch horizontal.', 'Einen Geländepunkt nach oben oder unten ziehen, damit eine Böschung entsteht.');
+  }
+  if (type === 'stuetzmauer' && !pos(project.rw?.hs)) {
+    throw new IncompleteInput('Noch keine Stützmauer definiert.', 'Werkzeug «Mauer» (Taste N) wählen: zuerst die Vorderkante des Fundaments unten, dann die Mauerkrone anklicken – oder die Masse im Register «Analyse» eingeben.');
+  }
+}
+
 /** Wirksame Normfaktoren (Voreinstellung + Projektwerte). */
 export function effectiveNorm(project) {
   const n = { ...normPreset(project.norm?.code || 'SIA'), ...(project.norm || {}) };
@@ -50,6 +87,7 @@ export function earthPressureAnalysis(project, norm) {
 }
 
 export function compute(project) {
+  checkComplete(project);
   const norm = effectiveNorm(project);
   const type = project.analysis || 'erddruck';
   switch (type) {

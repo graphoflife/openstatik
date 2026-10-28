@@ -2,10 +2,10 @@
 
 export const INTRO = `<h4>So funktioniert's</h4>
 <ol>
-  <li><b>Geometrie</b>: Plattenrand (oder «Rechteck …»), Öffnungen, Dicke und Beton festlegen.</li>
-  <li><b>Lager</b>: Stützen (auch als Raster) und Wände eingeben.</li>
-  <li><b>Lasten</b>: Lastfälle anlegen und Flächen-, Linien- oder Punktlasten zuordnen. Das Eigengewicht ist automatisch dabei, die Kombinationen nach SIA 260 entstehen von selbst.</li>
-  <li><b>Berechnen</b> (Ctrl+Enter), dann oben in der Grafik Durchbiegung, Momente, Bewehrung und Reaktionen ansehen. Ein Klick in die Grafik zeigt die Werte an dieser Stelle.</li>
+  <li><b>Umriss</b> (Taste U): Eckpunkte der Platte in die Grafik klicken; <b>Öffnung</b> (O) als Rechteck aufziehen.</li>
+  <li>Lager setzen: <b>Wand</b> (W) entlang der Ränder ziehen, <b>Stütze</b> (S) anklicken – oder Plattenfläche wählen › «Wände an allen Rändern».</li>
+  <li>Lasten: Eigengewicht ist automatisch dabei; Flächenlasten für die ganze Platte im Register «Lasten», Teilflächen-, Linien- und Punktlasten mit <b>F</b>, <b>L</b>, <b>P</b>.</li>
+  <li><b>Berechnen</b> (Ctrl+Enter). Elemente anklicken zeigt ihre Werte und Nachweise, «Herleitung» den Rechenweg.</li>
 </ol>`;
 
 export const HELP = `
@@ -25,7 +25,23 @@ abgebildet, Stützen und Punktlasten liegen auf Netzknoten. Um Stützen wird das
   <li>Auflagerkräfte positiv = Druck auf das Lager. Linienlager: Verlauf in kN/m.</li>
 </ul>
 
-<h3>Eingabe</h3>
+<h3>Grafische Eingabe</h3>
+<ul>
+  <li>Die Grafik ist der Hauptarbeitsbereich (Ansicht «System»). Werkzeuge oben: <b>Umriss</b> (U, Polygon),
+      <b>Öffnung</b> (O, Rechteck), <b>Stütze</b> (S), <b>Wand</b> (W, Linienzug), <b>Flächenlast</b> (F, Polygon),
+      <b>Linienlast</b> (L) und <b>Punktlast</b> (P). Neue Lasten erhalten den Lastfall, der oben unter «Neue Lasten in» gewählt ist.</li>
+  <li>Punkte fangen an Ecken, Kantenmitten, Schnittpunkten und am Raster. Beim Zeichnen und Verschieben binden
+      <b>X</b>/<b>Y</b> an eine Achse, <b>M</b> nimmt die Mitte zweier Punkte, Ziffern geben Koordinaten direkt ein.</li>
+  <li>Anklicken wählt ein Element und öffnet das Eigenschaftsfenster (Dicke, Beton und Netzweite bei der Plattenfläche;
+      b × h und Federn bei Stützen; «eingespannt» bei Wänden; Wert und Lastfall bei Lasten). Shift+Klick oder ein
+      Rahmen wählt mehrere Elemente.</li>
+  <li>Ziehen verschiebt Punkte und Elemente. Zusammenfallende Punkte bleiben verbunden: Wird eine Plattenecke
+      verschoben, folgen die Wandenden, die dort liegen. Entf löscht, C kopiert (Stützen, Wände, Lasten, Öffnungen).</li>
+  <li>Eine Randkante anklicken › «Punkt in der Mitte einfügen» erzeugt einen weiteren Eckpunkt (z.B. für eine L-Form).</li>
+  <li>Alle Eingaben stehen zusätzlich in den Tabellen links; Tabelle und Grafik sind stets synchron.</li>
+</ul>
+
+<h3>Eingabe in Tabellen</h3>
 <ul>
   <li><b>Stützen</b> mit Abmessungen b × h werden als starre Bereiche (Stützenkopf) modelliert; die Momente werden
       dadurch am Stützenrand ausgegeben. Ohne Abmessungen entsteht ein reines Punktlager mit singulärer Momentenspitze.</li>
@@ -34,6 +50,12 @@ abgebildet, Stützen und Punktlasten liegen auf Netzknoten. Um Stützen wird das
   <li>Tabellen können direkt aus Excel eingefügt werden (Zellen markieren, kopieren, in die erste Zelle einfügen).</li>
   <li>Zahlenfelder akzeptieren Ausdrücke wie <code>6.5*3</code> oder <code>19.5/2</code>.</li>
 </ul>
+
+<h3>Herleitung</h3>
+<p>Im Ergebnisbereich zeigt die Seite <b>Herleitung</b> den Rechenweg: Baustoffkennwerte und Plattensteifigkeit,
+Lastkombinationen, Gleichgewichtskontrolle, Wood–Armer-Momente und Bewehrung am massgebenden Punkt jeder Lage,
+jeden Durchstanznachweis (u, d<sub>v</sub>, k<sub>e</sub>, ψ, k<sub>r</sub>, V<sub>Rd</sub>) und den Durchbiegungsnachweis –
+jeweils mit allgemeiner Formel, eingesetzten Werten und Normbezug. Die Herleitung wird auch an den Bericht angehängt.</p>
 
 <h3>Kombinationen</h3>
 <p>Automatisch nach SIA 260 bzw. EN 1990: Tragsicherheit 1.35·G + 1.5·Q<sub>1</sub> + Σ 1.5·ψ<sub>0</sub>·Q<sub>i</sub>

@@ -40,9 +40,34 @@ export function baseProject() {
   };
 }
 
+/**
+ * Leeres, neutrales Projekt (Standard beim Start): eine Bodenschicht, keine Geometrie und keine Lasten.
+ * Die Analyseart ist frei wählbar; Wand, Fundament, Gelände oder Mauer entstehen in der Grafik.
+ */
 export function defaultProject() {
-  return baseProject();
+  const p = baseProject();
+  const zero = { V: 0, HB: 0, HL: 0, MB: 0, ML: 0 };
+  p.analysis = 'erddruck';
+  p.soil.layers = [L('Boden', 0, 20, 10, 30, 0, 0, 20, 2 / 3, 1)];
+  p.soil.gw = { on: false, z: 3 };
+  p.ep = { ...p.ep, H: 0, q: 0, loads: [] };
+  p.bc = { ...p.bc, B: 0, L: 0, D: 1, t: 0.5, loads: { G: { ...zero }, Q: { ...zero } } };
+  p.st = { ...p.st, B: 0, L: 0, D: 1, p0: 0, V: 0 };
+  p.sl = { ...p.sl, surface: [], water: [], waterMode: 'none', q: { p: 0, x1: 0, x2: 0 }, grid: { ...p.sl.grid, auto: true } };
+  p.rw = { ...p.rw, hs: 0, q: 0, key: { ...p.rw.key, on: false } };
+  return p;
 }
+
+/** Typische Bodenarten (Richtwerte, projektspezifisch zu prüfen). */
+export const SOIL_PRESETS = [
+  { name: 'Kies, sandig', gamma: 21, gammaP: 12, phi: 35, c: 0, cu: 0, ME: 60, desc: 'GW/GP, mitteldicht – dicht' },
+  { name: 'Sand, siltig', gamma: 20, gammaP: 11, phi: 31, c: 0, cu: 0, ME: 25, desc: 'SM, mitteldicht' },
+  { name: 'Silt, tonig', gamma: 19.5, gammaP: 9.5, phi: 27, c: 5, cu: 40, ME: 8, desc: 'ML, steif' },
+  { name: 'Ton, mittelplastisch', gamma: 19, gammaP: 9, phi: 24, c: 10, cu: 60, ME: 6, desc: 'CL/CM, steif' },
+  { name: 'Moräne', gamma: 22, gammaP: 12, phi: 34, c: 5, cu: 0, ME: 80, desc: 'GM/GC, dicht gelagert, vorbelastet' },
+  { name: 'Seeablagerung, weich', gamma: 18, gammaP: 8, phi: 22, c: 2, cu: 20, ME: 3, desc: 'CL/OL, weich' },
+  { name: 'Auffüllung', gamma: 19, gammaP: 10, phi: 30, c: 0, cu: 0, ME: 15, desc: 'heterogen, locker' },
+];
 
 export const EXAMPLES = [
   {

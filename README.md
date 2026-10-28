@@ -19,14 +19,34 @@ im Browser läuft – ohne Installation, ohne Server und ohne Build-Schritt. Die
 
 ## Bedienung
 
-* Jedes Modul startet mit einem Beispiel; weitere Beispiele unter **Beispiele**.
+Die Grafik in der Mitte ist der Arbeitsbereich. Über der Grafik stehen die Werkzeuge des jeweiligen Moduls
+(z.B. Stab, Lager, Streckenlast im Stabwerk; Polygon und Bewehrungsstab im Querschnitt; Schicht und Wasserspiegel
+in der Geotechnik). Ein Klick auf ein Element öffnet das Eigenschaftsfenster mit Material, Querschnitt, Lasten
+und Ergebnissen. Punkte und Elemente lassen sich mit der Maus ziehen.
+
+| Taste | Wirkung beim Zeichnen und Verschieben |
+|-------|----------------------------------------|
+| X / Y (bzw. Y / Z im Querschnitt) | an die Achse durch den Bezugspunkt binden; angehoverte Punkte werden darauf projiziert |
+| M | Mitte zweier Punkte |
+| R | Bezugspunkt setzen |
+| P / S | parallel bzw. senkrecht zu einer angeklickten Linie |
+| Shift / Alt | orthogonal / ohne Fang |
+| Ziffern | Koordinaten tippen (relativ, absolut oder Länge/Winkel), Enter |
+| V / C / Entf | Auswahl verschieben / kopieren / löschen |
+| Esc | Schritt zurück |
+| Rechte Maustaste, Leertaste | Ansicht verschieben |
+
+Alle Hilfen lassen sich in beliebiger Reihenfolge kombinieren. Unter **Herleitung** im Ergebnisbereich steht der
+vollständige Rechenweg (Formel, eingesetzte Werte, Ergebnis, Normbezug); jeder Nachweis verlinkt dorthin.
+
+* Jedes Modul startet mit einem leeren Projekt; fertige Beispiele stehen unter **Beispiele**.
 * Die Eingabe ist in nummerierte Register gegliedert. Das **?** neben einem Feld erklärt Bedeutung, Vorzeichen und übliche Werte.
 * Ergebnisse aktualisieren sich sofort; Ausnutzungsbalken zeigen, ob ein Nachweis erfüllt ist.
 * **Bericht** erzeugt ein druckfertiges Dokument (Drucken → PDF oder Export als HTML).
 * **Speichern** lädt die Projektdatei (`*.modul.json`) herunter, **Öffnen** lädt sie wieder. Der letzte Stand wird zusätzlich im Browser zwischengespeichert.
 * Tabellen akzeptieren Einfügen aus Excel sowie Ausdrücke wie `6/2` oder `2*3,5`.
 * Rückgängig/Wiederholen mit Ctrl+Z / Ctrl+Y, Hell/Dunkel über das Sonnen-/Mondsymbol.
-* Direktlinks: `modules/stabwerk/?beispiel=2&theme=dark&ansicht=M` öffnet Beispiel 2 im Dunkelmodus mit Momentenlinie.
+* Direktlinks: `modules/stabwerk/?beispiel=2&theme=dark&ansicht=M` öffnet Beispiel 2 im Dunkelmodus mit Momentenlinie, `?neu` ein leeres Projekt.
 
 ## Veröffentlichen auf GitHub Pages
 

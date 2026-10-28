@@ -1,5 +1,5 @@
 // Modul Stabwerk – ebene Stabtragwerke (Theorie 1. und 2. Ordnung, Stabilität)
-import { createApp } from '../../js/core/app.js';
+import { createApp, IncompleteInput } from '../../js/core/app.js';
 import {
   h, clear, group, dataTable, numField, selectField, checkField, textField, button, icon, kvTable, resultTable, stats, note,
   segmented, badge, clone, fmt, emptyState, infoTip, summaryCard, toast,
@@ -10,54 +10,11 @@ import { niceNum } from '../../js/core/format.js';
 import { analyze, LC_KINDS, COMBO_TYPES, LOAD_DIRS, generateCombinations, pickResult } from './calc.js';
 import { MATERIALS, PROFILES, SECTION_TYPES, sectionProps, sectionLabel, materialById } from './sections.js';
 import { EXAMPLES } from './examples.js';
+import { defaultProject, emptyLC, syncCombos, removeNodeRefs, removeMemberRefs, removeSectionRefs, SUPPORT_KINDS, supportKind } from './model.js';
+import { editorSpec } from './editing.js';
+import { derivation } from './derivation.js';
 
-// ------------------------------------------------------------------ Projektstruktur
-
-export function emptyLC(name = 'Eigengewicht', kind = 'G') {
-  return { name, kind, selfWeight: kind === 'G', psi: [...LC_KINDS[kind].psi], nodal: [], dist: [], point: [], temp: [], settle: [] };
-}
-
-function defaultProject() {
-  return {
-    nodes: [{ x: 0, y: 0 }, { x: 6, y: 0 }],
-    members: [{ i: 1, j: 2, sec: 1, hi: false, hj: false }],
-    sections: [{ name: 'Balken', type: 'rect', mat: 'C30/37', b: 300, h: 500, d: 400, profile: 'HEB 200', A: 100, I: 10000, E: 30000, gamma: 25 }],
-    supports: [{ node: 1, ux: true, uy: true, rz: false, kx: 0, ky: 0, kr: 0 }, { node: 2, ux: false, uy: true, rz: false, kx: 0, ky: 0, kr: 0 }],
-    loadCases: [emptyLC('Eigengewicht', 'G')],
-    combinations: [],
-    autoCombos: true,
-    analysis: { secondOrder: false, imperfection: 200, buckling: true, nSub: 4 },
-    activeLC: 0,
-  };
-}
-
-function syncCombos(p) {
-  if (p.autoCombos) p.combinations = generateCombinations(p.loadCases);
-  for (const c of p.combinations) {
-    c.factors = p.loadCases.map((_, i) => (c.factors && c.factors[i] !== undefined ? c.factors[i] : 0));
-  }
-}
-
-// Umnummerierung nach dem Löschen eines Knotens bzw. Stabes
-function removeNodeRefs(p, idx) {
-  const n = idx + 1;
-  const fix = (v) => (v > n ? v - 1 : v);
-  p.members = p.members.filter((m) => m.i !== n && m.j !== n).map((m) => ({ ...m, i: fix(m.i), j: fix(m.j) }));
-  p.supports = p.supports.filter((s) => s.node !== n).map((s) => ({ ...s, node: fix(s.node) }));
-  for (const lc of p.loadCases) {
-    lc.nodal = lc.nodal.filter((l) => l.node !== n).map((l) => ({ ...l, node: fix(l.node) }));
-    lc.settle = lc.settle.filter((l) => l.node !== n).map((l) => ({ ...l, node: fix(l.node) }));
-  }
-}
-function removeMemberRefs(p, idx) {
-  const n = idx + 1;
-  const fix = (v) => (v > n ? v - 1 : v);
-  for (const lc of p.loadCases) for (const key of ['dist', 'point', 'temp']) lc[key] = lc[key].filter((l) => l.member !== n).map((l) => ({ ...l, member: fix(l.member) }));
-}
-function removeSectionRefs(p, idx) {
-  const n = idx + 1;
-  for (const m of p.members) { if (m.sec === n) m.sec = 1; else if (m.sec > n) m.sec -= 1; }
-}
+export { emptyLC };
 
 // ------------------------------------------------------------------ Hilfsfunktionen Darstellung
 
@@ -108,13 +65,11 @@ function supportType(s) {
 
 function drawStructure(v, app, opts = {}) {
   const p = app.project;
-  const sel = app.selection;
   const faint = opts.faint;
   p.members.forEach((m, k) => {
     const a = p.nodes[m.i - 1], b = p.nodes[m.j - 1];
     if (!a || !b) return;
-    const isSel = sel?.member === k;
-    v.line(a.x, a.y, b.x, b.y, { stroke: isSel ? 'var(--c-highlight)' : faint ? 'var(--c-mesh)' : 'var(--c-struct)', width: isSel ? 4.5 : faint ? 1.5 : 3, cap: 'round' });
+    v.line(a.x, a.y, b.x, b.y, { stroke: faint ? 'var(--c-mesh)' : 'var(--c-struct)', width: faint ? 1.5 : 3, cap: 'round' });
     const L = Math.hypot(b.x - a.x, b.y - a.y) || 1, c = (b.x - a.x) / L, s = (b.y - a.y) / L;
     if (m.hi) v.hinge(a.x, a.y, { dx: c * 9, dy: -s * 9, r: 4 });
     if (m.hj) v.hinge(b.x, b.y, { dx: -c * 9, dy: s * 9, r: 4 });
@@ -129,8 +84,7 @@ function drawStructure(v, app, opts = {}) {
     if (t) v.support(n.x, n.y, t.type, t.angle, faint ? { color: 'var(--c-mesh)' } : {});
   });
   p.nodes.forEach((n, i) => {
-    const isSel = sel?.node === i || app.pendingNode === i;
-    v.dot(n.x, n.y, isSel ? 5 : 3.2, { fill: isSel ? 'var(--c-highlight)' : faint ? 'var(--c-mesh)' : 'var(--c-struct)', title: `Knoten ${i + 1} (${fmt(n.x, 2)} / ${fmt(n.y, 2)})` });
+    v.dot(n.x, n.y, 3.2, { fill: faint ? 'var(--c-mesh)' : 'var(--c-struct)', title: `Knoten ${i + 1} (${fmt(n.x, 2)} / ${fmt(n.y, 2)})` });
     if (opts.labels && !faint) v.text(n.x, n.y, String(i + 1), { size: 10.5, dx: 9, dy: 10, color: 'var(--text-2)' });
   });
 }
@@ -389,7 +343,7 @@ function renderSystemTab(el, app) {
       onChange: (e) => {
         if (e.type === 'remove') { removeNodeRefs(p, e.index); app.changed({ inputs: true }); } else app.changed({ inputs: e.type !== 'edit' });
       },
-      onSelect: (i) => { app.selection = { node: i }; app.redraw(); },
+      onSelect: (i) => app.editor?.select([`n:${i}`]),
     }),
   ], { info: 'Knoten sind die Eck- und Verbindungspunkte des Tragwerks. Nummerierung in der Reihenfolge der Tabelle.' }));
 
@@ -409,7 +363,7 @@ function renderSystemTab(el, app) {
         return { i: last ? last.j : 1, j: last ? Math.min(p.nodes.length, last.j + 1) : 2, sec: last ? last.sec : 1, hi: false, hj: false };
       },
       onChange: (e) => { if (e.type === 'remove') { removeMemberRefs(p, e.index); app.changed({ inputs: true }); } else app.changed({ inputs: e.type !== 'edit' }); },
-      onSelect: (i) => { app.selection = { member: i }; app.redraw(); app.renderResults(); },
+      onSelect: (i) => { app.editor?.select([`m:${i}`]); app.renderResults(); },
     }),
   ], { info: 'Stäbe sind biegesteife Balken (Euler-Bernoulli). Gelenke an den Enden lösen das Moment.' }));
 
@@ -443,20 +397,6 @@ function renderSystemTab(el, app) {
       ], p.supports, { canAdd: false, canRemove: false, onChange: () => app.changed(), hint: '' }),
     ], { collapsible: true, collapsed: !p.supports.some((q) => q.kx || q.ky || q.kr) }));
   }
-}
-
-const SUPPORT_KINDS = [
-  { value: 'pinned', label: 'Gelenkig fest', flags: [true, true, false] },
-  { value: 'rollerY', label: 'Rolle (vertikal gehalten)', flags: [false, true, false] },
-  { value: 'rollerX', label: 'Rolle (horizontal gehalten)', flags: [true, false, false] },
-  { value: 'fixed', label: 'Eingespannt', flags: [true, true, true] },
-  { value: 'slide', label: 'Einspannung, horizontal verschieblich', flags: [false, true, true] },
-  { value: 'spring', label: 'Nur Federn', flags: [false, false, false] },
-  { value: 'custom', label: 'Benutzerdefiniert', flags: null },
-];
-function supportKind(sp) {
-  const k = SUPPORT_KINDS.find((q) => q.flags && q.flags[0] === !!sp.ux && q.flags[1] === !!sp.uy && q.flags[2] === !!sp.rz);
-  return k ? k.value : 'custom';
 }
 
 // ------------------------------------------------------------------ Eingabe: Querschnitte
@@ -645,7 +585,8 @@ function renderResults(el, app) {
   ]));
 
   // ausgewählter Stab
-  const sel = app.selection;
+  const selK = (app.editor?.sel || []).map((id) => id.split(':')).find(([t]) => t === 'm');
+  const sel = selK ? { member: +selK[1] } : null;
   if (sel?.member !== undefined && res.members[sel.member]) {
     const mr = res.members[sel.member];
     el.append(group(`Stab ${sel.member + 1} – Verlauf`, [
@@ -655,7 +596,7 @@ function renderResults(el, app) {
         { points: mr.stations.map((s) => [s.x, s.N]), label: 'N [kN]', dash: '2 3' },
       ], xLabel: 'x ab Knoten i [m]' }),
       kvTable([['M max / min', `${fmt(mr.M.max, 1)} / ${fmt(mr.M.min, 1)}`, 'kNm'], ['V max / min', `${fmt(mr.V.max, 1)} / ${fmt(mr.V.min, 1)}`, 'kN'], ['N max / min', `${fmt(mr.N.max, 1)} / ${fmt(mr.N.min, 1)}`, 'kN'], ['Verschiebung max', mr.uMax * 1000, 'mm', 1]]),
-    ], { actions: [button('', { icon: 'close', small: true, ghost: true, title: 'Auswahl aufheben', onClick: () => { app.selection = null; app.redraw(); app.renderResults(); } })] }));
+    ], { actions: [button('', { icon: 'close', small: true, ghost: true, title: 'Auswahl aufheben', onClick: () => { app.editor?.select([]); app.renderResults(); } })] }));
   }
 
   el.append(group('Auflagerkräfte', [
@@ -766,100 +707,6 @@ function report(app) {
   return out;
 }
 
-// ------------------------------------------------------------------ Grafik-Interaktion
-
-function nearestNode(app, x, y, tolPx = 12) {
-  const v = app.view;
-  let best = -1, bd = v.px(tolPx);
-  app.project.nodes.forEach((n, i) => { const d = Math.hypot(n.x - x, n.y - y); if (d < bd) { bd = d; best = i; } });
-  return best;
-}
-function nearestMember(app, x, y, tolPx = 10) {
-  const p = app.project, v = app.view;
-  let best = null, bd = v.px(tolPx);
-  p.members.forEach((m, k) => {
-    const a = p.nodes[m.i - 1], b = p.nodes[m.j - 1];
-    if (!a || !b) return;
-    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / L2));
-    const d = Math.hypot(a.x + t * dx - x, a.y + t * dy - y);
-    if (d < bd) { bd = d; best = { k, s: t * Math.sqrt(L2) }; }
-  });
-  return best;
-}
-function snap(app, x, y) {
-  const g = Math.max(0.05, niceNum(app.view.px(24), true) / 2);
-  const step = g >= 1 ? 0.5 : g >= 0.25 ? 0.25 : g >= 0.1 ? 0.1 : 0.05;
-  return [Math.round(x / step) * step, Math.round(y / step) * step];
-}
-
-function onViewClick(x, y, app) {
-  const p = app.project;
-  const tool = app.tool || 'select';
-  if (tool === 'node') {
-    if (nearestNode(app, x, y) >= 0) { app.status('Hier befindet sich bereits ein Knoten.', 'warn'); return; }
-    const [sx, sy] = snap(app, x, y);
-    p.nodes.push({ x: +sx.toFixed(3), y: +sy.toFixed(3) });
-    app.status(`Knoten ${p.nodes.length} bei (${fmt(sx, 2)} / ${fmt(sy, 2)}) hinzugefügt`, 'ok');
-    app.changed({ inputs: true });
-    return;
-  }
-  if (tool === 'member') {
-    let n = nearestNode(app, x, y);
-    if (n < 0) {
-      const [sx, sy] = snap(app, x, y);
-      p.nodes.push({ x: +sx.toFixed(3), y: +sy.toFixed(3) });
-      n = p.nodes.length - 1;
-    }
-    if (app.pendingNode === undefined || app.pendingNode === null) {
-      app.pendingNode = n;
-      app.status(`Anfangsknoten ${n + 1} gewählt – jetzt Endpunkt anklicken (Esc beendet)`);
-      app.changed({ inputs: true });
-      return;
-    }
-    if (app.pendingNode !== n) {
-      const last = p.members[p.members.length - 1];
-      p.members.push({ i: app.pendingNode + 1, j: n + 1, sec: last ? last.sec : 1, hi: false, hj: false });
-      app.status(`Stab ${p.members.length} von Knoten ${app.pendingNode + 1} nach ${n + 1} erstellt – weiterzeichnen oder Esc`, 'ok');
-    }
-    app.pendingNode = n;
-    app.changed({ inputs: true });
-    return;
-  }
-  // Auswahl
-  const n = nearestNode(app, x, y);
-  if (n >= 0) {
-    app.selection = { node: n };
-    const res = app.results && selectedResult(app);
-    const d = res?.disp?.[n];
-    app.status(`Knoten ${n + 1}: (${fmt(p.nodes[n].x, 3)} / ${fmt(p.nodes[n].y, 3)}) m` + (d ? ` · ux = ${fmt(d[0] * 1000, 2)} mm, uy = ${fmt(d[1] * 1000, 2)} mm, φ = ${fmt(d[2] * 1000, 3)} mrad` : ''));
-    app.redraw(); app.renderResults();
-    return;
-  }
-  const m = nearestMember(app, x, y);
-  if (m) {
-    app.selection = { member: m.k };
-    const res = app.results && selectedResult(app);
-    const mr = res?.members?.[m.k];
-    if (mr) {
-      const st = mr.stations.reduce((b, s) => (Math.abs(s.x - m.s) < Math.abs(b.x - m.s) ? s : b));
-      app.status(`Stab ${m.k + 1}, x = ${fmt(st.x, 2)} m: N = ${fmt(st.N, 1)} kN, V = ${fmt(st.V, 1)} kN, M = ${fmt(st.M, 1)} kNm, u = ${fmt(Math.hypot(st.ux, st.uy) * 1000, 1)} mm`);
-    } else app.status(`Stab ${m.k + 1}`);
-    app.redraw(); app.renderResults();
-    return;
-  }
-  if (app.selection) { app.selection = null; app.redraw(); app.renderResults(); }
-}
-
-document.addEventListener('keydown', (e) => {
-  const app = window.openstatik;
-  if (e.key === 'Escape' && app && (app.pendingNode !== null && app.pendingNode !== undefined)) {
-    app.pendingNode = null;
-    app.status('Zeichnen beendet');
-    app.redraw();
-  }
-});
-
 // ------------------------------------------------------------------ App
 
 createApp({
@@ -879,10 +726,10 @@ createApp({
     return p;
   },
   intro: `<h4>So funktioniert's</h4><ol>
-    <li><b>System</b>: Knoten, Stäbe und Lager erfassen – oder mit <b>+ Knoten</b> / <b>+ Stab</b> direkt in der Grafik zeichnen.</li>
-    <li><b>Querschnitte</b> wählen (Beton, Stahlprofile, Holz).</li>
-    <li><b>Lasten</b> je Lastfall eingeben; Kombinationen nach SIA 260 entstehen automatisch.</li>
-    <li>Ergebnisse (M, V, N, Verformung, Knicken) erscheinen sofort – oben in der Grafik umschalten, Stab anklicken für Details.</li></ol>`,
+    <li><b>Zeichnen</b>: oben <b>Stab</b> (L) wählen und Punkte in die Grafik klicken – Knoten entstehen automatisch.</li>
+    <li><b>Lager und Lasten</b> mit den Werkzeugen <b>Lager</b> (A), <b>Streckenlast</b> (Q), <b>Einzellast</b> (F) anbringen.</li>
+    <li><b>Anklicken</b> eines Stabes oder Knotens öffnet das Eigenschaftsfenster: Querschnitt, Material, Gelenke, Lasten.</li>
+    <li>Ergebnisse erscheinen sofort; unter <b>Herleitung</b> rechts steht der Rechenweg. Die Tabellen links bleiben als Alternative.</li></ol>`,
   inputTabs: [
     { id: 'sys', label: 'System', render: renderSystemTab },
     { id: 'sec', label: 'Querschnitte', render: renderSectionsTab },
@@ -907,23 +754,22 @@ createApp({
     if (['def', 'M', 'V', 'N', 'buck'].includes(app.viewMode)) list.push({ key: 'scale', label: 'Massstab', type: 'range', min: 0.2, max: 3, step: 0.05, default: 1, digits: 2 });
     return list;
   },
-  toolbarExtras: (app) => {
-    const tools = [{ id: 'select', label: 'Auswahl', title: 'Knoten/Stab anklicken für Werte' }, { id: 'node', label: '+ Knoten', title: 'Klick in die Grafik setzt einen Knoten (Rasterfang)' }, { id: 'member', label: '+ Stab', title: 'Zwei Punkte anklicken; Esc beendet' }];
-    return [h('span', { class: 'sep' }), segmented(tools, app.tool || 'select', (id) => {
-      app.tool = id;
-      app.pendingNode = null;
-      if (id !== 'select' && app.viewMode !== 'sys') app.setViewMode('sys');
-      app.status(tools.find((t) => t.id === id).title);
-    })];
-  },
-  onViewClick,
+  editor: editorSpec,
+  derivation,
   renderView(v, app, mode) {
     const p = app.project;
-    if (!p.nodes.length) { app.showViewMessage('Noch keine Knoten – in der Tabelle erfassen oder mit «+ Knoten» in die Grafik klicken.'); v.setBounds(-1, -1, 7, 4); return; }
+    if (!p.nodes.length) {
+      app.showViewMessage('');
+      v.setBounds(-1, -1, 9, 5);
+      v.caption('Leeres Projekt – Werkzeug «Stab» (L) wählen und Punkte anklicken');
+      v.scaleBar();
+      return;
+    }
     app.showViewMessage('');
     const ext = modelExtent(p);
     const pad = 0.12 * ext.size;
-    v.setBounds(ext.x0 - pad, ext.y0 - pad, ext.x1 + pad, ext.y1 + pad, { noFit: app.tool && app.tool !== 'select' });
+    // Beim Bearbeiten nicht automatisch neu einpassen (nur beim Laden eines Projekts)
+    v.setBounds(ext.x0 - pad, ext.y0 - pad, ext.x1 + pad, ext.y1 + pad, { noFit: true });
     const labels = app.viewOpts.labels !== false;
     const scale = app.viewOpts.scale ?? 1;
     if (mode === 'sys' || !app.results) {
@@ -958,6 +804,8 @@ createApp({
   },
   compute(p) {
     syncCombos(p);
+    if (!p.members.length) throw new IncompleteInput('Noch kein Tragwerk vorhanden.', 'Wählen Sie oben das Werkzeug «Stab» (Taste L) und klicken Sie Anfangs- und Endpunkt in die Grafik – oder laden Sie unter «Beispiele» ein fertiges System.');
+    if (!p.supports.length) throw new IncompleteInput('Es fehlen noch Lager.', 'Werkzeug «Lager» (Taste A) wählen und einen Knoten anklicken. Die Lagerart wählen Sie danach im Eigenschaftsfenster.');
     return analyze(p);
   },
   renderResults,

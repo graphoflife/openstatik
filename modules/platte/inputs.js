@@ -8,15 +8,22 @@ import {
   LOAD_CATEGORIES, COMBO_TYPES, defaultCombos, comboFormula, comboTypeLabel, newId, estimateNodes, layerLabel,
 } from './calc.js';
 import { effectiveDepths } from './design.js';
+import { idForRow } from './editing.js';
 
 const XY = [
   { key: 'x', label: 'x', unit: 'm' },
   { key: 'y', label: 'y', unit: 'm' },
 ];
 
-function sel(app, kind, i) {
-  app.selection = { kind, i };
-  app.redraw();
+/** Tabellenzeile → Auswahl in der Grafik (Editor). */
+function sel(app, kind, i, j) {
+  let ids;
+  if (kind === 'al') {
+    const reg = app.project.areaLoads[i]?.region;
+    const k = app.project.loadAreas.findIndex((a) => a.id === reg);
+    ids = k >= 0 ? [`a:${k}`] : app.project.outline.length >= 3 ? ['slab'] : [];
+  } else ids = idForRow(kind, i, j);
+  if (app.editor && ids.length) app.editor.select(ids);
 }
 
 function rectPts(x0, y0, x1, y1) {
@@ -55,7 +62,7 @@ function polygonList(app, list, o) {
     const tbl = dataTable(XY, poly.pts, {
       minRows: 3,
       onChange: () => app.changed(),
-      onSelect: (j) => { app.selection = { kind: o.kind, i, j }; app.redraw(); },
+      onSelect: (j) => sel(app, o.kind, i, j),
       newRow: (rows) => ({ x: rows[rows.length - 1]?.x ?? 0, y: rows[rows.length - 1]?.y ?? 0 }),
       hint: 'Eckpunkte, Einfügen aus Excel möglich',
     });
@@ -64,7 +71,7 @@ function polygonList(app, list, o) {
       tbl,
     ], {
       collapsible: true,
-      actions: [button('', { icon: 'trash', small: true, ghost: true, title: `${o.itemName} löschen`, onClick: () => { o.onRemove?.(poly); list.splice(i, 1); app.selection = null; app.changed({ inputs: true }); } })],
+      actions: [button('', { icon: 'trash', small: true, ghost: true, title: `${o.itemName} löschen`, onClick: () => { o.onRemove?.(poly); list.splice(i, 1); app.editor?.select([]); app.changed({ inputs: true }); } })],
     }));
   });
   return wrap;

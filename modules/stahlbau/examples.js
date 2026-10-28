@@ -18,7 +18,7 @@ const base = () => ({
   },
   mode: 'beam',
   beam: {
-    system: 'ss', spans: [6], overhang: 1.5, selfWeight: true,
+    system: 'ss', spans: [6], overhang: 1.5, length: 6, supports: [], selfWeight: true, activeLC: 'G',
     loadCases: [{ id: 'G', name: 'Ausbaulast', cat: 'G' }, { id: 'Q1', name: 'Nutzlast', cat: 'Nutzlast' }],
     loads: [],
   },
@@ -29,13 +29,9 @@ const base = () => ({
   suggestSeries: 'IPE',
 });
 
+/** Neues Projekt: Einfeldträger IPE 300, S235, L = 6 m – noch ohne Lasten (die Grafik ist der Einstieg). */
 export function defaultProject() {
-  const p = base();
-  p.beam.loads = [
-    { lc: 'G', type: 'q', dir: 'z', v1: 4, v2: null, x1: null, x2: null },
-    { lc: 'Q1', type: 'q', dir: 'z', v1: 4, v2: null, x1: null, x2: null },
-  ];
-  return p;
+  return base();
 }
 
 export const EXAMPLES = [
@@ -43,7 +39,11 @@ export const EXAMPLES = [
     name: 'Deckenträger IPE 300 (S235)',
     desc: 'Einfeldträger 6 m, Gleichlasten g/q, Kippen nur an den Auflagern gehalten, Last auf Obergurt',
     project: () => {
-      const p = defaultProject();
+      const p = base();
+      p.beam.loads = [
+        { lc: 'G', kind: 'qz', v1: 4, v2: null, x1: null, x2: null },
+        { lc: 'Q1', kind: 'qz', v1: 4, v2: null, x1: null, x2: null },
+      ];
       p.meta = { name: 'Deckenträger Pos. 1', comment: 'Einfeldträger IPE 300, S235, Spannweite 6.00 m, Trägerabstand 2.00 m. Ausbau 2.0 kN/m², Nutzlast 2.0 kN/m² (Wohnen).' };
       return p;
     },
@@ -103,9 +103,9 @@ export const EXAMPLES = [
         system: 'cant', spans: [2.5], overhang: 1.5, selfWeight: true,
         loadCases: [{ id: 'G', name: 'Ausbau + Geländer', cat: 'G' }, { id: 'Q1', name: 'Nutzlast Balkon', cat: 'Nutzlast' }],
         loads: [
-          { lc: 'G', type: 'q', dir: 'z', v1: 3, v2: null, x1: null, x2: null },
-          { lc: 'G', type: 'P', dir: 'z', v1: 2, v2: null, x1: 2.5, x2: null },
-          { lc: 'Q1', type: 'q', dir: 'z', v1: 4, v2: null, x1: null, x2: null },
+          { lc: 'G', kind: 'qz', v1: 3, v2: null, x1: null, x2: null },
+          { lc: 'G', kind: 'Pz', v1: 2, v2: null, x1: 2.5, x2: null },
+          { lc: 'Q1', kind: 'qz', v1: 4, v2: null, x1: null, x2: null },
         ],
       };
       p.stab = { ...stabDefaults(), betaY: 2, betaZ: 2, swayY: true, swayZ: true, k: 0.7, kw: 0.7, mcr: 'fe' };
@@ -131,9 +131,9 @@ export const EXAMPLES = [
           { id: 'Q2', name: 'Nutzlast Feld 2', cat: 'Nutzlast' },
         ],
         loads: [
-          { lc: 'G', type: 'q', dir: 'z', v1: 6, v2: null, x1: null, x2: null },
-          { lc: 'Q1', type: 'q', dir: 'z', v1: 9, v2: null, x1: 0, x2: 5 },
-          { lc: 'Q2', type: 'q', dir: 'z', v1: 9, v2: null, x1: 5, x2: 10 },
+          { lc: 'G', kind: 'qz', v1: 6, v2: null, x1: null, x2: null },
+          { lc: 'Q1', kind: 'qz', v1: 9, v2: null, x1: 0, x2: 5 },
+          { lc: 'Q2', kind: 'qz', v1: 9, v2: null, x1: 5, x2: 10 },
         ],
       };
       p.stab = { ...stabDefaults(), restraints: [{ x: 2.5 }, { x: 7.5 }] };

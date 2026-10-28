@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sectionProps, outlineProps } from '../modules/stahlbau/profiles.js';
 import { mcrFormula, mcrUniform, ltbEigen, cFactors } from '../modules/stahlbau/ltb.js';
-import { analyzeBeam, combine, normLoad, autoCombos, defaultFactors } from '../modules/stahlbau/beam.js';
+import { analyzeBeam, combine, normLoad, autoCombos, defaultFactors, setBeamModel, systemGeometry } from '../modules/stahlbau/beam.js';
 import {
   chiFlex, chiLT, classify, effectiveSection, interactionFactors, cmFactor, compute, suggestProfiles, bucklingCurves,
 } from '../modules/stahlbau/calc.js';
@@ -261,7 +261,14 @@ test('Alle Beispiele rechnen fehlerfrei mit 0 < η ≤ 1', () => {
     const r = compute(ex.project());
     assert.ok(r.etaMax > 0 && r.etaMax <= 1, `${ex.name}: η = ${r.etaMax}`);
   }
-  assert.ok(compute(defaultProject()).etaMax > 0);
+});
+
+test('Neues Projekt ist leer: Träger ohne Lasten → unvollständige Eingabe mit Hinweis', () => {
+  const p = defaultProject();
+  assert.equal(p.beam.loads.length, 0);
+  assert.throws(() => compute(p), (e) => e.incomplete === true && /Lasten/.test(e.message) && /Streckenlast/.test(e.hint));
+  p.beam.loads.push({ lc: 'G', kind: 'qz', v1: 4 });
+  assert.ok(compute(p).etaMax > 0);
 });
 
 test('Profil vorschlagen: leichtestes IPE mit η ≤ 1 für den Deckenträger', () => {
@@ -277,5 +284,99 @@ test('Verständliche Fehlermeldungen', () => {
   assert.throws(() => compute(p), /Spannweite/);
   const q = defaultProject();
   q.mode = 'forces'; q.forces = { L: 3, cases: [] };
-  assert.throws(() => compute(q), /mindestens eine Zeile/);
+  assert.throws(() => compute(q), (e) => e.incomplete === true && /mindestens eine Zeile/.test(e.hint));
+});
+
+test('Freies System: Lager beliebig, Rückführung auf Vorlagen', () => {
+  const b = { system: 'ss', spans: [6] };
+  setBeamModel(b, 6, [{ x: 0, type: 'pin' }, { x: 4.5, type: 'pin' }]);
+  assert.deepEqual([b.system, b.spans, b.overhang], ['ss-cant', [4.5], 1.5]);
+  setBeamModel(b, 8, [{ x: 4, type: 'pin' }, { x: 0, type: 'pin' }, { x: 8, type: 'pin' }]);
+  assert.deepEqual([b.system, b.spans], ['cont', [4, 4]]);
+  setBeamModel(b, 6, [{ x: 0, type: 'fix' }, { x: 6, type: 'pin' }]);
+  assert.equal(b.system, 'fix-pin');
+  // Kragarm links und rechts: freies System
+  setBeamModel(b, 8, [{ x: 1, type: 'pin' }, { x: 7, type: 'pin' }]);
+  assert.equal(b.system, 'free');
+  const g = systemGeometry(b);
+  assert.deepEqual(g.fields.map((f) => [f.x0, f.x1, f.cant]), [[0, 1, true], [1, 7, false], [7, 8, true]]);
+  assert.deepEqual(g.freeEnds, [0, 8]);
+  // ein gelenkiges Lager allein: unvollständig
+  setBeamModel(b, 3, [{ x: 1, type: 'pin' }]);
+  assert.throws(() => systemGeometry(b), (e) => e.incomplete === true);
+});
+
+test('Freies System rechnet wie die entsprechende Vorlage', () => {
+  const a = EXAMPLES[0].project();
+  const b = EXAMPLES[0].project();
+  b.beam.system = 'free'; b.beam.length = 6; b.beam.supports = [{ x: 6, type: 'pin' }, { x: 0, type: 'pin' }];
+  const ra = compute(a), rb = compute(b);
+  near(rb.etaMax, ra.etaMax, 1e-9, 'η');
+  near(rb.checks.find((c) => c.id === 'Mb').seg.Mcr, ra.checks.find((c) => c.id === 'Mb').seg.Mcr, 1e-9, 'Mcr');
+  // symmetrischer Träger mit zwei Kragarmen: Stützmoment = q·a²/2
+  const c = defaultProject();
+  c.beam.system = 'free'; c.beam.length = 8; c.beam.supports = [{ x: 1.5, type: 'pin' }, { x: 6.5, type: 'pin' }];
+  c.beam.selfWeight = false;
+  c.beam.loads = [{ lc: 'G', kind: 'qz', v1: 10 }];
+  c.combos = { auto: false, manual: [{ name: 'M', type: 'ULS', f_G: 1 }] };
+  const rc = compute(c);
+  near(rc.uls[0].combo.My(1.5), -10 * 1.5 ** 2 / 2, 1e-6, 'Stützmoment');
+  near(rc.uls[0].combo.My(4), 10 * 5 ** 2 / 8 - 10 * 1.5 ** 2 / 2, 1e-6, 'Feldmoment');
+});
+
+// ------------------------------------------------------------------ Grafische Bearbeitung und Herleitung
+
+const { editorSpec, DERIV_OF } = await import('../modules/stahlbau/editing.js');
+const { derivation } = await import('../modules/stahlbau/derivation.js');
+
+/** Minimale App für den Editor-Adapter (ohne DOM). */
+function fakeApp(project) {
+  return { project, viewMode: 'system', view: { px: (n) => n * 0.01 }, editor: { grid: 0.25, snapOn: true, setTool() {} }, status() {}, viewOpts: {} };
+}
+const onBeam = (x) => ({ type: 'segment', id: 'beam', q: [x, 0], t: x / 6 });
+
+test('Editor: Lasten, Lager und Halterungen per Klick, Ziehen und Löschen', () => {
+  const app = fakeApp(defaultProject());
+  const p = app.project;
+  assert.deepEqual(editorSpec.pick(app, 'dist', onBeam(2.1)), ['q:0']);
+  assert.deepEqual(editorSpec.pick(app, 'force', onBeam(2.1)), ['P:1']);
+  assert.equal(p.beam.loads[1].x1, 2, 'am Raster 0.25 m gerundet');
+  editorSpec.pick(app, 'restraint', onBeam(3));
+  assert.deepEqual(p.stab.restraints, [{ x: 3 }]);
+  // Lager bei 4.5 m: Durchlaufträger 4.5 + 1.5 m
+  assert.deepEqual(editorSpec.pick(app, 'support', onBeam(4.5)), ['S:1']);
+  assert.deepEqual([p.beam.system, p.beam.spans], ['cont', [4.5, 1.5]]);
+  // Endlager entfernen → Einfeldträger mit Kragarm
+  editorSpec.remove(app, ['S:2']);
+  assert.deepEqual([p.beam.system, p.beam.spans, p.beam.overhang], ['ss-cant', [4.5], 1.5]);
+  // Trägerende ziehen: Länge 8 m, Kragarm 3.5 m
+  editorSpec.move(app, ['end'], [2, 0]);
+  assert.deepEqual([p.beam.system, p.beam.overhang], ['ss-cant', 3.5]);
+  // Einzellast ziehen, Ende der Streckenlast ziehen
+  editorSpec.move(app, ['P:1'], [1.5, 0.3]);
+  assert.equal(p.beam.loads[1].x1, 3.5);
+  editorSpec.move(app, ['qb:0'], [-3, 0]);
+  assert.deepEqual([p.beam.loads[0].x1, p.beam.loads[0].x2], [null, 5]);
+  const r = compute(p);
+  assert.ok(r.etaMax > 0 && r.member.fields.length === 2);
+  const g = editorSpec.geometry(app);
+  assert.ok(['beam', 'end', 'S:0', 'S:1', 'R:0', 'P:1', 'q:0', 'qa:0', 'qb:0', 'sw'].every((id) => [...g.points, ...g.segments, ...g.regions].some((x) => x.id === id)));
+});
+
+test('Herleitung: Abschnitte zu allen Nachweisen, Werte wie Handrechnung', () => {
+  for (const ex of EXAMPLES) {
+    const p = ex.project();
+    const r = compute(p);
+    const secs = derivation({ results: r, project: p });
+    for (const c of r.checks) assert.ok(secs.some((s) => s.id === DERIV_OF(c.id)), `${ex.name}: Herleitung für ${c.id}`);
+    assert.ok(!/NaN|undefined/.test(JSON.stringify(secs)), `${ex.name}: keine NaN`);
+  }
+  const p = EXAMPLES[0].project();
+  const secs = derivation({ results: compute(p), project: p });
+  const mb = secs.find((s) => s.id === 'Mb');
+  near(mb.result.eta, 0.859, 0.005, 'η Kippen');
+  assert.ok(mb.steps.some((s) => /78\.8 kNm/.test(s.r || '')), 'Mcr = 78.8 kNm');
+  assert.ok(mb.steps.some((s) => /1\.369/.test(s.r || '')), 'λ̄LT = 1.369');
+  const ein = secs.find((s) => s.id === 'einwirkung');
+  assert.ok(ein.steps.some((s) => /q_d·L\^2\/8/.test(s.f) && /53\.8|53\.9/.test(s.r)), 'Kontrolle M = q·L²/8');
 });

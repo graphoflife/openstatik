@@ -1,14 +1,22 @@
 // Modul Mauerwerk – unbewehrtes Mauerwerk nach SIA 266
-import { createApp } from '../../js/core/app.js';
+import { createApp, IncompleteInput } from '../../js/core/app.js';
 import { h, group, numField, selectField, checkField, dataTable, button, note, emptyState, fmt } from '../../js/core/ui.js';
-import { computeWall, effectiveHeight } from './calc.js';
+import { computeWall, effectiveHeight, hasLoads, loadFlags, sideFlags, setSides } from './calc.js';
 import { MASONRY_TYPES, typeById, applyTypeDefaults, designValues, changedFromDefaults } from './materials.js';
-import { defaultProject, defaultCombos, EXAMPLES } from './examples.js';
+import { defaultProject, defaultCombos, syncCombos, EXAMPLES } from './examples.js';
+import { editorSpec, fitIntoWall } from './editing.js';
+import { derivation } from './derivation.js';
 import { drawAnsicht, drawSchnitt, drawSchub } from './view.js';
 import { renderResults, ensureStyle } from './results.js';
 import { buildReport, HELP, INTRO } from './bericht.js';
 
 ensureStyle();
+
+/** Änderung aus den Registern: neu rechnen und das Eigenschaftsfenster der Grafik nachführen. */
+function upd(app, opts) {
+  app.changed(opts);
+  app.editor?.refreshPanel(true);
+}
 
 // ------------------------------------------------------------------ Hilfen
 
@@ -33,8 +41,10 @@ function migrate(p) {
       else if (v && typeof v === 'object' && !Array.isArray(v) && typeof target[k] === 'object') fill(target[k], v);
     }
   };
+  const hadAuto = 'combosAuto' in p;
   fill(p, d);
-  if (!Array.isArray(p.combos) || !p.combos.length) p.combos = defaultCombos();
+  if (!hadAuto) p.combosAuto = false; // ältere Dateien: Kombinationen unverändert lassen
+  if (!Array.isArray(p.combos) || !p.combos.length) { p.combos = defaultCombos(loadFlags(p)); p.combosAuto = true; }
   if (!Array.isArray(p.wall.openings)) p.wall.openings = [];
   return p;
 }
@@ -46,14 +56,24 @@ function tabWand(el, app) {
   const live = liveBox(() => {
     const L = app.project.loads;
     const t = W.t / 1000;
-    const eff = effectiveHeight({ h: W.h, t, mode: W.support, rhoManual: W.rhoManual, sides: +W.sides || 0, ls: W.ls > 0 ? W.ls : W.l, eTop: L.eMode === 'slab' ? t / 2 - L.aD / 3000 : 0 });
+    const sf = sideFlags(W);
+    const eff = effectiveHeight({ h: W.h, t, mode: W.support, rhoManual: W.rhoManual, sides: (sf.L ? 1 : 0) + (sf.R ? 1 : 0), ls: W.ls > 0 ? W.ls : W.l, eTop: L.eMode === 'slab' ? t / 2 - L.aD / 3000 : 0 });
     return [['Knickbeiwert ρ', fmt(eff.rho, 3)], ['Knicklänge hef', fmt(eff.hef, 2), 'm'], ['Schlankheit hef/t', fmt(eff.hef / t, 1)]];
   });
-  const ch = () => { live.update(); app.changed(); };
+  const ch = () => { live.update(); upd(app); };
+  let oldH = W.h, oldL = W.l;
+  const chGeo = () => {
+    const L = app.project.loads;
+    if (Math.abs((L.hV || 0) - oldH) < 1e-9) L.hV = W.h;
+    if (Math.abs((W.ls || 0) - oldL) < 1e-9) W.ls = W.l;
+    oldH = W.h; oldL = W.l;
+    fitIntoWall(app.project);
+    ch();
+  };
   el.append(group('Abmessungen', [
-    numField('Höhe h', W, 'h', { unit: 'm', min: 0.3, max: 20, onChange: ch, info: 'Lichte Wandhöhe zwischen den Decken (OK Rohdecke bis UK Decke). Üblich 2.40–3.00 m.' }),
+    numField('Höhe h', W, 'h', { unit: 'm', min: 0.3, max: 20, onChange: chGeo, info: 'Lichte Wandhöhe zwischen den Decken (OK Rohdecke bis UK Decke). Üblich 2.40–3.00 m.' }),
     numField('Dicke t', W, 't', { unit: 'mm', min: 50, max: 1000, onChange: ch, info: 'Wanddicke ohne Verputz, z.B. 125, 150, 175 oder 250 mm. Die Nachweise aus der Ebene gelten je Meter Wandlänge.' }),
-    numField('Länge l', W, 'l', { unit: 'm', min: 0.2, max: 50, onChange: ch, info: 'Wandlänge. Massgebend für den Schubnachweis (Scheibe), die Teilflächenbelastung und die Darstellung.' }),
+    numField('Länge l', W, 'l', { unit: 'm', min: 0.2, max: 50, onChange: chGeo, info: 'Wandlänge. Massgebend für den Schubnachweis (Scheibe), die Teilflächenbelastung und die Darstellung.' }),
   ], { info: 'Geometrie der Wand. Alle Nachweise aus der Wandebene beziehen sich auf einen 1 m breiten Wandstreifen.' }));
 
   const supportFields = [
@@ -61,15 +81,23 @@ function tabWand(el, app) {
       { value: 'slab', label: 'Stahlbetondecken (ρ2 = 0.75)' },
       { value: 'hinged', label: 'gelenkig, z.B. Holzdecke (ρ2 = 1.0)' },
       { value: 'manual', label: 'Knickbeiwert ρ manuell' },
-    ], { onChange: () => app.changed({ inputs: true }), info: 'Einspannung der Wand durch die Decken. Bei beidseitig aufliegenden Stahlbetondecken (bzw. Auflagertiefe ≥ 2/3 t) darf ρ2 = 0.75 angesetzt werden, sofern die Exzentrizität am Wandkopf ≤ 0.25·t ist (EN 1996-1-1, 5.5.1.2; sinngemäss SIA 266).' }),
+    ], { onChange: () => upd(app, { inputs: true }), info: 'Einspannung der Wand durch die Decken. Bei beidseitig aufliegenden Stahlbetondecken (bzw. Auflagertiefe ≥ 2/3 t) darf ρ2 = 0.75 angesetzt werden, sofern die Exzentrizität am Wandkopf ≤ 0.25·t ist (EN 1996-1-1, 5.5.1.2; sinngemäss SIA 266).' }),
   ];
   if (W.support === 'manual') supportFields.push(numField('Knickbeiwert ρ', W, 'rhoManual', { unit: '–', min: 0.1, max: 3, onChange: ch, info: 'hef = ρ·h. ρ = 1.0 für beidseitig gelenkige Lagerung.' }));
-  supportFields.push(selectField('Seitliche Halterung', W, 'sides', [
+  const sf = sideFlags(W);
+  const sideSel = { n: sf.L && sf.R ? 2 : sf.L || sf.R ? 1 : 0 };
+  supportFields.push(selectField('Seitliche Halterung', sideSel, 'n', [
     { value: 0, label: 'keine (zweiseitig gehalten)' },
     { value: 1, label: 'eine Querwand (dreiseitig)' },
     { value: 2, label: 'zwei Querwände (vierseitig)' },
-  ], { onChange: () => app.changed({ inputs: true }), info: 'Aussteifende Querwände an den vertikalen Rändern verkürzen die Knicklänge (ρ3, ρ4 nach EN 1996-1-1, 5.5.1.2). Wirksam nur bis zu einem Abstand von 15·t (dreiseitig) bzw. 30·t (vierseitig).' }));
-  if (+W.sides > 0) supportFields.push(numField('Abstand Querwände', W, 'ls', { unit: 'm', min: 0.2, max: 50, onChange: ch, info: 'Lichter Abstand zwischen den aussteifenden Querwänden (vierseitig) bzw. zwischen Querwand und freiem Rand (dreiseitig).' }));
+  ], { onChange: (n) => {
+      const onlyR = sf.R && !sf.L;
+      if (n === 0) setSides(W, false, false);
+      else if (n === 2) setSides(W, true, true);
+      else setSides(W, !onlyR, onlyR);
+      upd(app, { inputs: true });
+    }, info: 'In der Grafik mit dem Werkzeug «Querwand» (K) am linken bzw. rechten Wandrand setzen. Aussteifende Querwände an den vertikalen Rändern verkürzen die Knicklänge (ρ3, ρ4 nach EN 1996-1-1, 5.5.1.2). Wirksam nur bis zu einem Abstand von 15·t (dreiseitig) bzw. 30·t (vierseitig).' }));
+  if (sideSel.n > 0) supportFields.push(numField('Abstand Querwände', W, 'ls', { unit: 'm', min: 0.2, max: 50, onChange: ch, info: 'Lichter Abstand zwischen den aussteifenden Querwänden (vierseitig) bzw. zwischen Querwand und freiem Rand (dreiseitig).' }));
   supportFields.push(live.el);
   el.append(group('Halterung und Knicklänge', supportFields, { info: 'Die Knicklänge hef = ρ·h bestimmt den Einfluss der Schlankheit auf den Tragwiderstand.' }));
 
@@ -83,11 +111,11 @@ function tabWand(el, app) {
       { key: 'y', label: 'Brüstung', unit: 'm', min: 0, info: 'Höhe der Unterkante über dem Wandfuss (Türe: 0).' },
       { key: 'hgt', label: 'Höhe', unit: 'm', min: 0 },
     ], W.openings, {
-      onChange: () => { empty.classList.toggle('hidden', W.openings.length > 0); app.changed(); },
+      onChange: () => { empty.classList.toggle('hidden', W.openings.length > 0); upd(app); },
       newRow: (rows) => ({ x: Math.min(Math.max(0, W.l - 1.2), 0.8 + rows.length * 1.6), b: 0.9, y: 0, hgt: 2.1 }),
       hint: '',
     }),
-    checkField('Auflast auf Pfeiler konzentrieren', S, 'openingConc', { onChange: () => app.changed(), info: 'Die Vertikallasten aus dem Wandkopf werden mit dem Faktor l/(l − Σb) erhöht, weil die Stürze die Last über den Öffnungen auf die Pfeiler abgeben. Pfeiler, Stürze und Brüstungen sind gesondert nachzuweisen.' }),
+    checkField('Auflast auf Pfeiler konzentrieren', S, 'openingConc', { onChange: () => upd(app), info: 'Die Vertikallasten aus dem Wandkopf werden mit dem Faktor l/(l − Σb) erhöht, weil die Stürze die Last über den Öffnungen auf die Pfeiler abgeben. Pfeiler, Stürze und Brüstungen sind gesondert nachzuweisen.' }),
   ], { info: 'Öffnungen werden in der Ansicht dargestellt und erhöhen die Auflast der Pfeiler. Der Scheibennachweis berücksichtigt Öffnungen nicht.' }));
 }
 
@@ -99,16 +127,16 @@ function tabMaterial(el, app) {
     const d = designValues(M);
     return [['fxd = fxk/γM', fmt(d.fxd, 2), 'MPa'], ['fyd = fyk/γM', fmt(d.fyd, 2), 'MPa'], ['Exd = Exk/γE', fmt(d.Exd, 0), 'MPa']];
   });
-  const ch = () => { if (M.exkAuto) M.Exk = typeById(M.type).KE * M.fxk; live.update(); app.changed(); };
+  const ch = () => { if (M.exkAuto) M.Exk = typeById(M.type).KE * M.fxk; live.update(); upd(app); };
   const changed = changedFromDefaults(M);
   el.append(group('Mauerwerksart', [
     selectField('Mauerwerksart', M, 'type', MASONRY_TYPES.map((t) => ({ value: t.id, label: t.label })), {
-      onChange: (id) => { applyTypeDefaults(M, id); app.changed({ inputs: true }); },
+      onChange: (id) => { applyTypeDefaults(M, id); upd(app, { inputs: true }); },
       info: 'Die Wahl setzt Standardwerte für alle Kennwerte. Die Werte sind Richtwerte für die Vorbemessung und müssen mit SIA 266 bzw. den Produktangaben geprüft werden.',
     }),
     changed.length
       ? h('div', { class: 'note warn' }, `Gegenüber den Standardwerten geändert: ${changed.join(', ')}. `,
-        button('Standardwerte', { small: true, icon: 'undo', onClick: () => { applyTypeDefaults(M, M.type); app.changed({ inputs: true }); } }))
+        button('Standardwerte', { small: true, icon: 'undo', onClick: () => { applyTypeDefaults(M, M.type); upd(app, { inputs: true }); } }))
       : note('Standardwerte (Richtwerte) – bitte mit den Produktangaben bzw. SIA 266 prüfen.', ''),
   ]));
   el.append(group('Druckfestigkeit und E-Modul (charakteristisch)', [
@@ -128,7 +156,7 @@ function tabMaterial(el, app) {
     numField('Endkriechzahl φ∞', M, 'phi', { unit: '–', min: 0, max: 5, onChange: ch, info: 'Kriechzahl für die Langzeitverformung (EN 1996-1-1, Tab. 3.8): Backstein 0.5–1.5, Kalksandstein/Beton 1.0–2.0, Porenbeton 0.5–1.5. Wirkt nur, wenn «Kriechen» im Register «Nachweise» aktiv ist.' }),
     numField('Haftscherfestigkeit fvk0', M, 'fvk0', { unit: 'MPa', min: 0, max: 2, onChange: ch, info: 'Nur für den Schubnachweis nach EN 1996-1-1 (6.2). Normalmörtel: 0.15–0.30 MPa (EN 1996-1-1, Tab. 3.4).' }),
     numField('Steindruckfestigkeit fb', M, 'fb', { unit: 'MPa', min: 0, max: 100, onChange: ch, info: 'Normierte Steindruckfestigkeit; begrenzt die Schubfestigkeit nach EN 1996-1-1: fvk ≤ 0.065·fb.' }),
-    checkField('Vollsteine (Steingruppe 1)', M, 'solid', { onChange: () => app.changed(), info: 'Nur bei Vollsteinen darf die Teilflächenpressung mit dem Faktor β erhöht werden (EN 1996-1-1, 6.1.3). Loch- und Hohlsteine: β = 1.0.' }),
+    checkField('Vollsteine (Steingruppe 1)', M, 'solid', { onChange: () => upd(app), info: 'Nur bei Vollsteinen darf die Teilflächenpressung mit dem Faktor β erhöht werden (EN 1996-1-1, 6.1.3). Loch- und Hohlsteine: β = 1.0.' }),
   ], { collapsible: true }));
 }
 
@@ -136,7 +164,7 @@ function tabMaterial(el, app) {
 
 function tabLasten(el, app) {
   const L = app.project.loads, W = app.project.wall;
-  const ch = () => { live.update(); app.changed(); };
+  const ch = () => { live.update(); upd(app); };
   const live = liveBox(() => {
     const t = W.t / 1000;
     const eD = L.eMode === 'slab' ? (t / 2 - L.aD / 3000) * 1000 : L.eMode === 'centric' ? 0 : L.eD;
@@ -156,7 +184,7 @@ function tabLasten(el, app) {
       { value: 'centric', label: 'zentrisch (Innenwand, Zentrierstreifen)' },
       { value: 'slab', label: 'Deckenverdrehung Endauflager' },
       { value: 'manual', label: 'Exzentrizität eingeben' },
-    ], { onChange: () => app.changed({ inputs: true }), info: 'Endauflager: Durch die Deckenverdrehung liegt die Resultierende im Abstand a/3 vom Innenrand, also e = t/2 − a/3 (a = Auflagertiefe). Ein Zentrierstreifen (Elastomer- oder Filzstreifen in Wandmitte) zentriert die Last.' }),
+    ], { onChange: () => upd(app, { inputs: true }), info: 'Endauflager: Durch die Deckenverdrehung liegt die Resultierende im Abstand a/3 vom Innenrand, also e = t/2 − a/3 (a = Auflagertiefe). Ein Zentrierstreifen (Elastomer- oder Filzstreifen in Wandmitte) zentriert die Last.' }),
   ];
   if (L.eMode === 'slab') vert.push(numField('Auflagertiefe a', L, 'aD', { unit: 'mm', min: 1, onChange: ch, info: 'Tiefe des Deckenauflagers ab Innenkante der Wand (≤ t). Volle Auflage a = t ergibt e = t/6.' }));
   if (L.eMode === 'manual') vert.push(numField('Exzentrizität eD', L, 'eD', { unit: 'mm', onChange: ch, info: 'Exzentrizität der Deckenauflagerkraft, positiv zur Raumseite.' }));
@@ -167,7 +195,7 @@ function tabLasten(el, app) {
   const E = L.earth;
   const quer = [
     numField('Wind wk', L, 'wind', { unit: 'kN/m²', onChange: ch, info: 'Charakteristischer Winddruck senkrecht zur Wand (SIA 261), positiv zur Raumseite. Typisch 0.5–1.2 kN/m².' }),
-    checkField('Erddruck (Kelleraussenwand)', E, 'on', { onChange: () => app.changed({ inputs: true }), info: 'Erddruck von aussen auf die Wand, dreieckförmig bis zur Anschütthöhe he plus Auflast auf dem Gelände.' }),
+    checkField('Erddruck (Kelleraussenwand)', E, 'on', { onChange: () => upd(app, { inputs: true }), info: 'Erddruck von aussen auf die Wand, dreieckförmig bis zur Anschütthöhe he plus Auflast auf dem Gelände.' }),
   ];
   if (E.on) {
     quer.push(
@@ -183,11 +211,11 @@ function tabLasten(el, app) {
     numField('Wind Vw,k', L, 'Vw', { unit: 'kN', onChange: ch, info: 'Charakteristische Horizontalkraft aus Wind, die diese Wand als Aussteifungsscheibe aufnimmt (Anteil aus der Gebäudeaussteifung).' }),
     numField('Erdbeben VE,d', L, 'Ve', { unit: 'kN', onChange: ch, info: 'Bemessungswert der Erdbebenkraft auf diese Wand (z.B. Ersatzkraftverfahren SIA 261). Wird in der Erdbebenkombination mit dem Faktor 1.0 angesetzt.' }),
     numField('Angriffshöhe hV', L, 'hV', { unit: 'm', min: 0.1, onChange: ch, info: 'Höhe der Horizontalkraft über dem Wandfuss; meist Wandkopf (= h). Bei mehrgeschossigen Gebäuden effektive Höhe M/V verwenden.' }),
-    checkField('Wandkopf eingespannt (h0 = hV/2)', L, 'topFixed', { onChange: () => app.changed(), info: 'Ohne Einspannung wirkt die Wand als Kragscheibe (Schubspannweite h0 = hV). Mit steifer Decke und Einspannung am Kopf halbiert sich die Schubspannweite.' }),
+    checkField('Wandkopf eingespannt (h0 = hV/2)', L, 'topFixed', { onChange: () => upd(app), info: 'Ohne Einspannung wirkt die Wand als Kragscheibe (Schubspannweite h0 = hV). Mit steifer Decke und Einspannung am Kopf halbiert sich die Schubspannweite.' }),
   ], { info: 'Für den Nachweis als Schubwand (Aussteifung). Die zugehörige Normalkraft ergibt sich aus den Vertikallasten mal Wandlänge plus Eigengewicht.' }));
 
   const C = L.conc;
-  const conc = [checkField('Einzellast am Wandkopf', C, 'on', { onChange: () => app.changed({ inputs: true }), info: 'Konzentrierte Last, z.B. Auflager eines Unterzugs oder Trägers. Nachweis der Teilflächenpressung (EN 1996-1-1, 6.1.3).' })];
+  const conc = [checkField('Einzellast am Wandkopf', C, 'on', { onChange: () => upd(app, { inputs: true }), info: 'Konzentrierte Last, z.B. Auflager eines Unterzugs oder Trägers. Nachweis der Teilflächenpressung (EN 1996-1-1, 6.1.3).' })];
   if (C.on) {
     conc.push(
       numField('ständig Gk', C, 'G', { unit: 'kN', min: 0, onChange: ch }),
@@ -202,10 +230,12 @@ function tabLasten(el, app) {
 
   // Kombinationen
   const regen = () => {
-    app.project.combos = defaultCombos({ wind: !!(L.wind || L.Vw), earth: !!E.on, quake: !!L.Ve });
-    app.changed({ inputs: true });
+    app.project.combosAuto = true;
+    app.project.combos = defaultCombos(loadFlags(app.project));
+    upd(app, { inputs: true });
   };
   el.append(group('Lastkombinationen', [
+    checkField('Automatisch aus den erfassten Lasten (SIA 260)', app.project, 'combosAuto', { onChange: (on) => { if (on) regen(); else upd(app); }, info: 'Die Kombinationen werden nach SIA 260 passend zu den erfassten Einwirkungen (Nutzlast, Wind, Erddruck, Erdbeben) erzeugt. Eine Änderung in der Tabelle schaltet die Automatik aus.' }),
     dataTable([
       { key: 'on', label: '', type: 'check', width: '22px', title: 'aktiv' },
       { key: 'name', label: 'Bezeichnung', type: 'text', width: '34%' },
@@ -217,7 +247,7 @@ function tabLasten(el, app) {
       { key: 'ae', label: 'Eb', info: 'Faktor auf die Erdbebenkraft VE,d (Bemessungswert): 1.0 in der Erdbebenkombination, sonst 0.' },
     ], app.project.combos, {
       numbered: false,
-      onChange: () => app.changed(),
+      onChange: () => { app.project.combosAuto = false; upd(app, { inputs: true }); },
       newRow: () => ({ on: true, name: 'Neue Kombination', type: 'ULS', g: 1.35, q: 1.5, w: 0, e: 0, ae: 0 }),
       hint: 'Haken = aktiv',
       extraButtons: [button('SIA-Standard', { small: true, icon: 'undo', title: 'Kombinationen passend zu den erfassten Lasten nach SIA 260 neu erzeugen', onClick: regen })],
@@ -229,7 +259,7 @@ function tabLasten(el, app) {
 
 function tabNachweise(el, app) {
   const S = app.project.settings;
-  const ch = () => app.changed();
+  const ch = () => upd(app);
   el.append(group('Normalkraft und Knicken', [
     selectField('Verfahren', S, 'method', [
       { value: 'SIA', label: 'SIA 266: Th. 2. Ordnung (numerisch)' },
@@ -246,7 +276,7 @@ function tabNachweise(el, app) {
   ]));
   el.append(group('Querbelastung', [
     checkField('Bogenwirkung (Resultierende am Wandfuss frei)', S, 'arching', { onChange: ch, info: 'Bei Querlast darf die Resultierende am Wandfuss innerhalb der Druckzone auf die Gegenseite wandern; die Wand trägt dann wie ein Bogen zwischen Fuss und Kopf. Die günstigste Lage wird automatisch gesucht (statische Methode). Ausschalten für eine gelenkige Annahme mit der eingegebenen Exzentrizität eu.' }),
-    checkField('Kellerwand vereinfacht (EN 1996-3, 4.5)', S, 'basementEN', { onChange: () => app.changed({ inputs: true }), info: 'Zusätzlicher Nachweis Nmin ≤ NEd ≤ t·fd/3 für Kelleraussenwände unter Erddruck. Anwendungsgrenzen: h ≤ 2.6 m, t ≥ 200 mm, Geländeauflast ≤ 5 kN/m².' }),
+    checkField('Kellerwand vereinfacht (EN 1996-3, 4.5)', S, 'basementEN', { onChange: () => upd(app, { inputs: true }), info: 'Zusätzlicher Nachweis Nmin ≤ NEd ≤ t·fd/3 für Kelleraussenwände unter Erddruck. Anwendungsgrenzen: h ≤ 2.6 m, t ≥ 200 mm, Geländeauflast ≤ 5 kN/m².' }),
     S.basementEN !== false ? numField('Abstand Querwände bc', S, 'bc', { unit: 'm', min: 0.1, onChange: ch, info: 'Abstand der aussteifenden Querwände für den Beiwert β in EN 1996-3 (β = 20 für bc ≥ 2h, 40 für bc ≤ h).' }) : null,
   ]));
   el.append(group('Gebrauchstauglichkeit', [
@@ -293,7 +323,16 @@ createApp({
     else drawAnsicht(view, app);
   },
   autoCompute: true,
-  compute: (project) => computeWall(project),
+  compute(project, app) {
+    if (syncCombos(project, loadFlags(project)) && app?.activeTab === 'lasten') setTimeout(() => app.renderInputs(), 0);
+    if (!hasLoads(project)) {
+      throw new IncompleteInput('Noch keine Lasten erfasst – die Wand ist bereit.',
+        'Werkzeug «Auflast» (Taste Q) wählen und die Deckenoberkante anklicken. Weitere Werkzeuge: «Einzellast» (F), «Horizontalkraft» (H), «Querlast» (W), «Öffnung» (O). Alternativ im Register «Lasten» eingeben oder unter «Beispiele» ein fertiges Projekt laden.');
+    }
+    return computeWall(project);
+  },
+  editor: editorSpec,
+  derivation,
   renderResults,
   report: buildReport,
   help: HELP,

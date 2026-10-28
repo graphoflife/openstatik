@@ -20,13 +20,14 @@ function layers(p, o) {
   return barsLayers(projectGeometry(p), o);
 }
 
-/** Neues Projekt: Rechteck 300×500 mit 3Ø16 unten und 2Ø12 oben. */
+/**
+ * Neues, leeres Projekt: kein Betonumriss («Polygon frei» ohne Eckpunkte), keine Bewehrung, keine Lastfälle.
+ * Die Vorlagen behalten ihre Standardmasse, damit die Formauswahl sofort brauchbare Querschnitte liefert.
+ */
 export function defaultProject() {
   const p = baseProject();
-  p.shape.type = 'rect';
-  p.shape.rect = { b: 300, h: 500 };
-  p.bars = layers(p, { nBot: 3, dBot: 16, nTop: 2, dTop: 12, c: 30, dw: 8 });
-  p.loads = [{ name: 'LF 1', type: 'GZT', N: 0, My: 80, Mz: 0, V: 0 }];
+  p.shape.type = 'poly';
+  p.shape.poly = [];
   return p;
 }
 

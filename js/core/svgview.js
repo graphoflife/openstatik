@@ -29,7 +29,11 @@ export class SvgView {
     this.gWorld = svgEl('g', { class: 'world' });
     this.gOverlay = svgEl('g', { class: 'overlay' });
     this.gScreen = svgEl('g', { class: 'screen' });
-    this.svg.append(this.defs, this.gWorld, this.gOverlay, this.gScreen);
+    this.gInteract = svgEl('g', { class: 'interact' }); // Bearbeitungshilfen (Bildschirmkoordinaten), wird nicht von clear() gelöscht
+    this.gGrid = svgEl('g', { class: 'gridlayer' });       // Zeichenraster unter dem Modell (Bildschirmkoordinaten)
+    this.svg.append(this.defs, this.gGrid, this.gWorld, this.gOverlay, this.gScreen, this.gInteract);
+    this.changeListeners = new Set();
+    this.interaction = null; // {down(w,e) → bool, move(w,e), up(w,e), hover(w,e), leave(), dblclick(w,e) → bool}
     container.append(this.svg);
     this.s = 50; this.tx = 0; this.ty = 0;
     this.items = [];
@@ -72,33 +76,60 @@ export class SvgView {
     }
     this._layoutScreen();
     this.opts.onViewChange?.(this);
+    for (const fn of this.changeListeners) fn(this);
   }
+
+  /** Rückruf bei jeder Änderung von Zoom/Ausschnitt. */
+  onChange(fn) { this.changeListeners.add(fn); return () => this.changeListeners.delete(fn); }
 
   // -------------------------------------------------------------- Interaktion
   _bindEvents() {
     const svg = this.svg;
     const pointers = new Map();
-    let pan = null, pinch = null;
+    let pan = null, pinch = null, act = null;
     const local = (e) => { const r = svg.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    const W = ([x, y]) => [this.wx(x), this.wy(y)];
+    // Leertaste gedrückt halten: Ansicht mit der linken Maustaste verschieben
+    this.spaceHeld = false;
+    if (typeof document !== 'undefined') {
+      const isField = (t) => t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
+      document.addEventListener('keydown', (e) => { if (e.key === ' ' && !isField(e.target) && this.hovered) { this.spaceHeld = true; svg.classList.add('grab'); e.preventDefault(); } });
+      document.addEventListener('keyup', (e) => { if (e.key === ' ') { this.spaceHeld = false; svg.classList.remove('grab'); } });
+    }
+    svg.addEventListener('contextmenu', (e) => e.preventDefault());
+    svg.addEventListener('pointerenter', () => { this.hovered = true; });
+    svg.addEventListener('pointerleave', () => { this.hovered = false; this.interaction?.leave?.(); });
 
     svg.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 && e.button !== 1) return;
+      if (e.button > 2) return;
       svg.setPointerCapture(e.pointerId);
-      pointers.set(e.pointerId, local(e));
-      if (pointers.size === 1) {
-        const [x, y] = local(e);
-        pan = { x, y, tx: this.tx, ty: this.ty, moved: false, button: e.button };
-      } else if (pointers.size === 2) {
+      const pt = local(e);
+      pointers.set(e.pointerId, pt);
+      if (pointers.size === 2) {
         const [a, b] = [...pointers.values()];
-        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: this.s, cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2, wx: this.wx((a[0] + b[0]) / 2), wy: this.wy((a[1] + b[1]) / 2) };
+        pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), s: this.s, wx: this.wx((a[0] + b[0]) / 2), wy: this.wy((a[1] + b[1]) / 2) };
         pan = null;
+        if (act) { this.interaction?.cancel?.(); act = null; }
+        return;
       }
+      const forcePan = e.button === 1 || e.button === 2 || this.spaceHeld;
+      if (!forcePan && e.button === 0 && this.interaction?.down?.(W(pt), e) === true) {
+        act = { id: e.pointerId };
+        return;
+      }
+      pan = { x: pt[0], y: pt[1], tx: this.tx, ty: this.ty, moved: false, button: e.button, force: forcePan };
     });
     svg.addEventListener('pointermove', (e) => {
-      const [x, y] = local(e);
+      const pt = local(e);
+      const [x, y] = pt;
       this.opts.onCursor?.(this.wx(x), this.wy(y));
-      if (!pointers.has(e.pointerId)) { this.opts.onHover?.(this.wx(x), this.wy(y), e); return; }
-      pointers.set(e.pointerId, [x, y]);
+      if (!pointers.has(e.pointerId)) {
+        this.opts.onHover?.(this.wx(x), this.wy(y), e);
+        this.interaction?.hover?.(W(pt), e);
+        return;
+      }
+      pointers.set(e.pointerId, pt);
+      if (act && act.id === e.pointerId) { this.interaction?.move?.(W(pt), e); return; }
       if (pinch && pointers.size === 2) {
         const [a, b] = [...pointers.values()];
         const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -121,7 +152,13 @@ export class SvgView {
       if (!pointers.has(e.pointerId)) return;
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = null;
-      if (pan && !pan.moved && e.type === 'pointerup' && pan.button === 0) {
+      if (act && act.id === e.pointerId) {
+        act = null;
+        if (e.type === 'pointerup') this.interaction?.up?.(W(local(e)), e);
+        else this.interaction?.cancel?.();
+        return;
+      }
+      if (pan && !pan.moved && e.type === 'pointerup' && pan.button === 0 && !pan.force) {
         const [x, y] = local(e);
         this.opts.onClick?.(this.wx(x), this.wy(y), e);
       }
@@ -136,7 +173,11 @@ export class SvgView {
       const f = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
       this.zoomAt(x, y, f);
     }, { passive: false });
-    svg.addEventListener('dblclick', (e) => { e.preventDefault(); this.fit(); });
+    svg.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      if (this.interaction?.dblclick?.(W(local(e)), e) === true) return;
+      this.fit();
+    });
   }
 
   zoomAt(px, py, f) {
@@ -153,13 +194,23 @@ export class SvgView {
     const b = this.modelBounds || this.bbox;
     if (!b) { this.s = 50; this.tx = this.width / 2; this.ty = this.height / 2; this._apply(); return; }
     const w = Math.max(b.x1 - b.x0, 1e-9), hh = Math.max(b.y1 - b.y0, 1e-9);
-    const pw = Math.max(10, this.width - 2 * padding), ph = Math.max(10, this.height - 2 * padding);
-    let s = Math.min(pw / w, ph / hh);
-    if (!Number.isFinite(s) || s <= 0) s = 50;
-    if (b.x1 - b.x0 < 1e-9 && b.y1 - b.y0 < 1e-9) s = 50;
-    this.s = s;
-    this.tx = this.width / 2 - s * (b.x0 + b.x1) / 2;
-    this.ty = this.height / 2 + s * (b.y0 + b.y1) / 2;
+    const place = (il) => {
+      const pw = Math.max(10, this.width - il - 2 * padding), ph = Math.max(10, this.height - 2 * padding);
+      let s = Math.min(pw / w, ph / hh);
+      if (!Number.isFinite(s) || s <= 0) s = 50;
+      if (b.x1 - b.x0 < 1e-9 && b.y1 - b.y0 < 1e-9) s = 50;
+      return { s, tx: il + (this.width - il) / 2 - s * (b.x0 + b.x1) / 2, ty: this.height / 2 + s * (b.y0 + b.y1) / 2 };
+    };
+    let f = place(0);
+    // Schwebende Fenster (z.B. Eigenschaftsfenster): nur ausweichen, wenn das Modell sonst darunter läge
+    const ins = typeof this.insets === 'function' ? this.insets() : this.insets || {};
+    if (ins.rect) {
+      const X0 = f.tx + f.s * b.x0, X1 = f.tx + f.s * b.x1, Y0 = f.ty - f.s * b.y1, Y1 = f.ty - f.s * b.y0;
+      const r = ins.rect;
+      const overlap = X0 < r.x1 && X1 > r.x0 && Y0 < r.y1 && Y1 > r.y0;
+      if (overlap) f = place(Math.min(r.x1 + 8, this.width * 0.45));
+    } else if (ins.left) f = place(Math.min(ins.left, this.width * 0.45));
+    this.s = f.s; this.tx = f.tx; this.ty = f.ty;
     this.fitted = true; this.userAdjusted = false;
     this._apply();
   }
@@ -512,6 +563,8 @@ export class SvgView {
   snapshot(width = this.width, height = this.height) {
     const clone = this.svg.cloneNode(true);
     clone.removeAttribute('class');
+    // Bearbeitungshilfen (Raster, Auswahl, Fangzeichen) gehören nicht in Berichte und Exporte
+    clone.querySelectorAll('.gridlayer, .interact').forEach((g) => g.remove());
     clone.setAttribute('viewBox', `0 0 ${this.width} ${this.height}`);
     clone.setAttribute('width', width);
     clone.setAttribute('height', height);

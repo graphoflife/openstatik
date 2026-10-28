@@ -2,10 +2,10 @@
 
 export const INTRO = `<h4>So funktioniert's</h4>
 <ol>
-  <li><b>Querschnitt</b>: Form wählen und Abmessungen in mm eingeben (oder Polygon frei, auch mit Aussparungen).</li>
-  <li><b>Bewehrung</b>: Stäbe in der Tabelle erfassen oder mit «Bewehrung erzeugen» automatisch platzieren.</li>
-  <li><b>Lasten</b>: Lastfälle mit N, My, Mz eintragen – GZT für die Tragsicherheit, GZG für Spannungen.</li>
-  <li>Rechts stehen Ausnutzung, Interaktionsdiagramme und M–κ; oben in der Grafik auf <i>Dehnungen</i> oder <i>Spannungen</i> umschalten.</li>
+  <li><b>Querschnitt zeichnen</b>: oben <b>Rechteck</b> (Taste Q) wählen und zwei Ecken anklicken – oder <b>Polygon</b> (U) für beliebige Formen. Vorlagen wie Plattenbalken oder Kreis im Register «Querschnitt»; Aussparungen mit <b>Öffnung</b> (O) und <b>Hüllrohr</b> (H).</li>
+  <li><b>Bewehrung setzen</b>: <b>Stab</b> (B), <b>Stabreihe</b> (L) oder <b>Stabkreis</b> (K). Die Fangpunkte ○ liegen im Achsabstand c + Øw + Ø/2 vom Rand.</li>
+  <li><b>Anklicken</b> öffnet das Eigenschaftsfenster (Abmessungen, Beton, Ø, Anzahl, Dehnung und Spannung eines Stabs); <b>Ziehen</b> verschiebt Eckpunkte, Stäbe und Aussparungen.</li>
+  <li><b>Lastfall</b> im Register «Lasten» erfassen. Rechts stehen Ausnutzung, Interaktion und M–κ, unter <b>Herleitung</b> der Rechenweg mit Normbezügen. Die Register links bleiben als Alternative zur Grafik.</li>
 </ol>`;
 
 export const HELP = `
@@ -27,11 +27,22 @@ export const HELP = `
   <li><b>M–κ</b>: Krümmung schrittweise gesteigert, Normalkraft konstant; Bruch, wenn εcu im Beton oder εud im Stahl erreicht wird (exakt durch Bisektion). Mittelwerte: fcm mit Zugfestigkeit fctm bis zur Rissbildung und Stahl fsk mit Verfestigung; Kriechen über Streckung der Betondehnungen um (1+φ).</li>
   <li><b>Querkraft</b> (optional): SIA 262 4.3.3 – VRd,s = (Asw/s)·z·fsd·cot α, VRd,c = bw·z·kc·fcd·sin α·cos α mit kc = 0.55; ohne Querkraftbewehrung VRd = kd·τcd·d·bw mit kd = 1/(1 + εv·d·kg). EN 1992-1-1 6.2.2/6.2.3 als Option. bw, d und z werden automatisch aus dem Querschnitt bestimmt und können überschrieben werden.</li>
 </ul>
+<h3>Grafische Bearbeitung</h3>
+<ul>
+  <li>Die Grafik arbeitet in <b>mm</b>; Koordinaten lassen sich beim Zeichnen auch tippen (relativ, absolut oder Länge/Winkel). <b>Y</b>/<b>Z</b> binden an eine Achse, <b>M</b> nimmt die Mitte zweier Punkte, <b>Esc</b> geht schrittweise zurück.</li>
+  <li><b>Polygon</b> (U) und <b>Rechteck</b> (Q) zeichnen den Betonumriss und ersetzen einen bestehenden. Ein zur z-Achse symmetrisches Rechteck auf z = 0 wird als Vorlage «Rechteck» gespeichert (Masse im Fenster änderbar).</li>
+  <li><b>Öffnung</b> (O) zeichnet eine polygonale Aussparung, <b>Hüllrohr</b> (H) eine kreisförmige mit Ø im Eigenschaftsfenster.</li>
+  <li><b>Stab</b> (B) setzt Einzelstäbe mit dem Ø, das im Eigenschaftsfenster ohne Auswahl eingestellt ist. <b>Stabreihe</b> (L) verteilt Stäbe zwischen dem ersten und dem letzten Stab, <b>Stabkreis</b> (K) auf einem Kreis (Mittelpunkt, dann erster Stab); die Anzahl lässt sich danach im Eigenschaftsfenster ändern.</li>
+  <li>Fangpunkte ○: Schwerpunkt, Hüllrohrmitten und die Ecken im Achsabstand a = c + Øw + Ø/2 vom Rand (c und Øw im Fenster ohne Auswahl).</li>
+  <li><b>Vorlagen</b> (Plattenbalken, Hohlkasten …) bleiben parametrisch, solange nur ihre Masse geändert werden. Das Ziehen eines Eckpunkts oder einer Kante wandelt sie automatisch in «Polygon frei» um (Hinweis in der Statuszeile, Rückgängig mit Ctrl+Z). Eine Kante anklicken → «Punkt in der Mitte einfügen».</li>
+  <li><b>Löschen</b> (Entf): Stäbe, Aussparungen, Eckpunkte oder der ganze Beton (die Bewehrung bleibt erhalten). <b>Kopieren</b> (C) gilt für Stäbe und Aussparungen.</li>
+  <li>In den Darstellungen «Dehnungen» und «Spannungen» zeigt ein Klick auf einen Stab dessen Dehnung, Spannung und Kraft im gewählten Lastfall.</li>
+</ul>
 <h3>Bedienung</h3>
 <ul>
-  <li>Alle Zahlenfelder akzeptieren Ausdrücke wie <code>600/2</code> oder Dezimalkomma. Tabellen lassen sich aus Excel einfügen (Spalten in der gezeigten Reihenfolge).</li>
-  <li>Ein Klick auf einen Stab oder Eckpunkt in der Grafik wählt die zugehörige Tabellenzeile; eine Zeile in der Lastfalltabelle wählt den Lastfall für Grafik und Ergebnisse.</li>
-  <li>Beim Wechsel von einer Vorlage auf «Polygon frei» wird die aktuelle Form in Eckpunkte umgewandelt (Hohlräume werden zu Aussparungen).</li>
+  <li>Ein neues Projekt ist leer; fertige Querschnitte gibt es oben unter «Beispiele». Solange etwas fehlt, nennt der Ergebnisbereich den nächsten Schritt.</li>
+  <li>Alle Zahlenfelder akzeptieren Ausdrücke wie <code>600/2</code> oder Dezimalkomma. Tabellen lassen sich aus Excel einfügen (Spalten in der gezeigten Reihenfolge); Grafik und Tabellen sind stets synchron.</li>
+  <li>Eine Zeile in der Lastfalltabelle wählt den Lastfall für Grafik und Ergebnisse. «Herleitung ›» in den Nachweisen öffnet den Rechenweg des Lastfalls.</li>
   <li>Die Berechnung läuft automatisch nach jeder Eingabe; rechenintensive Teile (M–κ, My-Mz bei GZG-Lastfällen) erst beim Öffnen des jeweiligen Registers.</li>
 </ul>
 <h3>Grenzen</h3>

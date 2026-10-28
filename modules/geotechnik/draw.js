@@ -41,9 +41,30 @@ export function viewOptions(app) {
 /** Ergebnisse passend zur aktuellen Analyse (oder null). */
 const res = (app) => (app.results && app.results.type === app.project.analysis ? app.results : null);
 
+/**
+ * Gezeichnete, anklickbare Geometrie der aktuellen Darstellung (Grundlage für den grafischen Editor):
+ * items: [{type:'point'|'segment'|'region', id, p | a,b | ring, label, movable}], zOfY: Tiefe aus Höhenkote.
+ */
+export const scene = { key: '', items: [], zOfY: null, empty: false, info: {} };
+const add = (it) => scene.items.push(it);
+let editUntil = 0, lastKey = '', fitOpts = {};
+/** Nach einer Bearbeitung in der Grafik aufrufen: die Ansicht wird dann (auch nach der Neuberechnung) nicht neu eingepasst. */
+export function markEdit() { editUntil = Date.now() + 1500; }
+function setB(v, x0, y0, x1, y1) { v.setBounds(x0, y0, x1, y1, fitOpts); }
+
+/** Hinweis in der Mitte einer leeren Darstellung. */
+function emptyHint(v, x, y, lines) {
+  lines.forEach((t, i) => v.text(x, y, t, { dy: (i - (lines.length - 1) / 2) * 18, size: i ? 12 : 13.5, bold: !i, color: i ? 'var(--text-2)' : 'var(--text)' }));
+}
+
 export function renderView(v, app, mode) {
   resetClips(v);
   const a = app.project.analysis;
+  const key = `${a}|${mode}`;
+  fitOpts = { noFit: Date.now() < editUntil && key === lastKey };
+  lastKey = key;
+  scene.key = key; scene.items = []; scene.zOfY = null; scene.empty = false; scene.info = {};
+  app.showViewMessage?.('');
   let soil;
   try { soil = makeSoil(app.project.soil); } catch (e) { app.showViewMessage?.(e.message); return; }
   const ctx = { v, app, p: app.project, r: res(app), soil, mode, o: app.viewOpts };
@@ -52,6 +73,10 @@ export function renderView(v, app, mode) {
   else if (a === 'setzung') drawSettlement(ctx);
   else if (a === 'boeschung') drawSlope(ctx);
   else if (a === 'stuetzmauer') drawWall(ctx);
+  // Griffe (ziehbare Punkte) sichtbar machen
+  for (const it of scene.items) {
+    if (it.type === 'point' && it.movable !== false) v.dot(it.p[0], it.p[1], 3.6, { fill: 'var(--surface)', stroke: 'var(--accent)', width: 1.6, title: it.label });
+  }
 }
 
 // ------------------------------------------------------------------ Hilfen
@@ -123,13 +148,17 @@ function drawLayers(v, soil, region, elev, opts) {
     const st = layerStyle(L.col);
     v.polygon(poly, { fill: 'var(--c-soil)', fillOpacity: st.op, stroke: 'none' });
     if (opts.hatch) hatch(v, poly, st, opts.gap);
+    add({ type: 'region', id: `L:${L.idx}`, ring: poly, label: `Schicht «${L.name}»`, movable: false });
   }
   // Schichtgrenzen
   for (let i = 1; i < layers.length; i++) {
     const y = elev(layers[i].z);
     if (y <= rb.y0 || y >= rb.y1) continue;
     const segs = hLineInPoly(region, y);
-    for (const [xa, xb] of segs) v.line(xa, y, xb, y, { stroke: 'var(--c-soil)', width: 1.1, dash: '5 3' });
+    segs.forEach(([xa, xb], k) => {
+      v.line(xa, y, xb, y, { stroke: 'var(--c-soil)', width: 1.1, dash: '5 3' });
+      add({ type: 'segment', id: `B:${layers[i].idx}:${k}`, a: [xa, y], b: [xb, y], label: `Oberkante «${layers[i].name}»` });
+    });
   }
   if (opts.labels) {
     for (let i = 0; i < layers.length; i++) {
@@ -159,6 +188,7 @@ function hLineInPoly(poly, y) {
 
 function waterLine(v, x0, x1, y, opts = {}) {
   v.line(x0, y, x1, y, { stroke: 'var(--c-water)', width: 1.6 });
+  add({ type: 'segment', id: 'GW', a: [x0, y], b: [x1, y], label: 'Grundwasserspiegel' });
   waterSymbol(v, opts.xs ?? (x0 + (x1 - x0) * 0.82), y, opts.label);
 }
 function waterSymbol(v, x, y, label) {
@@ -215,7 +245,9 @@ const KEY = {
 
 function drawEarthPressure({ v, p, r, soil, mode, o }) {
   const ep = p.ep;
-  const H = Math.max(0.1, Number(ep.H) || 1);
+  const empty = !(Number(ep.H) > 0);
+  const H = empty ? 4 : Number(ep.H);
+  scene.zOfY = (y) => H - y;
   const al = Number(ep.alpha) || 0, be = Number(ep.beta) || 0;
   const ta = Math.tan(rad(al)), tb = Math.tan(rad(be));
   const tw = Math.max(0.25, 0.08 * H);
@@ -226,6 +258,17 @@ function drawEarthPressure({ v, p, r, soil, mode, o }) {
   const X0 = Math.min(xTop, 0) - tw - 0.45 * H;
   const yB = -0.22 * H;
   const size = Math.max(X1 - X0, H);
+  if (empty) {
+    scene.empty = true;
+    const reg = [[X0, yB], [X1, yB], [X1, H], [X0, H]];
+    drawLayers(v, soil, reg, (z) => H - z, { labels: o.labels, labelX: X1, gap: size / 70, hatch: o.hatch, yTopLabel: H });
+    v.line(X0, H, X1, H, { stroke: 'var(--c-soil)', width: 1.6 });
+    if (Number.isFinite(soil.zw) && soil.zw < H + 0.22 * H) waterLine(v, X0, X1, H - soil.zw, { label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
+    emptyHint(v, (X0 + X1) / 2, H + 0.5, ['Noch keine Wand', 'Werkzeug «Wand» wählen und Wandkopf und Wandfuss anklicken', '(oder Wandhöhe im Register «Analyse» eingeben)']);
+    setB(v, X0, yB, X1, H + 1.2);
+    v.caption('Leeres Projekt – Tiefen der Schichten ab Wandkopf (Gelände hinter der Wand)');
+    return;
+  }
   // Bodengebiet: hinter der Wand + unter der Sohle + vor der Wand bis Sohlniveau
   const region = [[X0, yB], [X1, yB], [X1, yS(X1)], [xTop, H], [0, 0], [-tw, 0], [X0, 0]];
   drawLayers(v, soil, region, (z) => H - z, { labels: o.labels && mode === 'wedge', labelX: X1, gap: size / 70, hatch: o.hatch, yTopLabel: H });
@@ -233,22 +276,32 @@ function drawEarthPressure({ v, p, r, soil, mode, o }) {
   const zw = soil.zw;
   if (Number.isFinite(zw) && zw < H + 0.22 * H) waterLine(v, 0, X1, H - zw, { label: o.labels ? `GW ${fmt(zw, 2)} m` : null });
   // Wand
-  v.polygon([[0, 0], [xTop, H], [xTop - tw, H], [-tw, 0]], CONCRETE);
+  const wallPoly = [[0, 0], [xTop, H], [xTop - tw, H], [-tw, 0]];
+  v.polygon(wallPoly, CONCRETE);
   v.line(X0, 0, -tw, 0, { stroke: 'var(--c-soil)', width: 1.2 });
   // Gelände
   v.line(xTop, H, X1, yS(X1), { stroke: 'var(--c-soil)', width: 1.6 });
+  add({ type: 'region', id: 'ep:wall', ring: wallPoly, label: 'Wand', movable: false });
+  add({ type: 'segment', id: 'ep:surf', a: [xTop, H], b: [X1, yS(X1)], label: 'Gelände hinter der Wand' });
+  add({ type: 'point', id: 'ep:top', p: [xTop, H], label: 'Wandkopf (Höhe H, Neigung α)' });
+  add({ type: 'point', id: 'ep:surfEnd', p: [X1, yS(X1)], label: 'Geländeneigung β' });
+  scene.info = { xTop, H, X1, yS };
   // Auflasten
   const q = Number(ep.q) || 0;
   if (q > 0 && ep.kind !== 'passive') surchargeArrows(v, [[xTop + 0.02 * H, yS(xTop + 0.02 * H)], [X1, yS(X1)]], o.labels ? `q = ${fmt(q, 1)} kN/m²` : null, 12);
   for (const ld of ep.kind === 'passive' ? [] : ep.loads || []) {
     const a = xTop + (Number(ld.a) || 0), b = Number(ld.b) || 0, pp = Number(ld.p) || 0;
     if (!pp) continue;
+    const li = (ep.loads || []).indexOf(ld);
     if (ld.type === 'line') {
       v.arrow(a, yS(a), 0, -1, { length: 44, color: 'var(--c-load)', width: 2, label: o.labels ? `P = ${fmt(pp, 1)} kN/m` : null });
+      add({ type: 'point', id: `ld:${li}`, p: [a, yS(a)], label: `Linienlast ${li + 1}` });
     } else {
       const pts = [];
       for (let k = 0; k <= 6; k++) pts.push([a + b * k / 6, yS(a + b * k / 6)]);
-      v.polygon([...pts, ...pts.slice().reverse().map(([x, y]) => [x, y + 0.08 * H])], { fill: 'var(--c-load-fill)', stroke: 'var(--c-load)', width: 1 });
+      const ring = [...pts, ...pts.slice().reverse().map(([x, y]) => [x, y + 0.08 * H])];
+      v.polygon(ring, { fill: 'var(--c-load-fill)', stroke: 'var(--c-load)', width: 1 });
+      add({ type: 'region', id: `ld:${li}`, ring, label: `Streifenlast ${li + 1}` });
       for (const pt of pts.filter((_, k) => k % 2 === 0)) v.arrow(pt[0], pt[1], 0, -1, { length: 14, head: 6, color: 'var(--c-load)', width: 1.2 });
       if (o.labels) v.text(a + b / 2, yS(a + b / 2) + 0.08 * H, `p = ${fmt(pp, 1)} kN/m²`, { dy: -10, color: 'var(--c-load)' });
     }
@@ -279,7 +332,7 @@ function drawEarthPressure({ v, p, r, soil, mode, o }) {
   } else if (mode === 'wedge') {
     key(v, [R && R.kind !== 'passive' ? { label: 'Gleitfuge (Coulomb, oberste Schicht)', color: 'var(--c-highlight)', dash: '7 4' } : null, Number.isFinite(zw) ? KEY.gw : null, { label: 'Auflasten (veränderlich)', color: 'var(--c-load)' }]);
   }
-  v.setBounds(X0, yB, X1, Math.max(H, yS(X1)) + 0.18 * H);
+  setB(v, X0, yB, X1, Math.max(H, yS(X1)) + 0.18 * H);
   if (R) legendLine(v, [R.kind === 'passive' ? `E_ph = ${fmt(R.Eh, 1)} kN/m` : `E_ah = ${fmt(R.Eh, 1)} kN/m`, R.U > 0 ? `W = ${fmt(R.U, 1)} kN/m` : null, `Angriff ${fmt(R.hE, 2)} m über Fuss`]);
 }
 
@@ -338,7 +391,7 @@ function pressureFigure(v, R, xw, H, yShift, width, labels, side = 1) {
 
 function footingDims(f) {
   const shape = f.shape || 'rect';
-  const B = Math.max(0.05, Number(f.B) || 1);
+  const B = Number(f.B) > 0 ? Number(f.B) : 2;
   const L = shape === 'strip' ? 1 : shape === 'circle' ? B : Math.max(0.05, Number(f.L) || B);
   const D = Math.max(0, Number(f.D) || 0);
   const t = Math.min(Math.max(0.05, Number(f.t) || Math.min(0.5, 0.3 * B)), Math.max(D, 0.05));
@@ -350,6 +403,8 @@ function drawFooting({ v, p, r, soil, mode, o }) {
   const { shape, B, L, D, t } = footingDims(f);
   const R = r?.bc;
   const gov = R?.gov && !R.gov.error ? R.gov : null;
+  scene.zOfY = (y) => -y;
+  if (!(Number(f.B) > 0)) return drawEmptyFooting(v, soil, o, 'Grundbruch');
   if (mode === 'plan') return drawPlan(v, shape, B, L, R, o);
   let X = B / 2 + Math.max(1.4 * B, D + 1);
   let depth = D + Math.max(2.4 * B, 2.5);
@@ -369,6 +424,7 @@ function drawFooting({ v, p, r, soil, mode, o }) {
   const bc = Math.min(0.45, 0.3 * B);
   v.rect(-bc / 2, -D + t, bc, D - t + 0.35 * Math.max(B, 1), CONCRETE);
   v.rect(-B / 2, -D, B, t, CONCRETE);
+  footingItems(B, D, t, bc, 0.35 * Math.max(B, 1));
   v.dimension(-B / 2, -D, B / 2, -D, `B = ${fmt(B, 2)} m`, -18);
   if (D > 0) v.dimension(-X + 0.08 * X, 0, -X + 0.08 * X, -D, `D = ${fmt(D, 2)} m`, 14);
   const yTop = -D + t + 0.35 * Math.max(B, 1);
@@ -412,13 +468,37 @@ function drawFooting({ v, p, r, soil, mode, o }) {
     v.arrow(0, yTop, 0, -1, { length: 50, width: 2, color: 'var(--c-load)' });
   }
   if (gov && mode === 'mech') key(v, [{ label: 'Bruchkörper (Prandtl), massgebende Seite', color: 'var(--c-neg)', type: 'fill' }, { label: 'Gegenseite', color: 'var(--c-neg)', dash: '6 4' }, { label: "wirksame Breite B'", color: 'var(--accent)', type: 'fill' }]);
-  v.setBounds(-X, -depth - 0.12 * depth, X, yTop + 0.25 * Math.max(B, 1));
+  setB(v, -X, -depth - 0.12 * depth, X, yTop + 0.25 * Math.max(B, 1));
   if (gov) legendLine(v, [`σ_d = ${fmt(gov.sigma, 0)} kN/m² ≤ R_d/A' = ${fmt(gov.Rd / gov.eff.A, 0)} kN/m²`, `η = ${fmt(gov.eta, 2)}`, `γ_G = ${fmt(gov.ld.gG, 2)}, γ_Q = ${fmt(gov.ld.gQ, 2)}`, `Kräfte in kN${shape === 'strip' ? '/m' : ''}`]);
+}
+
+/** Anklickbare Teile eines Fundaments im Schnitt (Grundbruch und Setzung). */
+function footingItems(B, D, t, bc, hCol) {
+  add({ type: 'region', id: 'f:foot', ring: [[-B / 2, -D], [B / 2, -D], [B / 2, -D + t], [-B / 2, -D + t]], label: 'Fundament (ziehen: Einbindetiefe)' });
+  if (bc > 0) add({ type: 'region', id: 'f:col', ring: [[-bc / 2, -D + t], [bc / 2, -D + t], [bc / 2, -D + t + Math.max(D - t, 0) + hCol], [-bc / 2, -D + t + Math.max(D - t, 0) + hCol]], label: 'Lasten', movable: false });
+  add({ type: 'point', id: 'f:edge', p: [B / 2, -D], label: 'Fundamentecke (Breite B, Tiefe D)' });
+  add({ type: 'segment', id: 'g:surf', a: [-B / 2 - Math.max(1.4 * B, D + 1), 0], b: [B / 2 + Math.max(1.4 * B, D + 1), 0], label: 'Geländeoberkante' });
+}
+
+/** Leere Darstellung für Grundbruch/Setzung: Boden und Hinweis auf das Werkzeug «Fundament». */
+function drawEmptyFooting(v, soil, o, what) {
+  scene.empty = true;
+  const X = 5, depth = 6;
+  const region = [[-X, -depth], [X, -depth], [X, 0], [-X, 0]];
+  drawLayers(v, soil, region, (z) => -z, { labels: o.labels, labelX: X, gap: 0.15, hatch: o.hatch, yTopLabel: 0 });
+  v.line(-X, 0, X, 0, { stroke: 'var(--c-soil)', width: 1.6 });
+  add({ type: 'segment', id: 'g:surf', a: [-X, 0], b: [X, 0], label: 'Geländeoberkante' });
+  if (Number.isFinite(soil.zw) && soil.zw < depth) waterLine(v, -X, X, -soil.zw, { xs: -X + 1, label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
+  emptyHint(v, 0, 1.2, ['Noch kein Fundament', 'Werkzeug «Fundament» wählen und zwei Ecken im Schnitt anklicken', '(Unterkante = Sohltiefe D, Breite = B)']);
+  setB(v, -X, -depth, X, 2.2);
+  v.caption(`Leeres Projekt (${what}) – Tiefen ab Geländeoberkante`);
 }
 
 function drawPlan(v, shape, B, L, R, o) {
   const gov = R?.gov && !R.gov.error ? R.gov : null;
   const Lp = shape === 'strip' ? Math.max(1, B) : L;
+  add({ type: 'region', id: 'f:plan', ring: shape === 'circle' ? Array.from({ length: 32 }, (_, k) => [B / 2 * Math.cos(2 * Math.PI * k / 32), B / 2 * Math.sin(2 * Math.PI * k / 32)]) : [[-B / 2, -Lp / 2], [B / 2, -Lp / 2], [B / 2, Lp / 2], [-B / 2, Lp / 2]], label: 'Fundament (Grundriss)', movable: false });
+  add({ type: 'point', id: 'f:corner', p: shape === 'circle' ? [B / 2, 0] : [B / 2, Lp / 2], label: shape === 'rect' ? 'Ecke (B und L)' : 'Breite B' });
   if (shape === 'circle') {
     v.circle(0, 0, B / 2, { ...CONCRETE });
     v.circle(0, 0, B / 8, { stroke: 'var(--ok)', width: 1.2, dash: '5 3' });
@@ -453,7 +533,7 @@ function drawPlan(v, shape, B, L, R, o) {
       v.dot(eg.eB, shape === 'strip' ? 0 : eg.eL, 3.5, { fill: 'var(--ok)', title: 'Lastausmitte ständige Lasten (charakteristisch)' });
     }
   }
-  v.setBounds(-B / 2 - 0.15 * B, -Lp / 2 - 0.15 * B, B / 2 + 0.15 * B, Lp / 2 + 0.15 * B);
+  setB(v, -B / 2 - 0.15 * B, -Lp / 2 - 0.15 * B, B / 2 + 0.15 * B, Lp / 2 + 0.15 * B);
   key(v, [
     { label: 'Kern: ständige Lasten ohne klaffende Fuge', color: 'var(--ok)', dash: '5 3' },
     { label: 'Grenze klaffende Fuge bis Schwerpunkt (Bemessung)', color: 'var(--warn)', dash: '5 3' },
@@ -468,7 +548,9 @@ function drawPlan(v, shape, B, L, R, o) {
 function drawSettlement({ v, p, r, soil, mode, o }) {
   const s = p.st;
   const shape = s.shape || 'rect';
-  const B = Math.max(0.05, Number(s.B) || 1);
+  scene.zOfY = (y) => -y;
+  if (!(Number(s.B) > 0)) return drawEmptyFooting(v, soil, o, 'Setzung');
+  const B = Number(s.B);
   const Lf = shape === 'rect' ? Math.max(0.05, Number(s.L) || B) : B;
   const D = Math.max(0, Number(s.D) || 0);
   const R = r?.st;
@@ -483,6 +565,7 @@ function drawSettlement({ v, p, r, soil, mode, o }) {
   const t = Math.min(0.5, 0.25 * B, Math.max(D, 0.1));
   v.rect(-B / 2, -D, B, t, CONCRETE);
   if (D > t) v.rect(-Math.min(0.2, B / 6), -D + t, 2 * Math.min(0.2, B / 6), D - t, CONCRETE);
+  footingItems(B, D, t, D > t ? 2 * Math.min(0.2, B / 6) : 0, 0);
   v.dimension(-B / 2, -D, B / 2, -D, `B = ${fmt(B, 2)} m`, 30);
   if (R && R.pNet > 0) {
     const fac = (x, z) => stressFactor(shape, B, Lf, x, 0, z);
@@ -561,15 +644,25 @@ function drawSettlement({ v, p, r, soil, mode, o }) {
     if (o.labels) v.text(-X, -R.zLim, `Grenztiefe z_gr = ${fmt(R.zLim, 2)} m  (Δσ = ${fmt(R.f, 2)}·σ'_v0)`, { anchor: 'start', dx: 6, dy: -8, color: 'var(--c-neg)', size: 10.5 });
     if (mode !== 'trough') legendLine(v, [`p_netto = ${fmt(R.pNet, 1)} kN/m²`, `s = ${fmt(R.sRef, 1)} mm (${R.refKey === 'char' ? 'kennz. Punkt' : 'Mitte'})`]);
   }
-  v.setBounds(-X, -depth - 0.12 * depth, X, 0.3 * Math.max(B, 1));
+  setB(v, -X, -depth - 0.12 * depth, X, 0.3 * Math.max(B, 1));
 }
 
 // ------------------------------------------------------------------ 4. Böschung
 
 function drawSlope({ v, p, r, soil, mode, o }) {
   const sl = p.sl;
-  const raw = (sl.surface || []).map((q) => [Number(q.x), Number(q.y)]).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1])).sort((a, b) => a[0] - b[0]);
-  if (raw.length < 2) { v.setBounds(0, 0, 10, 10); return; }
+  const raw = (sl.surface || []).map((q, i) => [Number(q.x), Number(q.y), i]).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1])).sort((a, b) => a[0] - b[0]);
+  if (raw.length < 2) {
+    scene.empty = true;
+    scene.zOfY = (y) => 6 - y;
+    for (const q of raw) { v.dot(q[0], q[1], 4, { fill: 'var(--c-soil)' }); add({ type: 'point', id: `s:${q[2]}`, p: [q[0], q[1]], label: 'Geländepunkt' }); }
+    emptyHint(v, 15, 3, ['Noch keine Geländelinie', 'Werkzeug «Gelände» wählen und die Punkte der Oberfläche von links nach rechts anklicken', '(Doppelklick oder Enter beendet) – oder im Register «Analyse» eine Böschung erzeugen']);
+    setB(v, -2, -6, 32, 10);
+    v.caption('Leeres Projekt – Koordinaten x nach rechts, y nach oben [m]');
+    return;
+  }
+  for (const q of raw) add({ type: 'point', id: `s:${q[2]}`, p: [q[0], q[1]], label: 'Geländepunkt' });
+  for (let k = 0; k + 1 < raw.length; k++) add({ type: 'segment', id: `ss:${raw[k][2]}:${raw[k + 1][2]}`, a: [raw[k][0], raw[k][1]], b: [raw[k + 1][0], raw[k + 1][1]], label: 'Geländelinie' });
   let yMax = -Infinity, yMin = Infinity;
   for (const q of raw) { yMax = Math.max(yMax, q[1]); yMin = Math.min(yMin, q[1]); }
   const Hs = Math.max(yMax - yMin, 0.1);
@@ -578,17 +671,24 @@ function drawSlope({ v, p, r, soil, mode, o }) {
   const yBot = M ? M.yBot : yMin - Math.max(0, Number(sl.depthBelow) || Hs);
   const xmin = raw[0][0], xmax = raw[raw.length - 1][0];
   const size = Math.max(xmax - xmin, yMax - yBot);
-  const region = [...raw, [xmax, yBot], [xmin, yBot]];
+  const region = [...raw.map((q) => [q[0], q[1]]), [xmax, yBot], [xmin, yBot]];
+  scene.zOfY = (y) => yMax - y;
+  scene.info = { yMax, yBot, xmin, xmax };
   const leftHigh = raw[0][1] >= raw[raw.length - 1][1];
   drawLayers(v, soil, region, (z) => yMax - z, { labels: o.labels, labelX: leftHigh ? xmin : xmax, labelAnchor: leftHigh ? 'start' : 'end', gap: size / 80, hatch: o.hatch, yTopLabel: yMax });
-  v.polyline(raw, { stroke: 'var(--c-soil)', width: 1.8 });
+  v.polyline(raw.map((q) => [q[0], q[1]]), { stroke: 'var(--c-soil)', width: 1.8 });
   v.line(xmin, yBot, xmax, yBot, { stroke: 'var(--c-soil)', width: 1, dash: '2 3' });
   // Wasser
   let wl = null;
   if (sl.waterMode === 'line') {
-    const w = (sl.water || []).map((q) => [Number(q.x), Number(q.y)]).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1])).sort((a, b) => a[0] - b[0]);
-    if (w.length >= 2) wl = w;
-  } else if (sl.waterMode === 'gw' && Number.isFinite(soil.zw)) wl = [[xmin, yMax - soil.zw], [xmax, yMax - soil.zw]];
+    const w = (sl.water || []).map((q, i) => [Number(q.x), Number(q.y), i]).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1])).sort((a, b) => a[0] - b[0]);
+    for (const q of w) add({ type: 'point', id: `w:${q[2]}`, p: [q[0], q[1]], label: 'Punkt Wasserspiegel' });
+    for (let k = 0; k + 1 < w.length; k++) add({ type: 'segment', id: `ws:${w[k][2]}:${w[k + 1][2]}`, a: [w[k][0], w[k][1]], b: [w[k + 1][0], w[k + 1][1]], label: 'Wasserspiegel' });
+    if (w.length >= 2) wl = w.map((q) => [q[0], q[1]]);
+  } else if (sl.waterMode === 'gw' && Number.isFinite(soil.zw)) {
+    wl = [[xmin, yMax - soil.zw], [xmax, yMax - soil.zw]];
+    add({ type: 'segment', id: 'GW', a: wl[0], b: wl[1], label: 'Grundwasserspiegel' });
+  }
   if (wl) {
     const pts = [];
     const n = 120;
@@ -604,6 +704,10 @@ function drawSlope({ v, p, r, soil, mode, o }) {
     const pts = [];
     for (let k = 0; k <= 10; k++) { const x = a + (b - a) * k / 10; pts.push([x, polyY(raw, x)]); }
     surchargeArrows(v, pts, o.labels ? `q = ${fmt(+q.p, 1)} kN/m²` : null, 6);
+    const hq = 0.035 * size;
+    const ring = [...pts, ...pts.slice().reverse().map(([x, y]) => [x, y + hq])];
+    v.polygon(ring, { fill: 'var(--c-load-fill)', stroke: 'none' });
+    add({ type: 'region', id: 'q', ring, label: 'Auflast (ziehen: verschieben)' });
   }
   let bx0 = xmin, bx1 = xmax, by1 = yMax + 0.15 * Hs;
   if (R) {
@@ -626,8 +730,10 @@ function drawSlope({ v, p, r, soil, mode, o }) {
           if (o.labels && S.dx * v.scale > 30 && S.dy * v.scale > 14) v.text(tx(m.xc), m.yc, fmt(m.F, 2), { size: 9, halo: false, color: 'var(--text)' });
         }
         v.rect(gx0 - S.dx / 2, g.y0 - S.dy / 2, gx1 - gx0 + S.dx, g.y1 - g.y0 + S.dy, { fill: 'none', stroke: 'var(--c-dim)', width: 1, dash: '4 3' });
+        add({ type: 'region', id: 'grid', ring: [[gx0, g.y0], [gx1, g.y0], [gx1, g.y1], [gx0, g.y1]], label: 'Suchraster (ziehen: verschieben)' });
       } else {
         for (const m of S.map) if (Number.isFinite(m.F)) v.dot(tx(m.xc), m.yc, 2.6, { fill: colOf(m.F), stroke: 'none', title: `F = ${fmt(m.F, 3)}` });
+        add({ type: 'region', id: 'grid', ring: [[gx0, g.y0], [gx1, g.y0], [gx1, g.y1], [gx0, g.y1]], label: 'Suchraster (ziehen: verschieben)' });
       }
       const steps = 8;
       v.legend({ title: useD ? 'F_d' : 'F', min: fmin, max: fmax, steps, digits: 2, color: (t) => sequential(1 - t) });
@@ -659,7 +765,7 @@ function drawSlope({ v, p, r, soil, mode, o }) {
     key(v, [{ label: `massgebender Gleitkreis (${useD ? 'Bemessung' : 'charakteristisch'})`, color: 'var(--c-neg)' }, { label: 'Gleitkörper', color: 'var(--c-neg)', type: 'fill' }, wl ? { label: 'Wasserspiegel', color: 'var(--c-water)' } : null, mode === 'crit' ? { label: 'Mittelpunkte, Farbe = kleinstes F', color: sequential(0.25), type: 'dot' } : { label: 'Suchraster: kleinstes F je Mittelpunkt', color: sequential(0.25), type: 'fill' }]);
     legendLine(v, [`Bishop: F = ${fmt(R.F, 3)} (charakteristisch)`, `F_d = ${fmt(R.Fd, 3)} (Bemessung)`, `Fellenius: F = ${fmt(R.FF, 3)}`, `${R.circles} Kreise, ${R.ms} ms`]);
   }
-  v.setBounds(bx0, yBot - 0.14 * (by1 - yBot), bx1, by1);
+  setB(v, bx0, yBot - 0.14 * (by1 - yBot), bx1, by1);
 }
 
 function arcPoints(M, c, n) {
@@ -674,9 +780,22 @@ function arcPolyline(v, M, c, st) { v.polyline(arcPoints(M, c, 40), st); }
 
 // ------------------------------------------------------------------ 5. Stützmauer
 
-function drawWall({ v, p, r, soil, mode, o }) {
+function drawWall({ v, app, p, r, soil, mode, o }) {
   let g;
-  try { g = wallGeometry(p.rw); } catch { v.setBounds(0, 0, 5, 5); return; }
+  if (!(Number(p.rw.hs) > 0)) {
+    scene.empty = true;
+    const H = 4, X0 = -2, X1 = 8, yB = -2.5;
+    scene.zOfY = (y) => H - y;
+    const reg = [[X0, yB], [X1, yB], [X1, H], [X0, H]];
+    drawLayers(v, soil, reg, (z) => H - z, { labels: o.labels, labelX: X1, gap: 0.12, hatch: o.hatch, yTopLabel: H });
+    if (Number.isFinite(soil.zw) && soil.zw < H - yB) waterLine(v, X0, X1, H - soil.zw, { label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
+    emptyHint(v, 3, H + 0.9, ['Noch keine Stützmauer', 'Werkzeug «Mauer» wählen: Vorderkante Fundament unten, dann Mauerkrone anklicken', '(Masse danach mit den Griffen oder im Eigenschaftsfenster anpassen)']);
+    setB(v, X0, yB, X1, H + 1.8);
+    v.caption('Leeres Projekt – Tiefen ab Oberkante Hinterfüllung (Mauerkrone)');
+    return;
+  }
+  try { g = wallGeometry(p.rw); } catch (e) { app.showViewMessage?.(e.message); setB(v, 0, 0, 5, 5); return; }
+  scene.zOfY = (y) => g.H - y;
   const R = r?.rw;
   const tb = Math.tan(rad(g.beta));
   const X1 = g.B + Math.max(1.3 * g.H, 3);
@@ -692,6 +811,20 @@ function drawWall({ v, p, r, soil, mode, o }) {
   // Beton
   v.polygon([[0, 0], [g.B, 0], [g.B, g.d], [g.xb, g.d], [g.xb, g.H], [g.xb - g.tTop, g.H], [g.toe, g.d], [0, g.d]], CONCRETE);
   if (g.key) v.rect(g.key.x, -g.key.depth, g.key.width, g.key.depth, CONCRETE);
+  add({ type: 'region', id: 'w:stem', ring: [[g.toe, g.d], [g.xb, g.d], [g.xb, g.H], [g.xb - g.tTop, g.H]], label: 'Wand', movable: false });
+  add({ type: 'region', id: 'w:base', ring: [[0, 0], [g.B, 0], [g.B, g.d], [0, g.d]], label: 'Fundamentplatte', movable: false });
+  if (g.key) add({ type: 'region', id: 'w:key', ring: [[g.key.x, -g.key.depth], [g.key.x + g.key.width, -g.key.depth], [g.key.x + g.key.width, 0], [g.key.x, 0]], label: 'Sporn (ziehen: Lage)' });
+  add({ type: 'segment', id: 'w:surf', a: [g.xb, g.H], b: [X1, yS(X1)], label: 'Hinterfüllung' });
+  add({ type: 'point', id: 'h:top', p: [g.xb, g.H], label: 'Mauerkrone (Wandhöhe h_s)' });
+  add({ type: 'point', id: 'h:stemTop', p: [g.xb - g.tTop, g.H], label: 'Wanddicke oben' });
+  add({ type: 'point', id: 'h:stemBot', p: [g.toe, g.d], label: 'Wanddicke unten / Zehe' });
+  add({ type: 'point', id: 'h:heel', p: [g.B, 0], label: 'Fersenende (Länge Ferse)' });
+  add({ type: 'point', id: 'h:toe', p: [0, 0], label: 'Vorderkante (Länge Zehe)' });
+  add({ type: 'point', id: 'h:d', p: [g.B, g.d], label: 'Fundamentdicke d' });
+  add({ type: 'point', id: 'h:front', p: [X0, g.Df], label: 'Gelände vorne (Einbindetiefe D_f)' });
+  add({ type: 'point', id: 'h:surfEnd', p: [X1, yS(X1)], label: 'Geländeneigung β' });
+  if (g.key) add({ type: 'point', id: 'h:key', p: [g.key.x + g.key.width / 2, -g.key.depth], label: 'Sporntiefe' });
+  scene.info = { g, X0, X1, yS };
   // Auflast
   const q = Number(p.rw.q) || 0;
   if (q > 0) surchargeArrows(v, [[g.xb + 0.05, yS(g.xb + 0.05)], [X1, yS(X1)]], o.labels ? `q = ${fmt(q, 1)} kN/m²` : null, 10);
@@ -746,7 +879,7 @@ function drawWall({ v, p, r, soil, mode, o }) {
     key(v, [KEY.epG, R.ep.EhQ > 0 ? KEY.epQ : null, R.ep.U > 0 ? KEY.water : null, { label: 'Eigengewichte (ständig) [kN/m]', color: 'var(--c-struct)' }, { label: 'Sohldruck (Bemessung)', color: 'var(--c-pos)', type: 'fill' }, { label: 'Resultierende in der Sohle', color: 'var(--c-neg)' }]);
     legendLine(v, [`E_ah = ${fmt(R.ep.Eh, 1)} kN/m`, `ΣV_k = ${fmt(R.charAll.N, 1)} kN/m`, `Sohldruck: Bemessung (γ_G = ${fmt(R.cA.fG, 2)}, γ_Q = ${fmt(R.cA.fQe, 2)})`]);
   }
-  v.setBounds(X0, Math.min(yB, R && mode === 'forces' ? -0.35 * g.H - (g.key ? g.key.depth : 0) : yB) - 0.22 * g.H, X1, Math.max(g.H, yS(X1)) + 0.2 * g.H);
+  setB(v, X0, Math.min(yB, R && mode === 'forces' ? -0.35 * g.H - (g.key ? g.key.depth : 0) : yB) - 0.22 * g.H, X1, Math.max(g.H, yS(X1)) + 0.2 * g.H);
 }
 
 function interpPts(pts, x) {

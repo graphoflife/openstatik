@@ -11,7 +11,8 @@ import { bearingFactors, bearingResistance, effectiveArea, footingAnalysis, ecce
 import { cornerFactor, rectFactor, stripFactor, circleFactor, pointLoadStress, settlementAnalysis } from '../modules/geotechnik/settlement.js';
 import { buildSlopeModel, evalCircle, slopeAnalysis } from '../modules/geotechnik/slope.js';
 import { wallAnalysis } from '../modules/geotechnik/wall.js';
-import { compute } from '../modules/geotechnik/calc.js';
+import { compute, IncompleteInput } from '../modules/geotechnik/calc.js';
+import { derivation } from '../modules/geotechnik/derivation.js';
 import { EXAMPLES, defaultProject } from '../modules/geotechnik/examples.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} erwartet ${b}, erhalten ${a} (Toleranz ${tol})`);
@@ -263,15 +264,51 @@ test('Winkelstützmauer: Handrechnung Gleiten, Kippen, Ausmittigkeit, Wandmoment
 
 // ------------------------------------------------------------------ Gesamtablauf
 
-test('Alle Beispiele und das Standardprojekt rechnen fehlerfrei', () => {
+test('Alle Beispiele rechnen fehlerfrei und decken alle Analysearten ab', () => {
   assert.ok(EXAMPLES.length >= 5);
   const types = new Set();
-  for (const ex of [{ name: 'Standard', project: defaultProject }, ...EXAMPLES]) {
+  for (const ex of EXAMPLES) {
     const r = compute(ex.project());
     types.add(r.type);
     assert.ok(r && r.type, ex.name);
   }
   for (const t of ['erddruck', 'grundbruch', 'setzung', 'boeschung', 'stuetzmauer']) assert.ok(types.has(t), t);
+});
+
+test('Leeres Standardprojekt: freundlicher Hinweis (IncompleteInput) statt Fehler, für jede Analyseart', () => {
+  for (const t of ['erddruck', 'grundbruch', 'setzung', 'boeschung', 'stuetzmauer']) {
+    const p = defaultProject();
+    p.analysis = t;
+    assert.equal(p.soil.layers.length, 1);
+    assert.throws(() => compute(p), (e) => e instanceof IncompleteInput && e.incomplete === true && typeof e.hint === 'string' && e.hint.length > 20, t);
+  }
+  // Grundbruch mit Fundament, aber ohne Lasten → Hinweis auf Lasten
+  const p = defaultProject();
+  p.analysis = 'grundbruch'; p.bc.B = 2; p.bc.L = 2;
+  assert.throws(() => compute(p), (e) => e.incomplete && /Lasten/.test(e.message));
+  p.bc.loads.G.V = 500;
+  assert.ok(compute(p).bc.gov.eta > 0);
+});
+
+test('Herleitung: vollständige Abschnitte ohne fehlende Werte für alle Beispiele', () => {
+  for (const ex of EXAMPLES) {
+    const project = ex.project();
+    const results = compute(project);
+    const secs = derivation({ project, results, viewOpts: {}, editor: null });
+    assert.ok(secs.length >= 3, ex.name);
+    for (const sec of secs) {
+      assert.ok(sec.id && sec.title, `${ex.name}: Abschnitt ohne id/Titel`);
+      for (const stp of sec.steps || []) {
+        if (!stp) continue;
+        const txt = [stp.label, stp.f, stp.v, stp.r].join(' ');
+        assert.ok(!/NaN|undefined|null/.test(txt), `${ex.name} / ${sec.title}: ${txt}`);
+      }
+    }
+  }
+  // Nachweise sind mit Abschnitten verknüpft
+  const p = EXAMPLES[1].project();
+  const secs = derivation({ project: p, results: compute(p), viewOpts: {} });
+  for (const id of ['bc-R', 'bc-slide', 'bc-ecc']) assert.ok(secs.some((x) => x.id === id), id);
 });
 
 test('Spannungen und Mittelwerte im Schichtprofil', () => {

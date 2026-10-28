@@ -2,10 +2,12 @@
 import { createApp } from '../../js/core/app.js';
 import { h, group, numField, selectField, checkField, dataTable, segmented, note, emptyState, button, dropdown, icon, toast, fmt } from '../../js/core/ui.js';
 import { compute, ANALYSES } from './calc.js';
-import { EXAMPLES, baseProject, defaultProject } from './examples.js';
+import { EXAMPLES, baseProject, defaultProject, SOIL_PRESETS } from './examples.js';
 import { normPreset } from './soil.js';
 import { renderView, viewModes, viewOptions } from './draw.js';
 import { renderResults, buildReport, DEPTH_REF } from './output.js';
+import { editorSpec } from './editing.js';
+import { derivation } from './derivation.js';
 
 // ------------------------------------------------------------------ Stil (nur CSS-Variablen)
 
@@ -50,15 +52,7 @@ const picto = (id) => {
 
 // ------------------------------------------------------------------ Hilfen
 
-const SOIL_PRESETS = [
-  { name: 'Kies, sandig', gamma: 21, gammaP: 12, phi: 35, c: 0, cu: 0, ME: 60, desc: 'GW/GP, mitteldicht – dicht' },
-  { name: 'Sand, siltig', gamma: 20, gammaP: 11, phi: 31, c: 0, cu: 0, ME: 25, desc: 'SM, mitteldicht' },
-  { name: 'Silt, tonig', gamma: 19.5, gammaP: 9.5, phi: 27, c: 5, cu: 40, ME: 8, desc: 'ML, steif' },
-  { name: 'Ton, mittelplastisch', gamma: 19, gammaP: 9, phi: 24, c: 10, cu: 60, ME: 6, desc: 'CL/CM, steif' },
-  { name: 'Moräne', gamma: 22, gammaP: 12, phi: 34, c: 5, cu: 0, ME: 80, desc: 'GM/GC, dicht gelagert, vorbelastet' },
-  { name: 'Seeablagerung, weich', gamma: 18, gammaP: 8, phi: 22, c: 2, cu: 20, ME: 3, desc: 'CL/OL, weich' },
-  { name: 'Auffüllung', gamma: 19, gammaP: 10, phi: 30, c: 0, cu: 0, ME: 15, desc: 'heterogen, locker' },
-];
+
 
 function deepDefaults(p, base) {
   if (!p || typeof p !== 'object') return base;
@@ -86,6 +80,8 @@ function contextBar(app, text, action) {
 
 function setAnalysis(app, id) {
   if (app.project.analysis === id) return;
+  app.editor?.setTool?.('select');
+  app.editor?.select?.([]);
   app.project.analysis = id;
   app.changed({ inputs: true, immediate: true });
 }
@@ -310,7 +306,8 @@ function renderSoil(el, app) {
     ], rows, {
       onChange: (ev) => { if (ev.type === 'edit') { changed(); syncAfterEdit(); } else changed({ inputs: true }); },
       newRow: (rs) => ({ name: `Schicht ${rs.length + 1}`, z: rs.length ? Math.max(...rs.map((r) => +r.z)) + 2 : 0, gamma: 20, gammaP: 10, phi: 30, c: 0, cu: 0, ME: 20, dr: 2 / 3, col: (rs.length % 8) + 1 }),
-      minRows: 1, extraButtons: [presets], hint: 'Vorlage: typische Bodenarten',
+      minRows: 1, extraButtons: [presets], hint: 'Zeile anklicken markiert die Schicht in der Grafik',
+      onSelect: (i) => app.editor?.select([`L:${i}`]),
     });
   el.append(group('Schichtaufbau', [
     t1,
@@ -373,10 +370,10 @@ function renderNorm(el, app) {
 // ------------------------------------------------------------------ Hilfe
 
 const INTRO = `<h4>So funktioniert's</h4><ol>
-<li><b>Analyse wählen</b> – im Register «Analyse» oben: Erddruck, Grundbruch, Setzung, Böschung oder Stützmauer.</li>
-<li><b>Geometrie und Lasten</b> eingeben; Grafik und Ergebnisse aktualisieren sich sofort.</li>
-<li><b>Baugrund</b>: Schichten (z.B. aus einer Vorlage) und Grundwasser erfassen; bei «Nachweis» die Partialfaktoren prüfen.</li>
-<li>Rechts sehen Sie, ob alle Nachweise <b>erfüllt</b> sind. Mit «Bericht» entsteht ein druckbares Dokument.</li></ol>`;
+<li><b>Analyse wählen</b> – im Register «Analyse»: Erddruck, Grundbruch, Setzung, Böschung oder Stützmauer.</li>
+<li><b>In der Grafik zeichnen</b>: mit den Werkzeugen über der Grafik Wand, Fundament, Gelände oder Mauer anklicken; Griffe und Schichtgrenzen ziehen.</li>
+<li><b>Schicht anklicken</b>, um Bodenart und Kennwerte im Eigenschaftsfenster zu setzen; «Schicht» (L) teilt eine Schicht in der angeklickten Tiefe.</li>
+<li>Rechts sehen Sie, ob alle Nachweise <b>erfüllt</b> sind – «Herleitung» zeigt den Rechenweg, «Bericht» das Dokument.</li></ol>`;
 
 const HELP = `
 <h3>Überblick</h3>
@@ -404,8 +401,15 @@ const HELP = `
 <li>Schnittkräfte für die Bemessung: Wand an der Einspannung (M, V über die Höhe), Zehe und Ferse an den Wandanschnitten.</li></ul>
 <h3>Grenzen</h3>
 <p>Keine nicht-kreisförmigen Gleitflächen, keine Erdbebenlasten, keine Konsolidationszeit, keine Tiefenbeiwerte. Die Gesamtstabilität von Stützbauwerken ist separat zu prüfen. Die voreingestellten Partialfaktoren sind mit der gültigen Normausgabe abzugleichen. Ergebnisse ohne Gewähr.</p>
+<h3>Arbeiten in der Grafik</h3>
+<ul><li><b>Werkzeuge</b> über der Grafik (je Analyse): «Wand» (N), «Fundament» (F), «Gelände» (G), «Mauer» (N) erzeugen die Geometrie mit zwei Klicks bzw. einer Punktfolge (Doppelklick beendet). «Streifenlast», «Linienlast», «Auflast» (Q/K) setzen Lasten, «Wasserspiegel» (W) den Grundwasserspiegel bzw. eine Sickerlinie, «Suchraster» (U) den Bereich der Kreismittelpunkte.</li>
+<li><b>Bodenschichten</b>: eine Schicht anklicken öffnet das Eigenschaftsfenster (Bodenart aus Vorlage, γ, γ', φ', c', c_u, M_E, δ/φ). «Schicht» (L) teilt die angeklickte Schicht in dieser Tiefe; Schichtgrenzen und Grundwasserspiegel lassen sich senkrecht ziehen.</li>
+<li><b>Griffe</b> (Punkte) ziehen ändert Masse: Wandkopf (H, α), Fundamentecke (B, D), Geländepunkte, bei der Stützmauer Krone, Zehe, Ferse, Sohle, Wanddicken und Sporn. Fang an Punkten und Raster, X/Y binden an eine Achse, Ziffern tippen Koordinaten.</li>
+<li>Die Register links bleiben als gleichwertige Eingabe erhalten und sind mit der Grafik synchron. «Löschen» (Entf) entfernt Lasten, Schichten und Punkte.</li></ul>
+<h3>Herleitung</h3>
+<p>Im Ergebnisbereich zeigt «Herleitung» den vollständigen Rechenweg jeder Analyse mit allgemeiner Formel, eingesetzten Werten, Ergebnis und Normbezug; «Herleitung ›» in der Nachweistabelle springt direkt zum zugehörigen Abschnitt. Die Herleitung wird auch an den Bericht angehängt.</p>
 <h3>Bedienung</h3>
-<p>Zahlenfelder akzeptieren Ausdrücke (z.B. <code>6/2</code>, <code>2,5</code>). Tabellen können aus Excel eingefügt werden. Mausrad zoomt, Doppelklick passt die Grafik ein.</p>`;
+<p>Ein neues Projekt ist leer (eine Bodenschicht); Beispiele finden Sie unter «Beispiele». Zahlenfelder akzeptieren Ausdrücke (z.B. <code>6/2</code>, <code>2,5</code>). Tabellen können aus Excel eingefügt werden. Mausrad zoomt, rechte Maustaste verschiebt, Doppelklick passt die Grafik ein.</p>`;
 
 // ------------------------------------------------------------------ App
 
@@ -428,6 +432,8 @@ const def = {
   viewModes,
   viewOptions,
   renderView,
+  editor: editorSpec,
+  derivation,
   autoCompute: true,
   compute: (project) => compute(project),
   renderResults,

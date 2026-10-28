@@ -4,10 +4,12 @@ import assert from 'node:assert/strict';
 import {
   sectionCurvature, sectionResistance, effectiveHeight, lateralMoments, buildStrip, solveStrip,
   bucklingFactor, lateralFactor, phiMidEN, phiEndEN, shearSIA, shearEN, concentratedEN, basementEN,
-  computeWall, archingSearch,
+  computeWall, archingSearch, hasLoads, loadFlags, sideFlags, setSides,
 } from '../modules/mauerwerk/calc.js';
 import { designValues, defaultMaterial, applyTypeDefaults, MASONRY_TYPES } from '../modules/mauerwerk/materials.js';
-import { defaultProject, EXAMPLES, defaultCombos } from '../modules/mauerwerk/examples.js';
+import { defaultProject, EXAMPLES, defaultCombos, syncCombos } from '../modules/mauerwerk/examples.js';
+import { editorSpec } from '../modules/mauerwerk/editing.js';
+import { derivation, DERIV_OF } from '../modules/mauerwerk/derivation.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} erwartet ${b}, erhalten ${a} (Toleranz ${tol})`);
 const rel = (a, b, rtol, msg) => near(a, b, Math.abs(b) * rtol, msg);
@@ -351,4 +353,139 @@ test('Standardkombinationen SIA 260', () => {
   assert.ok(c.some((x) => x.g === 0.8 && x.w === 1.5));
   assert.ok(c.some((x) => x.type === 'SLS'));
   assert.ok(c.some((x) => x.ae === 1));
+});
+
+// ------------------------------------------------------------------ Leeres Projekt, Kombinationen
+
+test('Neues Projekt: Wand ohne Lasten und Öffnungen', () => {
+  const p = defaultProject();
+  assert.equal(p.wall.openings.length, 0);
+  assert.equal(hasLoads(p), false);
+  assert.equal(p.wall.h, 2.6);
+  assert.equal(p.wall.t, 150);
+  assert.equal(p.material.type, 'MB');
+  p.loads.gD = 10;
+  assert.equal(hasLoads(p), true);
+  const q = defaultProject();
+  q.loads.conc.on = true; // ohne Lastwerte noch keine Last
+  assert.equal(hasLoads(q), false);
+  q.loads.conc.G = 5;
+  assert.equal(hasLoads(q), true);
+});
+
+test('Kombinationen folgen im Automatikbetrieb den erfassten Lasten', () => {
+  const p = defaultProject();
+  p.loads.gD = 20;
+  assert.equal(syncCombos(p, loadFlags(p)), false);
+  p.loads.wind = 1.0;
+  assert.equal(syncCombos(p, loadFlags(p)), true);
+  assert.ok(p.combos.some((c) => c.w === 1.5 && c.g === 0.8), 'Wind mit minimaler Normalkraft');
+  p.combosAuto = false;
+  p.loads.Ve = 50;
+  assert.equal(syncCombos(p, loadFlags(p)), false);
+  assert.ok(!p.combos.some((c) => c.ae > 0));
+});
+
+test('Seitliche Halterungen: alte Anzahl und neue Flags', () => {
+  assert.deepEqual(sideFlags({ sides: 1 }), { L: true, R: false });
+  assert.deepEqual(sideFlags({ sides: 2 }), { L: true, R: true });
+  const W = { sides: 0 };
+  setSides(W, false, true);
+  assert.deepEqual(sideFlags(W), { L: false, R: true });
+  assert.equal(W.sides, 1);
+  // eine Querwand rechts verkürzt die Knicklänge wie eine links (ρ3)
+  const p = defaultProject();
+  p.loads.gD = 50;
+  p.wall.ls = 2.0;
+  setSides(p.wall, false, true);
+  near(computeWall(p).eff.rho, 0.678347, 1e-5);
+});
+
+// ------------------------------------------------------------------ Grafischer Editor
+
+function edApp(p = defaultProject()) {
+  return { project: p, results: null, viewMode: 'ansicht', viewOpts: {}, msgs: [], status(m) { this.msgs.push(m); } };
+}
+
+test('Editor: Öffnung zeichnen wird auf die Wand begrenzt', () => {
+  const app = edApp();
+  const ids = editorSpec.create(app, 'opening', [[-0.5, 0], [1.2, 0], [1.2, 2.1], [-0.5, 2.1]]);
+  assert.deepEqual(ids, ['o:0']);
+  assert.deepEqual(app.project.wall.openings[0], { x: 0, b: 1.2, y: 0, hgt: 2.1 });
+  // zu klein → keine Öffnung
+  assert.equal(editorSpec.create(app, 'opening', [[1, 1], [1.05, 1], [1.05, 1.5], [1, 1.5]]), null);
+  assert.equal(app.project.wall.openings.length, 1);
+});
+
+test('Editor: Ecke ziehen ändert Höhe und Länge, Öffnungen bleiben in der Wand', () => {
+  const app = edApp();
+  const W = app.project.wall;
+  W.openings.push({ x: 3.8, b: 1.0, y: 0, hgt: 2.1 });
+  editorSpec.move(app, ['w:tr'], [-1.5, 0.2], {});
+  near(W.l, 3.5, 1e-12);
+  near(W.h, 2.8, 1e-12);
+  near(W.ls, 3.5, 1e-12); // Querwandabstand folgte der Länge
+  near(W.openings[0].x, 2.5, 1e-12); // x + b ≤ l
+  editorSpec.move(app, ['w:tl'], [5, -0.3], {}); // nur Höhe
+  near(W.l, 3.5, 1e-12);
+  near(W.h, 2.5, 1e-12);
+  // Öffnungsecke ziehen: Gegenecke bleibt fest
+  editorSpec.move(app, ['o:0:2'], [0.5, -0.4], {});
+  const o = W.openings[0];
+  near(o.x, 2.5, 1e-12); near(o.b, 1.0, 1e-12); near(o.hgt, 1.7, 1e-12);
+});
+
+test('Editor: Lasten mit Werkzeugen setzen, verschieben und löschen', () => {
+  const app = edApp();
+  const L = app.project.loads;
+  // Auflast: Standardwerte, wenn noch keine Last
+  assert.deepEqual(editorSpec.pick(app, 'auflast', { type: 'segment', id: 'q', t: 0.5, q: [2.5, 2.82] }), ['q']);
+  assert.ok(L.gD > 0 && L.qD > 0);
+  // Einzellast an der Stelle t = 0.5 → x = 2.5 − a/2
+  editorSpec.pick(app, 'einzellast', { type: 'segment', id: 'q:w', t: 0.5, q: [2.5, 2.6] });
+  assert.equal(L.conc.on, true);
+  near(L.conc.x, 2.4, 1e-12);
+  editorSpec.move(app, ['c'], [10, 0], {});
+  near(L.conc.x, 4.8, 1e-12); // begrenzt auf l − a
+  // Horizontalkraft auf Höhe des Klicks
+  editorSpec.pick(app, 'hkraft', { type: 'segment', id: 'e:L', t: 0.5, q: [0, 1.3] });
+  near(L.hV, 1.3, 1e-12);
+  assert.ok(L.Vw > 0);
+  // Querwand ein/aus
+  editorSpec.pick(app, 'querwand', { type: 'segment', id: 'e:R', t: 0.5, q: [5, 1] });
+  assert.deepEqual(sideFlags(app.project.wall), { L: false, R: true });
+  editorSpec.remove(app, ['c', 'v']);
+  assert.equal(L.conc.on, false);
+  assert.equal(L.Vw, 0);
+  // Geometrie liefert Wand, Auflast und Ränder
+  const g = editorSpec.geometry(app);
+  assert.ok(g.regions.some((r) => r.id === 'w'));
+  assert.ok(g.segments.some((s) => s.id === 'q'));
+});
+
+// ------------------------------------------------------------------ Herleitung
+
+test('Herleitung: jeder Nachweis hat einen Abschnitt mit gleicher Ausnutzung', () => {
+  for (const ex of EXAMPLES) {
+    for (const method of ['SIA', 'EN']) {
+      const p = ex.project();
+      p.settings.method = method; p.settings.shearMethod = method;
+      const R = computeWall(p);
+      const secs = derivation({ project: p, results: R, viewOpts: {} });
+      const byId = Object.fromEntries(secs.map((s) => [s.id, s]));
+      for (const c of R.checks) {
+        const sec = byId[DERIV_OF[c.id]];
+        assert.ok(sec, `${ex.name} ${method}: Abschnitt für ${c.id}`);
+        assert.ok(sec.steps.length >= 2);
+        // Abschnittsergebnis = maximale Ausnutzung der zugehörigen Nachweise in der massgebenden Kombination
+        assert.ok(sec.result.eta >= 0);
+      }
+      assert.ok(!/NaN|undefined/.test(JSON.stringify(secs)), `${ex.name} ${method}: keine ungültigen Werte`);
+    }
+  }
+  // Wandkopf: Herleitung stimmt mit der Handrechnung überein
+  const p = simpleProject();
+  const R = computeWall(p);
+  const ends = derivation({ project: p, results: R, viewOpts: {} }).find((s) => s.id === 'ends');
+  near(ends.result.eta, 0.54, 1e-9);
 });

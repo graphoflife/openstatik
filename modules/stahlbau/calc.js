@@ -8,7 +8,7 @@
 import { structuralSteel } from '../../js/core/materials.js';
 import { sectionProps, CATALOG } from './profiles.js';
 import { mcrFormula, ltbEigen, cFactors, mcrUniform } from './ltb.js';
-import { systemGeometry, normLoad, analyzeBeam, combine, autoCombos, defaultFactors } from './beam.js';
+import { systemGeometry, normLoad, analyzeBeam, combine, autoCombos, defaultFactors, Incomplete } from './beam.js';
 
 export const E_STEEL = 210000;
 export const G_STEEL = 81000;
@@ -451,7 +451,7 @@ function buildForcesMember(p) {
   const L = Number(F.L);
   if (!(L > 0)) throw new Error('Bitte eine Stablänge L grösser als 0 eingeben (Register «Belastung»).');
   const cases = F.cases || [];
-  if (!cases.length) throw new Error('Keine Schnittgrössen vorhanden – bitte im Register «Belastung» mindestens eine Zeile mit N, My … erfassen.');
+  if (!cases.length) throw new Incomplete('Noch keine Bemessungsschnittgrössen erfasst.', 'Den Stab in der Grafik anklicken und im Eigenschaftsfenster «Situation hinzufügen» wählen – oder im Register «Belastung» mindestens eine Zeile mit N, My … erfassen.');
   const supports = [{ x: 0, type: 'pin' }, { x: L, type: 'pin' }];
   const n = 40;
   const xs = Array.from({ length: n + 1 }, (_, i) => L * i / n);
@@ -487,6 +487,9 @@ function buildBeamMember(p, sec, mat) {
   const L = geo.L;
   const lcs = (b.loadCases || []).map((l) => ({ ...l }));
   if (!lcs.length) throw new Error('Keine Lastfälle definiert – bitte im Register «Belastung» einen Lastfall anlegen.');
+  if (!(b.loads || []).length) {
+    throw new Incomplete('Noch keine Lasten auf dem Träger.', 'Werkzeug «Streckenlast» (Taste Q) oder «Einzellast» (Taste F) wählen und auf den Träger klicken – oder im Register «Belastung» Lasten erfassen. Fertige Beispiele finden Sie oben unter «Beispiele».');
+  }
   const ids = new Set(lcs.map((l) => l.id));
   const loads = [];
   for (const [i, ld] of (b.loads || []).entries()) {
@@ -504,7 +507,7 @@ function buildBeamMember(p, sec, mat) {
   const restr = latRestraintPositions(p, L, geo.supports, geo.freeEnds);
   const EIy = E_STEEL * 1e3 * sec.Iy * 1e-12, EIz = E_STEEL * 1e3 * sec.Iz * 1e-12; // kNm²
   const an = analyzeBeam(b, lcs, loads, EIy, EIz, restr);
-  const pattern = geo.system === 'cont' || geo.system === 'ss-cant';
+  const pattern = geo.fields.length > 1; // Durchlaufträger, Kragarme: feldweise Laststellung
   let combos;
   const fac = { ...defaultFactors(p.norm), ...(p.combos?.factors || {}) };
   if (p.combos?.auto === false && (p.combos.manual || []).length) {

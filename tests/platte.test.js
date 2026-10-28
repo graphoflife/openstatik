@@ -7,6 +7,8 @@ import { woodArmer, requiredAs, momentResistance, punchingSIA, punchingEC, contr
 import { analyse, defaultCombos, withDefaults, locate, interpolate } from '../modules/platte/calc.js';
 import { EXAMPLES, defaultProject } from '../modules/platte/examples.js';
 import { pointInPolygon, signedArea, segIntersect } from '../modules/platte/geom.js';
+import { moveSelection, copySelection, removeSelection, createElement, insertMidpoint, addWallsOnEdges, vertexIdsOf, polygonProblem } from '../modules/platte/model.js';
+import { derivation, woodArmerSteps } from '../modules/platte/derivation.js';
 
 const close = (a, b, rel, msg) => assert.ok(Math.abs(a - b) <= rel * Math.abs(b), `${msg}: ${a} ≠ ${b} (±${rel * 100} %)`);
 
@@ -228,7 +230,7 @@ test('Durchstanzen EN 1992-1-1 6.4.4: Handrechnung', () => {
 // ------------------------------------------------------------------ Gesamtberechnung
 
 test('Beispiele: Gleichgewicht Σ Auflagerkräfte = Σ Lasten für alle Lastfälle und Kombinationen', () => {
-  for (const ex of [{ name: 'Standard', project: defaultProject }, ...EXAMPLES]) {
+  for (const ex of EXAMPLES) {
     const r = analyse(ex.project());
     for (const s of r.sets) {
       assert.ok(Math.abs(s.sumR - s.sumF) <= 1e-6 * Math.max(1, Math.abs(s.sumF)), `${ex.name} / ${s.name}: ΣR = ${s.sumR}, ΣF = ${s.sumF}`);
@@ -262,13 +264,22 @@ test('Standardkombinationen SIA 260: 1.35·G + 1.5·Q und G + ψ2·Q', () => {
 });
 
 test('Fehlermeldungen: ungelagerte bzw. kinematische Platte', () => {
-  const p = defaultProject();
+  const p = EXAMPLES[0].project();
   p.lineSupports = [];
   assert.throws(() => analyse(p), /keine Lager/);
-  p.lineSupports = [{ x1: 0, y1: 0, x2: 8, y2: 0, clamped: false }];
+  p.lineSupports = [{ x1: 0, y1: 0, x2: 6, y2: 0, clamped: false }];
   assert.throws(() => analyse(p), /kinematisch/);
   p.lineSupports[0].clamped = true;
   assert.doesNotThrow(() => analyse(p));
+});
+
+test('Neues Projekt ist leer (ohne Geometrie, Lager und Lasten), Baustoffe vorbelegt', () => {
+  const p = defaultProject();
+  assert.equal(p.outline.length, 0);
+  assert.equal(p.pointSupports.length + p.lineSupports.length, 0);
+  assert.equal(p.areaLoads.length + p.lineLoads.length + p.pointLoads.length + p.loadAreas.length, 0);
+  assert.ok(p.h > 0 && p.concrete && p.meshSize > 0 && p.loadCases.length > 0);
+  assert.throws(() => analyse(p), /Plattenrand/);
 });
 
 test('Flachdecke: Durchstanznachweise mit Stützentyp-Erkennung', () => {
@@ -285,4 +296,113 @@ test('Flachdecke: Durchstanznachweise mit Stützentyp-Erkennung', () => {
   const inner = r.punching.filter((pc) => pc.type === 'innen');
   close(inner[0].Vd, inner[1].Vd, 0.01, 'Symmetrie');
   assert.ok(signedArea(r.outline) > 0);
+});
+
+// ------------------------------------------------------------------ Grafische Bearbeitung (model.js)
+
+const rectProject = () => {
+  const p = defaultProject();
+  createElement(p, 'outline', [[0, 0], [6, 0], [6, 4], [0, 4]]);
+  return p;
+};
+
+test('Editor: Umriss zeichnen, Wände an allen Rändern, Lastfläche – Berechnung im Gleichgewicht', () => {
+  const p = rectProject();
+  assert.equal(p.outline.length, 4);
+  assert.equal(addWallsOnEdges(p, [0, 1, 2, 3]), 4);
+  assert.equal(addWallsOnEdges(p, [0, 1]), 0, 'keine doppelten Wände');
+  const r1 = createElement(p, 'area', [[1, 1], [3, 1], [3, 3], [1, 3]]);
+  assert.deepEqual(r1.ids, ['a:0']);
+  assert.equal(p.areaLoads.length, 1);
+  assert.equal(p.areaLoads[0].lc, 'LF3', 'neue Last im veränderlichen Lastfall');
+  createElement(p, 'pointload', [[4, 2]]);
+  createElement(p, 'lineload', [[0.5, 3.5], [5.5, 3.5]]);
+  const r = analyse(p);
+  const q = r.sets.find((s) => s.key === 'lc:LF3');
+  close(q.sumF, 2.0 * 4 + 10 + 5 * 5, 1e-9, 'Lasten der gezeichneten Elemente');
+  for (const s of r.sets) assert.ok(Math.abs(s.sumR - s.sumF) < 1e-6 * Math.max(1, s.sumF));
+});
+
+test('Editor: ungültige Polygone werden mit verständlicher Meldung abgewiesen', () => {
+  const p = defaultProject();
+  assert.throws(() => createElement(p, 'outline', [[0, 0], [4, 4], [4, 0], [0, 4]]), /überschneidet sich/);
+  assert.throws(() => createElement(p, 'outline', [[0, 0], [4, 0]]), /mindestens drei/);
+  const q = rectProject();
+  assert.throws(() => createElement(q, 'opening', [[5, 3], [7, 3], [7, 5], [5, 5]]), /innerhalb der Platte/);
+  assert.equal(polygonProblem([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]), null);
+});
+
+test('Editor: Verschieben nimmt zusammenfallende Punkte mit (Ecke → Wandenden)', () => {
+  const p = rectProject();
+  addWallsOnEdges(p, [0, 1, 2, 3]);
+  createElement(p, 'column', [[3, 2]]);
+  moveSelection(p, ['ov:2'], [1, 0.5]); // Ecke (6,4) → (7,4.5)
+  assert.deepEqual([p.outline[2].x, p.outline[2].y], [7, 4.5]);
+  assert.deepEqual([p.lineSupports[1].x2, p.lineSupports[1].y2], [7, 4.5], 'Wand 2 endet an der Ecke');
+  assert.deepEqual([p.lineSupports[2].x1, p.lineSupports[2].y1], [7, 4.5], 'Wand 3 beginnt an der Ecke');
+  assert.deepEqual([p.pointSupports[0].x, p.pointSupports[0].y], [3, 2], 'Stütze bleibt');
+  moveSelection(p, ['c:0'], [-1, 0]);
+  assert.deepEqual([p.pointSupports[0].x, p.outline[0].x], [2, 0]);
+  moveSelection(p, ['slab'], [10, 10]);
+  assert.deepEqual([p.outline[0].x, p.outline[0].y, p.pointSupports[0].x, p.lineSupports[0].y1], [10, 10, 12, 10], 'ganzes Projekt');
+  assert.deepEqual([...vertexIdsOf(p, ['oe:3'])].sort(), ['ov:0', 'ov:3']);
+});
+
+test('Editor: Kopieren und Löschen', () => {
+  const p = rectProject();
+  createElement(p, 'column', [[2, 2]]);
+  createElement(p, 'area', [[1, 1], [2, 1], [2, 2]]);
+  const ids = copySelection(p, ['c:0', 'a:0', 'ov:1'], [1, 0]);
+  assert.deepEqual(ids, ['c:1', 'a:1']);
+  assert.equal(p.pointSupports[1].x, 3);
+  assert.equal(p.areaLoads.length, 2, 'Last der Lastfläche mitkopiert');
+  assert.notEqual(p.loadAreas[1].id, p.loadAreas[0].id);
+  // Eckpunkt löschen nur, solange drei Punkte bleiben
+  const k = insertMidpoint(p.outline, 0);
+  assert.equal(k, 1);
+  assert.deepEqual([p.outline[1].x, p.outline[1].y], [3, 0]);
+  assert.equal(removeSelection(p, ['ov:1']), 1);
+  assert.equal(p.outline.length, 4);
+  removeSelection(p, ['ov:0', 'ov:1']);
+  assert.equal(p.outline.length, 4, 'nicht unter drei Punkte – Rand bleibt');
+  // Lastfläche mit ihren Lasten löschen
+  assert.equal(removeSelection(p, ['a:0', 'c:0', 'c:1']), 3);
+  assert.equal(p.loadAreas.length, 1);
+  assert.equal(p.areaLoads.length, 1);
+  assert.equal(p.areaLoads[0].region, p.loadAreas[0].id);
+  assert.equal(p.pointSupports.length, 0);
+});
+
+// ------------------------------------------------------------------ Herleitung
+
+test('Herleitung: alle Nachweise mit Formel, Werten und Ergebnis', () => {
+  const p = EXAMPLES[1].project();
+  const r = analyse(p);
+  const secs = derivation({ results: r, project: p, viewOpts: {} });
+  const ids = secs.map((s) => s.id);
+  for (const id of ['material', 'kombi', 'gleich', 'as-bx', 'as-by', 'as-tx', 'as-ty', 'sls']) assert.ok(ids.includes(id), id);
+  for (const pc of r.punching.filter((q) => !q.skip)) {
+    const s = secs.find((x) => x.id === `p-${pc.name}`);
+    assert.ok(s, pc.name);
+    assert.ok(Math.abs(s.result.eta - pc.eta) < 1e-12);
+    const v = s.steps.find((st) => st && /V_\{Rd,c\} =/.test(st.f));
+    assert.ok(v && v.r.includes(pc.VRd.toFixed(1)), `VRd in Herleitung ${pc.name}`);
+  }
+  const mat = secs.find((x) => x.id === 'material');
+  assert.ok(mat.steps.some((st) => st && st.f.startsWith('D =') && st.r.includes(r.D.toFixed(0))));
+  // Bewehrung: Ergebnis der Herleitung = Tabelle
+  const L = r.design.layers.tx;
+  const sec = secs.find((x) => x.id === 'as-tx');
+  assert.ok(sec.result.text.includes(Math.max(L.asMax, L.asMin).toFixed(0)));
+});
+
+test('Herleitung: Wood–Armer-Fallunterscheidung', () => {
+  // Regelfall unten x: mx + |mxy|
+  assert.equal(woodArmerSteps(10, 4, 6, 'bx').value, 16);
+  // Korrektur: my + |mxy| < 0 → mx + mxy²/|my|
+  const k = woodArmerSteps(10, -8, 3, 'bx');
+  close(k.value, 11.125, 1e-12, 'korrigiert');
+  assert.match(k.steps[0].label, /Korrektur/);
+  // oben y: my − mxy²/|mx|
+  close(woodArmerSteps(10, -8, 3, 'ty').value, 8.9, 1e-12, 'oben y');
 });

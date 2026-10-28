@@ -478,7 +478,7 @@ export function analyse(project) {
       const req = Math.max(mx, asMin[k]);
       layers[k] = {
         key: k, label: layerLabel(k), d: dep[k], asMax: mx, node: im, x: x[im], y: y[im], mMax, xdMax, nFail,
-        asMin: asMin[k], asReq: req, bars: chooseBars(req), asBasic: asBasic[k] || 0,
+        asMin: asMin[k], asReq: req, bars: barSuggestion(req), asBasic: asBasic[k] || 0,
         extraArea: 0,
       };
     }
@@ -497,7 +497,10 @@ export function analyse(project) {
       layers[k].extraShare = Aall > 0 ? A / Aall : 0;
     }
     if (failed) warnings.push(`An ${failed} Knoten ist die Biegedruckzone ungenügend (μ ≥ 0.5) – Platte verstärken oder Betonsorte erhöhen.`);
-    design = { mEd, as, layers, asMin, asBasic, depths: dep, fcd, fsd, lambda, failed, combos: ulsSets.map((s) => s.key) };
+    design = {
+      mEd, as, layers, asMin, asBasic, depths: dep, fcd, fsd, lambda, failed, combos: ulsSets.map((s) => s.key),
+      inputs: { cBot: num(dz.cBot, 30), cTop: num(dz.cTop, 30), dBot: num(dz.dBot, 12), dTop: num(dz.dTop, 14), outerBot: dz.outerBot || 'x', outerTop: dz.outerTop || 'x', asMinMode: dz.asMinMode, rhoMin: num(dz.rhoMin, 0.13), Dmax: num(dz.Dmax, 32), asPunch: num(dz.asPunch, 0) },
+    };
   }
 
   // ---------------------------------------------------------------- Durchstanzen
@@ -521,7 +524,7 @@ export function analyse(project) {
         const provide = (dl, amin) => {
           if (asUser > 0) return { as: asUser, label: 'vorgegeben' };
           const req = Math.max(requiredAs(msd, dl, fcd, fsd, lambda).as || 0, amin);
-          const bars = chooseBars(req);
+          const bars = barSuggestion(req);
           return { as: bars.as, label: bars.label };
         };
         const px = provide(dep.tx, asMin.tx), py = provide(dep.ty, asMin.ty);
@@ -539,8 +542,18 @@ export function analyse(project) {
         const cp0 = controlPerimeter(sp, 1e-4, outline, holes, 0);
         const u0 = cp0.u;
         const asUser = num(dz.asPunch, 0);
-        const ax = asUser > 0 ? asUser : Math.max(asMin.tx, chooseBars(asMin.tx).as);
-        const ay = asUser > 0 ? asUser : Math.max(asMin.ty, chooseBars(asMin.ty).as);
+        // ρl aus der erforderlichen oberen Bewehrung im Bereich c/2 + 3d um die Stütze (Mittelwert), mind. as,min
+        const zoneR = Math.max(sp.b, sp.h) / 2 + 3 * dMean / 1000;
+        const avgAs = (arr) => {
+          let sum = 0, cnt = 0;
+          for (let i = 0; i < n; i++) {
+            if (Math.hypot(x[i] - sp.x, y[i] - sp.y) > zoneR || !Number.isFinite(arr[i])) continue;
+            sum += arr[i]; cnt++;
+          }
+          return cnt ? sum / cnt : 0;
+        };
+        const ax = asUser > 0 ? asUser : barSuggestion(Math.max(asMin.tx, avgAs(design.as.tx))).as;
+        const ay = asUser > 0 ? asUser : barSuggestion(Math.max(asMin.ty, avgAs(design.as.ty))).as;
         const rhoL = Math.sqrt((ax / (1000 * dep.tx)) * (ay / (1000 * dep.ty)));
         const res = punchingEC({ VEd: Vd, d: dMean, u1: cp.u, u0, beta, rhoL, fck: conc.fck, fcd, gammaC: conc.gammaC });
         Object.assign(rec, { type, beta, r, u: cp.u, uFull: cp.uFull, u0, pieces: cp.pieces, rhoL, asx: { as: ax }, asy: { as: ay }, res, VRd: res.VRdc, eta: res.eta });
@@ -574,6 +587,11 @@ export function analyse(project) {
     neq: sol.neq,
     time: { mesh: T1 - T0, solve: T2 - T1, post: T3 - T2, total: T3 - T0 },
   };
+}
+
+/** Praktische Bewehrungswahl (Ø 8–26, Abstände 100–250 mm). */
+export function barSuggestion(as) {
+  return chooseBars(as, { diameters: [8, 10, 12, 14, 16, 18, 20, 22, 26], spacings: [100, 125, 150, 200, 250] });
 }
 
 export function layerLabel(k) {

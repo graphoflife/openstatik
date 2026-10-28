@@ -26,14 +26,15 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 
 // ------------------------------------------------------------------ Projekt
 
-export function newLoadCase(i = 1) {
-  return { name: `LF ${i}`, N: 1000, Myt: 0, Myb: 0, Hz: 0, qz: 0, Mzt: 0, Mzb: 0, Hy: 0, qy: 0 };
+export function newLoadCase(i = 1, N = 1000) {
+  return { name: `LF ${i}`, N, Myt: 0, Myb: 0, Hz: 0, qz: 0, Mzt: 0, Mzb: 0, Hy: 0, qy: 0 };
 }
 
+/** Neutrales Startprojekt: Pendelstütze 30 × 30 cm, 4 Ø16, C30/37, L = 3 m – noch ohne Lasten. */
 export function defaultProject() {
   return {
     norm: 'SIA',
-    L: 3.2,
+    L: 3,
     support: 'pinned',
     supportZ: 'same',
     custom: { bot: 'fixed', top: 'pinned', sway: false, kBot: 20, kTop: 20 },
@@ -41,7 +42,7 @@ export function defaultProject() {
     betaMode: 'auto',
     betaY: 1,
     betaZ: 1,
-    section: { shape: 'rect', b: 300, h: 300, D: 400, nb: 3, nh: 3, n: 8, dia: 18, coverMode: 'nominal', cover: 30, stirrup: 8, axis: 50 },
+    section: { shape: 'rect', b: 300, h: 300, D: 400, nb: 2, nh: 2, n: 8, dia: 16, coverMode: 'nominal', cover: 30, stirrup: 8, axis: 50 },
     concrete: 'C30/37',
     steel: 'B500B',
     lawMode: 'auto',
@@ -49,8 +50,84 @@ export function defaultProject() {
     creep: { phi: 2.0, ratio: 0.7 },
     biaxial: false,
     nEl: 40,
-    loadCases: [{ ...newLoadCase(1), N: 1500, Myt: 15, Myb: 10 }],
+    loadCases: [],
   };
+}
+
+/** Lastgrössen je Biegeachse: Feldnamen im Lastfall. */
+export const LOAD_KEYS = {
+  y: { Mt: 'Myt', Mb: 'Myb', H: 'Hz', q: 'qz' },
+  z: { Mt: 'Mzt', Mb: 'Mzb', H: 'Hy', q: 'qy' },
+};
+
+/** Vorschlag für die Normalkraft eines neuen Lastfalls: rund 30 % von A_c·f_cd, gerundet. */
+export function suggestN(p) {
+  try {
+    const g = sectionGeometry(p.section);
+    const m = materials(p.norm, p.concrete, p.steel);
+    const v = 0.3 * g.Ac * m.fcd * 1000;
+    const step = v > 3000 ? 500 : v > 600 ? 100 : 50;
+    return Math.max(step, Math.round(v / step) * step);
+  } catch {
+    return 500;
+  }
+}
+
+const LOAD_FIELDS = ['N', 'Myt', 'Myb', 'Hz', 'qz', 'Mzt', 'Mzb', 'Hy', 'qy'];
+
+/**
+ * Fehlt noch etwas für die Berechnung? Liefert null oder {msg, hint} (für IncompleteInput).
+ * Ohne Lastfall bzw. mit lauter leeren Lastfällen wird nicht gerechnet – die Stütze wird trotzdem gezeichnet.
+ */
+export function missingInput(p) {
+  const lcs = Array.isArray(p?.loadCases) ? p.loadCases : [];
+  if (!lcs.length) {
+    return {
+      msg: 'Noch keine Lasten vorhanden.',
+      hint: 'Werkzeug «Last» (Taste F) wählen und den Stützenkopf in der Grafik anklicken – oder im Register «Lasten» einen Lastfall erfassen. Fertige Stützen finden Sie oben unter «Beispiele».',
+    };
+  }
+  if (!lcs.some((lc) => LOAD_FIELDS.some((k) => Math.abs(+lc[k] || 0) > 0))) {
+    return {
+      msg: lcs.length > 1 ? 'Die Lastfälle enthalten noch keine Lasten.' : `Der Lastfall «${lcs[0].name || 'LF 1'}» enthält noch keine Lasten.`,
+      hint: 'Stützenkopf in der Grafik anklicken und im Eigenschaftsfenster die Normalkraft N eingeben – oder im Register «Lasten».',
+    };
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------ Lagerung je Stützenende
+
+/** Lagerung einer Biegeachse als Einzelenden {bot, top, sway, kBot, kTop} (k in MNm/rad). */
+export function supportState(p, ax) {
+  const sep = ax === 'z' && p.supportZ && p.supportZ !== 'same';
+  const key = sep ? p.supportZ : p.support;
+  const c = (sep ? p.customZ : p.custom) || {};
+  const k = { kBot: c.kBot ?? 20, kTop: c.kTop ?? 20 };
+  if (key === 'custom') return { bot: c.bot || 'fixed', top: c.top || 'pinned', sway: !!c.sway, ...k };
+  const pr = SUPPORT_PRESETS[key] || SUPPORT_PRESETS.pinned;
+  return { bot: pr.bot, top: pr.top, sway: pr.sway, ...k };
+}
+
+/** Passende Standardlagerung zu Einzelenden, sonst 'custom'. */
+export function presetFor(st) {
+  if (st.bot !== 'spring' && st.top !== 'spring') {
+    for (const [k, pr] of Object.entries(SUPPORT_PRESETS)) {
+      if (k !== 'custom' && pr.bot === st.bot && pr.top === st.top && pr.sway === !!st.sway) return k;
+    }
+  }
+  return 'custom';
+}
+
+/**
+ * Setzt die Lagerung einer Biegeachse aus Einzelenden. Biegung um y ändert «support» (z folgt, solange
+ * gleich); eine Änderung für Biegung um z trennt die Lagerung der beiden Richtungen.
+ */
+export function setSupportState(p, ax, st) {
+  const key = presetFor(st);
+  const custom = { bot: st.bot, top: st.top, sway: !!st.sway, kBot: st.kBot ?? 20, kTop: st.kTop ?? 20 };
+  if (ax === 'z') { p.supportZ = key; p.customZ = custom; } else { p.support = key; p.custom = custom; }
+  return key;
 }
 
 /** Ergänzt fehlende Felder (ältere Dateien, Teileingaben). */
@@ -379,7 +456,7 @@ export function analyzeAxis(ctx, ax, lc) {
     ax, N, loads, preset: axc.preset, sway: model.sway, x: model.x, L: p.L,
     beta, betaModel, userBeta: userBeta !== null, l0, i: props.i, lam, lamLim, limEC, lamLimSIA, rm,
     EInom, nom, NB, NBmodel, thetaI, ei, impAmp, w0: wOf(w0, model.nN),
-    M1, M1n, w1, M1max, M1nMax, lambdaU, reason: scan.reason, capped: scan.capped, curve, path,
+    M1, M1n, w1, M1max, M1nMax, lambdaU, reason: scan.reason, capped: scan.capped, curve, path, scanStats: { ...scan.stats, steps: scan.states.length },
     at1, atU, M2n, M2max, MRd, simp, tabN, tabRd, nm: axc.nm, props,
     amplification: M2max !== null && M1max > 1e-9 ? M2max / M1max : null,
     etaU: lambdaU > 0 ? 1 / lambdaU : Infinity,
@@ -431,7 +508,7 @@ export function analyzeLoadCase(ctx, lc, index = 0) {
   for (const A of [Y, Z]) {
     const axl = A.ax === 'y' ? 'Biegung um y' : 'Biegung um z';
     checks.push({
-      key: `lu${A.ax}`, label: `Traglast ${axl} (allgemeines Verfahren)`, ref: `${ref}: λu ≥ 1`,
+      key: `lu${A.ax}`, deriv: `allg-${A.ax}`, label: `Traglast ${axl} (allgemeines Verfahren)`, ref: `${ref}: λu ≥ 1`,
       Ed: 1, Rd: A.lambdaU, unit: '', digits: 2, eta: A.etaU,
       detail: A.capped ? 'λu ≥ 20 (Suche begrenzt)' : A.reason === 'section' ? 'Versagen durch Erreichen einer Grenzdehnung im Querschnitt' : A.reason === 'axial' ? 'Normalkraft übersteigt den Querschnittswiderstand' : 'Stabilitätsversagen (kein stabiles Gleichgewicht mehr)',
     });
@@ -439,26 +516,26 @@ export function analyzeLoadCase(ctx, lc, index = 0) {
   for (const A of [Y, Z]) {
     const axl = A.ax === 'y' ? 'M_y' : 'M_z';
     if (A.M2max === null) {
-      checks.push({ key: `sec${A.ax}`, label: `Querschnitt ${axl},Ed,II ≤ ${axl},Rd`, ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: undefined, Rd: A.MRd, unit: 'kNm', eta: A.etaSec, detail: 'Kein Gleichgewicht unter Bemessungslast (Ausnutzung als 1/λu angegeben)' });
+      checks.push({ key: `sec${A.ax}`, deriv: `qs-${A.ax}`, label: `Querschnitt ${axl},Ed,II ≤ ${axl},Rd`, ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: undefined, Rd: A.MRd, unit: 'kNm', eta: A.etaSec, detail: 'Kein Gleichgewicht unter Bemessungslast (Ausnutzung als 1/λu angegeben)' });
     } else {
-      checks.push({ key: `sec${A.ax}`, label: `Querschnitt ${axl},Ed,II ≤ ${axl},Rd`, ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: A.M2max, Rd: A.MRd, unit: 'kNm', eta: A.etaSec, detail: `bei x = ${A.x[A.at1.iM].toFixed(2)} m, inkl. Imperfektion` });
+      checks.push({ key: `sec${A.ax}`, deriv: `qs-${A.ax}`, label: `Querschnitt ${axl},Ed,II ≤ ${axl},Rd`, ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: A.M2max, Rd: A.MRd, unit: 'kNm', eta: A.etaSec, detail: `bei x = ${A.x[A.at1.iM].toFixed(2)} m, inkl. Imperfektion` });
     }
   }
   {
     checks.push({
-      key: 'biax', label: geo.shape === 'circle' ? 'Resultierendes Moment √(My² + Mz²) ≤ M_Rd' : 'Zweiachsige Biegung (Interaktion My–Mz)', ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7',
+      key: 'biax', deriv: 'zweiachsig', label: geo.shape === 'circle' ? 'Resultierendes Moment √(My² + Mz²) ≤ M_Rd' : 'Zweiachsige Biegung (Interaktion My–Mz)', ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7',
       Ed: Number.isFinite(gov.eta) ? Math.hypot(gov.My, gov.Mz) : undefined, Rd: Number.isFinite(gov.eta) && gov.eta > 0 ? Math.hypot(gov.My, gov.Mz) / gov.eta : undefined,
       unit: 'kNm', eta: gov.eta, detail: gov.missing ? 'Kein Gleichgewicht unter Bemessungslast' : `${gov.label}; massgebend bei x = ${gov.x.toFixed(2)} m`,
     });
   }
   checks.push(N >= 0
-    ? { key: 'N', label: 'Normalkraft N_Ed ≤ N_Rd (Druck)', ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: N, Rd: ctx.NRd, unit: 'kN', digits: 0, eta: etaN }
-    : { key: 'N', label: 'Normalkraft N_Ed ≤ N_Rd (Zug)', ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: -N, Rd: ctx.NtRd, unit: 'kN', digits: 0, eta: etaN });
+    ? { key: 'N', deriv: 'normalkraft', label: 'Normalkraft N_Ed ≤ N_Rd (Druck)', ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: N, Rd: ctx.NRd, unit: 'kN', digits: 0, eta: etaN }
+    : { key: 'N', deriv: 'normalkraft', label: 'Normalkraft N_Ed ≤ N_Rd (Zug)', ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: -N, Rd: ctx.NtRd, unit: 'kN', digits: 0, eta: etaN });
   const eta = Math.max(...checks.map((c) => c.eta));
 
   // vereinfachtes Verfahren (Vergleich)
   const simpChecks = [Y, Z].filter((A) => A.ax === 'y' || p.biaxial || geo.shape === 'rect').map((A) => ({
-    key: `simp${A.ax}`, label: `${p.norm === 'EC' ? 'Nennkrümmung' : 'Modellstütze'} – Biegung um ${A.ax}`,
+    key: `simp${A.ax}`, deriv: `vereinf-${A.ax}`, label: `${p.norm === 'EC' ? 'Nennkrümmung' : 'Modellstütze'} – Biegung um ${A.ax}`,
     ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.8' : 'SIA 262 4.3.7', Ed: A.simp.MEd, Rd: A.simp.MRd, unit: 'kNm', eta: A.simp.eta,
     detail: `e2 = ${(A.simp.e2 * 1000).toFixed(1)} mm, M2 = ${A.simp.M2.toFixed(1)} kNm`,
   }));
@@ -475,7 +552,7 @@ export function analyzeLoadCase(ctx, lc, index = 0) {
     }
     const MEdR = Math.hypot(gp[0], gp[1]);
     simpChecks.push({
-      key: 'simpbiax', label: geo.shape === 'circle' ? 'Resultierendes Moment (vereinfachtes Verfahren)' : 'Interaktion My–Mz (vereinfachtes Verfahren)',
+      key: 'simpbiax', deriv: 'zweiachsig', label: geo.shape === 'circle' ? 'Resultierendes Moment (vereinfachtes Verfahren)' : 'Interaktion My–Mz (vereinfachtes Verfahren)',
       ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7', Ed: MEdR, Rd: e > 0 ? MEdR / e : undefined, unit: 'kNm', eta: e,
       detail: p.norm === 'EC' ? `Formel (5.39) mit a = ${a.toFixed(2)}: ${e539.toFixed(2)} ≤ 1` : 'Imperfektion jeweils nur in einer Richtung',
     });

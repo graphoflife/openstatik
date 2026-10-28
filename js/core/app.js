@@ -21,6 +21,16 @@
 import { h, clear, button, icon, dropdown, segmented, tabs, textField, toast, modal, downloadText, pickFile, clone, checkField, rangeField, selectField } from './ui.js';
 import { SvgView } from './svgview.js';
 import { openReport } from './report.js';
+import { createEditor } from './editor.js';
+import { renderDerivation, derivationReport } from './formula.js';
+
+/**
+ * Fehler für unvollständige Eingaben (z.B. leeres Projekt). Wird nicht als Fehler, sondern als
+ * freundlicher Hinweis angezeigt: throw new IncompleteInput('Zeichnen Sie zuerst …').
+ */
+export class IncompleteInput extends Error {
+  constructor(msg, hint) { super(msg); this.incomplete = true; this.hint = hint; }
+}
 import { fmt } from './format.js';
 
 const LOGO = '<svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="var(--accent)"/><path d="M5 17.5h14M5 17.5L12 6.5l7 11M12 6.5v11M8.5 12h7" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -84,6 +94,7 @@ export function createApp(def) {
   const statusMsg = h('span', { class: 'status-msg' }, 'Bereit');
   const statusRight = h('span', { class: 'muted' });
   const cursor = h('span', { class: 'cursor' });
+  const statusHint = h('span', { class: 'status-hint' });
   const undoBtn = button('', { icon: 'undo', ghost: true, title: 'Rückgängig (Ctrl+Z)', onClick: () => undo() });
   const redoBtn = button('', { icon: 'redo', ghost: true, title: 'Wiederholen (Ctrl+Y)', onClick: () => redo() });
   const computeBtn = def.autoCompute ? null : button('Berechnen', { icon: 'play', primary: true, title: 'Berechnen (Ctrl+Enter)', onClick: () => app.compute() });
@@ -121,7 +132,7 @@ export function createApp(def) {
   const split1 = h('div', { class: 'splitter', title: 'Breite anpassen' });
   const split2 = h('div', { class: 'splitter', title: 'Breite anpassen' });
   const workspace = h('main', { class: 'workspace' }, inputPanel, split1, viewport, split2, resultPanel);
-  const statusbar = h('footer', { class: 'statusbar' }, statusMsg, statusRight, cursor);
+  const statusbar = h('footer', { class: 'statusbar' }, statusMsg, statusHint, statusRight, cursor);
   document.body.append(topbar, workspace, statusbar);
 
   // Panelbreiten
@@ -158,17 +169,31 @@ export function createApp(def) {
   dragSplit(split2, 'right');
 
   app.view = new SvgView(canvas, {
-    onCursor: (x, y) => { cursor.textContent = `x = ${fmt(x, 3)}  y = ${fmt(y, 3)}`; },
+    onCursor: (x, y) => {
+      const [ax, ay] = def.editor?.axes || ['x', 'y'];
+      cursor.textContent = `${ax} = ${fmt(x, def.editor?.digits ?? 3)}  ${ay} = ${fmt(y, def.editor?.digits ?? 3)}${def.editor?.unit ? ` ${def.editor.unit}` : ''}`;
+    },
     onClick: (x, y, ev) => def.onViewClick?.(x, y, app, ev),
     onHover: def.onViewHover ? (x, y, ev) => def.onViewHover(x, y, app, ev) : undefined,
   });
 
   // ---------------------------------------------------------------- Status
-  app.status = (msg, kind = '') => {
+  let lastStatusAt = 0;
+  app.status = (msg, kind = '', opts = {}) => {
     statusMsg.textContent = msg;
     statusMsg.className = `status-msg ${kind}`;
+    if (!opts.auto) lastStatusAt = performance.now();
   };
   app.setStatusRight = (text) => { statusRight.textContent = text || ''; };
+  app.setHint = (text) => { statusHint.textContent = text || ''; statusHint.title = text || ''; };
+
+  // ---------------------------------------------------------------- Editor
+  if (def.editor) {
+    createEditor(app, def.editor);
+    viewport.insertBefore(app.editor.toolbar, canvas);
+    canvas.append(app.editor.panel);
+    viewport.classList.add('has-editor');
+  }
 
   // ---------------------------------------------------------------- Projekt
   function withMeta(p) {
@@ -201,7 +226,8 @@ export function createApp(def) {
     app.error = null;
     autosave();
     clearTimeout(undoTimer);
-    undoTimer = setTimeout(pushUndo, 250);
+    if (opts.undoNow) pushUndo(); // eigener Rückgängig-Schritt (z.B. grafische Bearbeitung)
+    else undoTimer = setTimeout(pushUndo, 250);
     if (opts.inputs) renderInputs();
     if (def.autoCompute) {
       clearTimeout(computeTimer);
@@ -297,6 +323,7 @@ export function createApp(def) {
       inputPanel.append(card);
     }
     inputPanel.append(inputTabs.el);
+    app.editor?.refreshPanel(true, true);
   }
   app.renderInputs = renderInputs;
   app.selectTab = (id) => inputTabs?.select(id);
@@ -366,11 +393,13 @@ export function createApp(def) {
       viewEmpty.classList.remove('hidden');
     }
     v.finish();
+    app.editor?.afterRender();
   }
 
   function renderView() {
     renderToolbar();
     drawView();
+    app.editor?.onModeChange();
   }
   app.renderView = renderView;
   app.redraw = drawView;
@@ -385,10 +414,21 @@ export function createApp(def) {
   }
 
   // ---------------------------------------------------------------- Ergebnisse
+  app.resultTab = 'results';
   function renderResults() {
     clear(resultPanel);
+    const hasDeriv = !!def.derivation && !!app.results && !app.error;
+    if (hasDeriv) {
+      resultPanel.append(h('div', { class: 'result-tabs' }, segmented([
+        { id: 'results', label: 'Ergebnisse', title: 'Kennzahlen und Nachweise' },
+        { id: 'derivation', label: 'Herleitung', title: 'Rechenweg mit Formeln, eingesetzten Werten und Normbezügen' },
+      ], app.resultTab, (id) => { app.resultTab = id; renderResults(); })));
+    }
     if (app.error) {
-      resultPanel.append(h('div', { class: 'panel-body' }, h('div', { class: 'note fail' }, h('b', {}, 'Berechnung nicht möglich'), h('div', {}, app.error))));
+      const box = app.errorIncomplete
+        ? h('div', { class: 'empty-state', style: { marginTop: '8px' } }, h('b', {}, 'Noch nicht vollständig'), h('div', {}, app.error), app.errorHint ? h('div', { class: 'muted small', style: { marginTop: '6px' } }, app.errorHint) : null)
+        : h('div', { class: 'note fail' }, h('b', {}, 'Berechnung nicht möglich'), h('div', {}, app.error));
+      resultPanel.append(h('div', { class: 'panel-body' }, box));
       return;
     }
     if (!app.results) {
@@ -404,12 +444,30 @@ export function createApp(def) {
     const body = h('div', { class: 'panel-body' });
     resultPanel.append(body);
     try {
-      def.renderResults(body, app);
+      if (hasDeriv && app.resultTab === 'derivation') {
+        renderDerivation(body, def.derivation(app), app);
+        if (app.derivTarget) {
+          const t = body.querySelector(`[data-deriv="${CSS.escape(app.derivTarget)}"]`);
+          app.derivTarget = null;
+          if (t) { t.open = true; t.scrollIntoView({ block: 'start' }); t.classList.add('flash'); }
+        }
+      } else {
+        def.renderResults(body, app);
+      }
     } catch (e) {
       console.error(e);
-      body.append(h('div', { class: 'note fail' }, `Ergebnisdarstellung fehlgeschlagen: ${e.message}`));
+      body.append(h('div', { class: 'note fail' }, `Darstellung fehlgeschlagen: ${e.message}`));
     }
   }
+  /** Öffnet die Herleitung (optional an einem Abschnitt mit data-deriv=id). */
+  app.showDerivation = (id) => {
+    if (!def.derivation) return;
+    if (workspace.classList.contains('no-results')) toggleResults();
+    app.resultTab = 'derivation';
+    app.derivTarget = id || null;
+    renderResults();
+  };
+  document.addEventListener('os-derivation', (e) => app.showDerivation(e.detail));
   app.renderResults = renderResults;
 
   function toggleResults() {
@@ -426,12 +484,15 @@ export function createApp(def) {
       app.stale = false;
       app.error = null;
       const dt = performance.now() - t0;
-      app.status(`Berechnung abgeschlossen (${dt < 1000 ? `${Math.round(dt)} ms` : `${fmt(dt / 1000, 1)} s`})`, 'ok');
+      // eine eben gesetzte Meldung (z.B. «Stab 3 erstellt») nicht sofort überschreiben
+      if (performance.now() - lastStatusAt > 2500) app.status(`Berechnung abgeschlossen (${dt < 1000 ? `${Math.round(dt)} ms` : `${fmt(dt / 1000, 1)} s`})`, 'ok', { auto: true });
     } catch (e) {
-      console.error(e);
       app.results = null;
       app.error = e.message || String(e);
-      app.status(`Fehler: ${app.error}`, 'error');
+      app.errorIncomplete = !!e.incomplete;
+      app.errorHint = e.hint || null;
+      if (e.incomplete) { if (performance.now() - lastStatusAt > 2500) app.status(app.error, 'warn', { auto: true }); }
+      else { console.error(e); app.status(`Fehler: ${app.error}`, 'error'); }
     }
     renderView();
     renderResults();
@@ -444,7 +505,9 @@ export function createApp(def) {
     }
     if (!app.results) { toast('Für den Bericht wird eine erfolgreiche Berechnung benötigt.', 'warn'); return; }
     try {
-      openReport({ title: def.title, subtitle: def.subtitle, project: app.project.meta }, def.report(app));
+      const sections = def.report(app);
+      if (def.derivation && def.reportDerivation !== false) sections.push(derivationReport(def.derivation(app)));
+      openReport({ title: def.title, subtitle: def.subtitle, project: app.project.meta }, sections);
     } catch (e) {
       console.error(e);
       toast(`Bericht konnte nicht erstellt werden: ${e.message}`, 'error');
@@ -496,13 +559,13 @@ export function createApp(def) {
   if (saved) { try { initial = JSON.parse(saved); } catch { initial = null; } }
   if (exParam >= 1 && def.examples?.[exParam - 1]) {
     loadExample(def.examples[exParam - 1]);
-  } else if (initial) {
+  } else if (initial && !params.has('neu')) {
     app.setProject(initial);
-    app.status('Letzter Arbeitsstand wiederhergestellt');
-  } else if (def.examples?.length) {
-    loadExample(def.examples[0]);
+    app.status('Letzter Arbeitsstand wiederhergestellt – «Neu» beginnt ein leeres Projekt');
   } else {
+    // Standard: leeres Projekt; Beispiele bleiben oben unter «Beispiele» abrufbar
     app.setProject(def.defaultProject());
+    app.status(def.examples?.length ? 'Leeres Projekt – Beispiele finden Sie oben unter «Beispiele»' : 'Leeres Projekt');
   }
   const viewParam = params.get('ansicht') || params.get('view');
   if (viewParam) app.setViewMode(viewParam);

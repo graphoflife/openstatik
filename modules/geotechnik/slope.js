@@ -313,3 +313,27 @@ export function slopeAnalysis(soil, sl, norm) {
     ms: k.ms + d.ms, circles: k.count + d.count,
   };
 }
+
+/**
+ * Iterationsverlauf nach Bishop für gegebene Lamellen (Startwert z.B. Fellenius), für die Herleitung.
+ * Rückgabe {hist: [F_0, F_1, …], drive: Σ(W+Q)·sin α, res: Σ T (letzte Iteration)}
+ */
+export function bishopHistory(S, F0) {
+  let drive = 0;
+  for (const s of S) drive += (s.W + s.Q) * Math.sin(s.alpha);
+  const hist = [F0];
+  let F = Math.max(0.2, F0), res = 0;
+  for (let it = 0; it < 60; it++) {
+    res = 0;
+    for (const s of S) {
+      let m = Math.cos(s.alpha) + Math.sin(s.alpha) * s.tanPhi / F;
+      if (m < 0.2) m = 0.2;
+      res += (s.c * s.b + Math.max(0, s.W + s.Q - s.u * s.b) * s.tanPhi) / m;
+    }
+    const Fn = res / drive;
+    hist.push(Fn);
+    if (Math.abs(Fn - F) < 1e-5 * Math.max(1, Fn)) break;
+    F = Fn;
+  }
+  return { hist, drive, res };
+}

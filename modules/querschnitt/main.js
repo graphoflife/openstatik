@@ -1,24 +1,27 @@
 // Querschnitt – Querschnittsanalyse Stahlbeton (Oberfläche)
-import { createApp } from '../../js/core/app.js';
+import { createApp, IncompleteInput } from '../../js/core/app.js';
 import { h, group, numField, selectField, checkField, textField, dataTable, segmented, button, note, emptyState, toast, selectInput, badge } from '../../js/core/ui.js';
 import { CONCRETE_CLASSES, REBAR_GRADES, NORMS } from '../../js/core/materials.js';
 import { fmt } from '../../js/core/format.js';
 import {
-  SHAPE_TYPES, SHAPE_PARAMS, defaultShapes, templatePolygons, templateToPoly, projectGeometry, bounds, rowsToPts, ptsToRows,
+  SHAPE_TYPES, SHAPE_PARAMS, defaultShapes, templatePolygons, projectGeometry, bounds, rowsToPts, ptsToRows,
   barsLayers, barsRow, barsCircle, barsPerimeter, barsCircular, circlePts, barAreaMm2, polygonProps,
 } from './shapes.js';
-import { analyze, createCache, materialSet, grossProps, SLS_REQUIREMENTS, REF_POINTS } from './calc.js';
-import { renderView, hitTest, caseIndex, STATE_OPTIONS, signFigure, shapeIcon } from './view.js';
+import { analyze, createCache, materialSet, grossProps, missingInput, SLS_REQUIREMENTS, REF_POINTS } from './calc.js';
+import { renderView, caseIndex, STATE_OPTIONS, signFigure, shapeIcon } from './view.js';
 import { renderResults, buildReport } from './results.js';
 import { baseProject, defaultProject, EXAMPLES } from './examples.js';
+import { createEditorSpec, setShape, centerSection } from './editing.js';
+import { derivation } from './derivation.js';
 import { INTRO, HELP } from './help.js';
 
 /** Gemeinsamer Zustand der Oberfläche (nicht Teil des Projekts). */
 const ctx = {
   cache: createCache(),
-  ui: { resTab: 'nachweise', nmAxis: 'My', mkDir: 'auto', barGen: 'vorlage', openGen: 'rect' },
-  gen: null,      // Parameter der Bewehrungsgeneratoren
+  ui: { resTab: 'nachweise', nmAxis: 'My', mkDir: 'auto', barGen: 'vorlage', openGen: 'rect', barD: 16, ductD: 100 },
+  gen: null,      // Parameter der Bewehrungsgeneratoren (auch Überdeckung für die Fangpunkte der Grafik)
   openPar: null,  // Parameter des Aussparungsgenerators
+  lastGroup: null, // zuletzt gezeichnete Stabreihe bzw. -kreis (Anzahl im Eigenschaftsfenster änderbar)
   tables: {},
 };
 
@@ -47,31 +50,6 @@ const PARAM_INFO = {
 };
 
 // ------------------------------------------------------------------ Register 1: Querschnitt
-
-function setShape(app, id) {
-  const p = app.project;
-  if (p.shape.type === id) return;
-  if (id === 'poly') {
-    try {
-      const conv = templateToPoly(p.shape);
-      p.shape.poly = conv.poly;
-      p.openings = [...conv.openings.map((o) => ({ ...o, fromTemplate: true })), ...(p.openings || []).filter((o) => !o.fromTemplate)];
-      toast('Die Form wurde in ein Polygon umgewandelt – die Eckpunkte sind jetzt frei bearbeitbar.', 'ok');
-    } catch (e) {
-      toast(`Umwandlung nicht möglich: ${e.message}`, 'warn');
-    }
-  } else if (p.shape.type === 'poly') {
-    // aus einer Vorlage stammende Hohlräume gehören zum Polygon
-    p.openings = (p.openings || []).filter((o) => !o.fromTemplate);
-  }
-  p.shape.type = id;
-  app.selection = null;
-  // Stäbe ausserhalb der neuen Form melden
-  const g = projectGeometry(p);
-  const outside = g.warnings.filter((w) => w.includes('ausserhalb')).length;
-  if (outside) toast(`${outside} Stäbe liegen ausserhalb der neuen Form – Bewehrung im Register «Bewehrung» neu erzeugen.`, 'warn', 5000);
-  app.changed({ inputs: true });
-}
 
 function shapePicker(app) {
   const p = app.project;
@@ -105,7 +83,7 @@ function shapePicker(app) {
 
 function polyTable(app, onEdit) {
   const p = app.project;
-  if (!Array.isArray(p.shape.poly)) p.shape.poly = defaultShapes().poly;
+  if (!Array.isArray(p.shape.poly)) p.shape.poly = [];
   const rows = p.shape.poly;
   const tbl = dataTable([
     { key: 'y', label: 'y', unit: 'mm', info: 'Horizontale Koordinate des Eckpunkts (nach rechts positiv).' },
@@ -118,26 +96,12 @@ function polyTable(app, onEdit) {
     },
     minRows: 3, canMove: true, maxHeight: '260px',
     rowLabel: (i) => i + 1,
-    onSelect: (i) => { app.selection = { kind: 'vertex', index: i }; app.redraw(); },
+    onSelect: (i) => app.editor?.select([`v:${i}`]),
     hint: 'Eckpunkte der Reihe nach entlang des Randes · Excel-Einfügen (y, z)',
-    extraButtons: [button('Schwerpunkt → (0/0)', { small: true, title: 'Polygon, Aussparungen und Bewehrung so verschieben, dass der Schwerpunkt im Ursprung liegt', onClick: () => centerPolygon(app) })],
+    extraButtons: rows.length >= 3 ? [button('Schwerpunkt → (0/0)', { small: true, title: 'Polygon, Aussparungen und Bewehrung so verschieben, dass der Schwerpunkt im Ursprung liegt', onClick: () => centerSection(app) })] : [],
   });
   ctx.tables.poly = tbl;
   return tbl;
-}
-
-function centerPolygon(app) {
-  const p = app.project;
-  const g = projectGeometry(p);
-  if (g.errors.length) { toast(g.errors[0], 'warn'); return; }
-  const gp = grossProps(g.outer, g.holes);
-  const dy = Math.round(gp.cy * 10) / 10, dz = Math.round(gp.cz * 10) / 10;
-  const mv = (r) => { r.y = Math.round((r.y - dy) * 10) / 10; r.z = Math.round((r.z - dz) * 10) / 10; };
-  p.shape.poly.forEach(mv);
-  (p.openings || []).forEach((o) => o.pts.forEach(mv));
-  (p.bars || []).forEach(mv);
-  app.changed({ inputs: true });
-  toast(`Verschoben um Δy = ${fmt(-dy, 1)} mm, Δz = ${fmt(-dz, 1)} mm.`, 'ok');
 }
 
 function openingsGroup(app) {
@@ -218,6 +182,7 @@ function renderSection(el, app) {
   /** Fläche und Schwerpunkt bzw. verständliche Fehlermeldung, ohne den Eingabebereich neu aufzubauen. */
   const refreshArea = () => {
     const g = projectGeometry(p);
+    if (t === 'poly' && (p.shape.poly || []).length < 3) { areaLine.replaceChildren(); return; }
     if (g.errors.length) { areaLine.replaceChildren(note(g.errors[0], 'fail')); return; }
     try {
       const gp = grossProps(g.outer, g.holes);
@@ -226,7 +191,10 @@ function renderSection(el, app) {
   };
   el.append(group('Form', [shapePicker(app)], { info: 'Vorlage wählen und Abmessungen eingeben. «Polygon frei» übernimmt die aktuelle Form als bearbeitbare Eckpunkte.' }));
   if (t === 'poly') {
-    el.append(group('Eckpunkte', [polyTable(app, () => refreshArea())], { info: 'Aussenrand des Querschnitts als Polygon. Reihenfolge im oder gegen den Uhrzeigersinn; der Rand darf sich nicht selbst schneiden. Koordinaten in mm, y nach rechts, z nach oben.' }));
+    const empty = (p.shape.poly || []).length < 3
+      ? emptyState('Noch kein Betonumriss', 'In der Grafik zeichnen: «Rechteck» (Q) oder «Polygon» (U) – oder oben eine Vorlage wählen bzw. Eckpunkte hier erfassen (Excel-Einfügen y, z).')
+      : null;
+    el.append(group('Eckpunkte', [empty, polyTable(app, () => refreshArea())], { info: 'Aussenrand des Querschnitts als Polygon. Reihenfolge im oder gegen den Uhrzeigersinn; der Rand darf sich nicht selbst schneiden. Koordinaten in mm, y nach rechts, z nach oben.' }));
   } else {
     p.shape[t] ||= defaultShapes()[t];
     el.append(group('Abmessungen', SHAPE_PARAMS[t].map(([k, label]) => numField(label, p.shape[t], k, { unit: 'mm', min: 1, onChange: () => { app.changed(); refreshArea(); }, info: PARAM_INFO[t]?.[k] })),
@@ -245,7 +213,7 @@ function initGen(app) {
   const g = projectGeometry(app.project);
   const bb = g.outer.length ? bounds(g.outer) : { ymin: -150, ymax: 150, zmin: 0, zmax: 500 };
   const key = [bb.ymin, bb.ymax, bb.zmin, bb.zmax].map((x) => Math.round(x)).join('|');
-  ctx.gen ||= { nBot: 3, dBot: 16, nTop: 2, dTop: 12, c: 30, dw: 8, n: 8, d: 16, nInner: 0, dInner: 12, nRow: 3, dRow: 16, nCirc: 8, dCirc: 16, phi0: 90, dPer: 14, sPer: 200 };
+  ctx.gen = { nBot: 3, dBot: 16, nTop: 2, dTop: 12, c: 30, dw: 8, n: 8, d: 16, nInner: 0, dInner: 12, nRow: 3, dRow: 16, nCirc: 8, dCirc: 16, phi0: 90, dPer: 14, sPer: 200, ...(ctx.gen || {}) };
   if (ctx.gen.key === key) return;
   const a = 50;
   Object.assign(ctx.gen, {
@@ -350,7 +318,7 @@ function renderRebar(el, app) {
     summary.replaceChildren(badge(`${p.bars.length} Stäbe`, 'info'), badge(`As = ${fmt(As, 0)} mm²`, 'info'), Number.isFinite(Ac) ? badge(`ρ = ${fmt(As / Ac * 100, 2)} %`, 'info') : '');
   };
   refreshSummary();
-  const empty = p.bars.length ? null : emptyState('Noch keine Bewehrung', 'Stäbe in der Tabelle erfassen («+ Zeile», Excel-Einfügen) oder unten mit «Bewehrung erzeugen» platzieren.');
+  const empty = p.bars.length ? null : emptyState('Noch keine Bewehrung', 'In der Grafik setzen: «Stab» (B), «Stabreihe» (L) oder «Stabkreis» (K) – oder hier in der Tabelle erfassen bzw. unten mit «Bewehrung erzeugen» platzieren.');
   const tbl = dataTable([
     { key: 'y', label: 'y', unit: 'mm', info: 'Horizontale Lage der Stabachse.' },
     { key: 'z', label: 'z', unit: 'mm', info: 'Vertikale Lage der Stabachse.' },
@@ -360,7 +328,7 @@ function renderRebar(el, app) {
     onChange: () => { refreshSummary(); if (p.bars.length) empty?.remove(); app.changed(); },
     newRow: (rows) => { const l = rows[rows.length - 1]; return l ? { y: l.y + 50, z: l.z, d: l.d } : { y: 0, z: 50, d: 16 }; },
     maxHeight: '300px',
-    onSelect: (i) => { app.selection = { kind: 'bar', index: i }; app.redraw(); },
+    onSelect: (i) => app.editor?.select([`b:${i}`]),
     hint: 'Excel-Einfügen (y, z, Ø)',
     extraButtons: p.bars.length ? [button('Alle löschen', { icon: 'trash', small: true, onClick: () => { p.bars.length = 0; app.selection = null; app.changed({ inputs: true }); } })] : [],
   });
@@ -391,7 +359,7 @@ function renderLoads(el, app) {
     { key: 'Mz', label: 'Mz', unit: 'kNm', info: 'Biegemoment um die z-Achse: positiv → Zug rechts (y > 0).' },
   ];
   if (shear) cols.push({ key: 'V', label: 'Vd', unit: 'kN', info: 'Bemessungsquerkraft (Betrag) für den Querkraftnachweis; nur bei GZT-Lastfällen.' });
-  const empty = p.loads.length ? null : emptyState('Noch keine Lastfälle', 'Mit «+ Zeile» einen Lastfall anlegen und N, My, Mz eintragen.');
+  const empty = p.loads.length ? null : emptyState('Noch keine Lastfälle', 'Mit «+ Zeile» einen Lastfall anlegen und N, My, Mz eintragen. GZT-Lastfälle werden auf Tragsicherheit, GZG-Lastfälle auf Spannungen nachgewiesen.');
   const tbl = dataTable(cols, p.loads, {
     onChange: () => { if (p.loads.length) empty?.remove(); app.changed(); },
     newRow: (rows) => ({ name: `LF ${rows.length + 1}`, type: 'GZT', N: 0, My: 0, Mz: 0, V: 0 }),
@@ -486,6 +454,8 @@ function migrate(p) {
   }
   if (!Array.isArray(p.shape.poly)) p.shape.poly = b.shape.poly;
   p.openings = Array.isArray(p.openings) ? p.openings : [];
+  // Hohlräume einer Vorlage sind nur bei «Polygon frei» eigene Aussparungen
+  if (p.shape.type !== 'poly') p.openings = p.openings.filter((o) => !o.fromTemplate);
   p.bars = Array.isArray(p.bars) ? p.bars : [];
   p.loads = Array.isArray(p.loads) ? p.loads : [];
   p.material = { ...b.material, ...(p.material || {}) };
@@ -494,6 +464,7 @@ function migrate(p) {
   p.shear = { ...b.shear, ...(p.shear || {}) };
   ctx.gen = null;
   ctx.openPar = null;
+  ctx.lastGroup = null;
   return p;
 }
 
@@ -542,26 +513,13 @@ createApp({
     return [h('span', { class: 'sep' }), h('span', { class: 'small muted' }, 'Lastfall'), sel];
   },
   renderView: (v, app, mode) => renderView(v, app, mode),
-  onViewClick(x, y, app) {
-    const hit = hitTest(app, x, y);
-    if (!hit) {
-      if (app.selection) { app.selection = null; app.redraw(); }
-      return;
-    }
-    app.selection = hit;
-    const tabId = hit.kind === 'bar' ? 'bewehrung' : 'querschnitt';
-    if (app.activeTab !== tabId) app.selectTab(tabId);
-    const tbl = hit.kind === 'bar' ? ctx.tables.bars : ctx.tables.poly;
-    if (tbl?.isConnected) {
-      tbl.select(hit.index);
-      tbl.querySelectorAll('tbody tr')[hit.index]?.scrollIntoView({ block: 'nearest' });
-    }
-    app.redraw();
-    const p = app.project;
-    if (hit.kind === 'bar') { const b = p.bars[hit.index]; app.status(`Stab ${hit.index + 1}: Ø${b.d} mm bei y = ${fmt(b.y, 0)} mm, z = ${fmt(b.z, 0)} mm`); }
-    else { const r = p.shape.poly[hit.index]; app.status(`Eckpunkt ${hit.index + 1}: y = ${fmt(r.y, 0)} mm, z = ${fmt(r.z, 0)} mm`); }
+  editor: createEditorSpec(ctx),
+  derivation: (app) => derivation(app),
+  compute: (project) => {
+    const miss = missingInput(project);
+    if (miss) throw new IncompleteInput(miss.msg, miss.hint);
+    return analyze(project, ctx.cache);
   },
-  compute: (project) => analyze(project, ctx.cache),
   renderResults: (el, app) => renderResults(el, app, ctx),
   report: (app) => buildReport(app, ctx),
 });

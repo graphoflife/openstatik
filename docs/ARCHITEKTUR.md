@@ -117,3 +117,53 @@ erzwingt Bemessungsfestigkeiten auch für lineare bzw. Sargin-Gesetze.
 * **Oberfläche**: aufgeräumt, wenige klare Farben, Ergebnisse mit Kennzahlen-Kacheln, Nachweistabellen mit
   Ausnutzungsbalken, Diagramme mit Fadenkreuz. Keine festen Farbwerte im Modulcode.
 * **Haftung**: Ergebnisse ohne Gewähr; jeder Bericht enthält den entsprechenden Hinweis.
+
+## Grafischer Editor (`js/core/editor.js`)
+
+Die Grafik in der Mitte ist der Hauptarbeitsbereich. Jedes Modul beschreibt über `createApp({ editor })`,
+was gezeichnet und angeklickt werden kann. Der Editor kennt nur **Punkte**, **Strecken** und **Flächen** und
+stellt für alle Module dieselbe Bedienung bereit:
+
+* Werkzeugleiste über der Grafik (Auswahl + Werkzeuge des Moduls + Verschieben/Kopieren/Löschen),
+  schwebendes Eigenschaftsfenster (verschiebbar, einklappbar), Fangraster unter dem Modell.
+* Auswählen: Klick, Shift+Klick, Rahmen ziehen, Ctrl+A. Ziehen verschiebt Punkte und Elemente direkt.
+* Punkteingabe beim Zeichnen und Verschieben: Fang an Punkten □, Mitten △, Schnittpunkten ×, Lot ⊥, Linien ◇,
+  Raster +; **X/Y** (Achsnamen des Moduls) binden an eine Achse durch den Bezugspunkt und projizieren angehoverte
+  Punkte darauf; **M** Mitte zweier Punkte; **R** Bezugspunkt; **P/S** parallel/senkrecht zu einer Linie;
+  Shift orthogonal; Alt ohne Fang; Ziffern tippen (relativ/absolut/polar); Esc schrittweise zurück.
+  Alle Hilfen sind in beliebiger Reihenfolge kombinierbar und auch als Knöpfe im Fenster vorhanden.
+* Ansicht verschieben: rechte oder mittlere Maustaste bzw. Leertaste + Ziehen; Mausrad zoomt.
+
+```js
+editor: {
+  axes: ['x', 'y'], unit: 'm', digits: 3, grid: [0.05, 0.1, 0.25, 0.5, 1], gridDefault: 0.25,
+  modes: ['sys'],                // Darstellungen, in denen bearbeitet wird
+  canCopy: true,
+  tools: [{ id, label, key, form: 'point'|'line'|'chain'|'polyline'|'polygon'|'rect'|'pick', icon, title, hint, pick: ['point','segment','region'], prompts }],
+  geometry(app) → { points: [{id, p:[x,y], label, movable}], segments: [{id, a, b, label}], regions: [{id, ring, label}], snaps: [{p}] },
+  create(app, toolId, pts, { snaps }) → [neue Auswahl-IDs],
+  pick(app, toolId, hit) → [IDs],            // hit = {type, id, item, t (Lage auf Strecke), q}
+  move(app, ids, [dx, dy], { copy }) → [IDs],
+  remove(app, ids),
+  inspect(app, ids) → { title, content },    // Eigenschaftsfenster (Felder ändern app.project, dann app.changed())
+  idleHint(app) → Text oder Node,
+}
+```
+
+Die IDs wählt das Modul frei (z.B. `n:3`, `m:2`, `poly:0:4`). `app.editor.select(ids)`, `app.editor.sel`,
+`app.editor.refreshPanel(true)` stehen zur Verfügung. Vorlage: `modules/stabwerk/editing.js`.
+
+## Herleitung (`js/core/formula.js`)
+
+`createApp({ derivation(app) → [Abschnitte] })` erzeugt im Ergebnisbereich die Seite **Herleitung** und hängt
+sie an den Bericht an. Abschnitt: `{ id, title, ref, intro, steps: [{ label, f, v, r, ref, note }], result: { eta, text } }`
+– `f` allgemeine Formel, `v` eingesetzte Werte, `r` Ergebnis. Formeln: `M_Rd`, `f_{cd}`, `h^3`, `sqrt(`, `*`, `<=`.
+In `checksTable` verlinkt `deriv: 'id'` einen Nachweis mit seinem Abschnitt («Herleitung ›»).
+Vorlage: `modules/stabwerk/derivation.js`.
+
+## Leeres Projekt und unvollständige Eingaben
+
+Jedes Modul startet mit `defaultProject()` – einem leeren bzw. neutralen Projekt ohne Lasten; Beispiele bleiben
+unter «Beispiele» und per `?beispiel=N` erreichbar, `?neu` erzwingt ein leeres Projekt. Fehlt noch etwas für die
+Berechnung, wirft `compute` `new IncompleteInput(meldung, hinweis)` (aus `app.js`); der Rahmen zeigt dann einen
+freundlichen Hinweis statt einer Fehlermeldung.
