@@ -1,0 +1,11 @@
+{
+  "name": "openstatik",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Statiksoftware im Browser: Platten-FE, Stabwerk, Querschnitt, Mauerwerk, Stahlbau, Stützen, Geotechnik",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/",
+    "serve": "python3 -m http.server 8080"
+  }
+}

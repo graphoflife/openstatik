@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenStatik · Baustatik im Browser</title>
+  <meta name="description" content="Kostenlose Statik-Software im Browser: Platten-FE, Stabwerke, Stahlbetonquerschnitte, Mauerwerk, Stahlbau, Stützen und Geotechnik nach SIA und Eurocode.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    .hero { padding: 44px 0 18px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 28px; align-items: center; }
+    .hero h1 { font-size: 34px; line-height: 1.15; letter-spacing: -0.6px; }
+    .hero h1 span { background: linear-gradient(90deg, var(--accent), var(--c-series-6)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero p { font-size: 15.5px; }
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 99px; background: var(--surface); border: 1px solid var(--border); font-size: 12px; color: var(--text-2); box-shadow: var(--shadow-sm); }
+    .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--tint); display: inline-block; }
+    .hero-art { border-radius: 16px; background: linear-gradient(140deg, var(--accent-soft), var(--accent-2)); border: 1px solid var(--border); padding: 14px; box-shadow: var(--shadow); }
+    .hero-art svg { display: block; width: 100%; height: auto; }
+    .section-title { font-size: 12px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; color: var(--text-2); margin: 18px 0 2px; }
+    .module-card { position: relative; overflow: hidden; }
+    .module-card::after { content: ""; position: absolute; inset: auto -40px -60px auto; width: 160px; height: 160px; border-radius: 50%; background: var(--tint); opacity: .10; transition: transform .35s ease, opacity .35s ease; }
+    .module-card:hover::after { transform: scale(1.25); opacity: .16; }
+    .module-card .ico { background: color-mix(in srgb, var(--tint) 18%, var(--surface)); color: color-mix(in srgb, var(--tint) 75%, var(--text)); }
+    .module-card:hover { border-color: color-mix(in srgb, var(--tint) 60%, var(--border)); }
+    .module-card .go { position: absolute; right: 14px; top: 14px; color: var(--text-3); transition: transform .2s ease, color .2s ease; }
+    .module-card:hover .go { transform: translateX(3px); color: var(--tint); }
+    .module-card h2 { display: flex; gap: 8px; align-items: baseline; }
+    .module-card h2 small { font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: .3px; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 8px 0 34px; }
+    .step { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow-sm); }
+    .step b { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .step b span { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+    .step p { margin: 0; color: var(--text-2); font-size: 12.5px; }
+    @media (min-width: 1000px) { .module-card.wide { grid-column: span 2; } .module-card.wide ul { columns: 2; column-gap: 24px; } }
+    @media (max-width: 820px) { .hero { grid-template-columns: 1fr; } .hero-art { order: -1; } }
+  </style>
+</head>
+<body class="home">
+  <header class="home-head">
+    <div class="home-head-inner">
+      <a class="brand" href="./">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="var(--accent)"/><path d="M5 17.5h14M5 17.5L12 6.5l7 11M12 6.5v11M8.5 12h7" stroke="var(--on-accent)" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>OpenStatik</span>
+      </a>
+      <span class="spacer"></span>
+      <span id="theme"></span>
+    </div>
+  </header>
+
+  <main class="home-main">
+    <section class="hero">
+      <div>
+        <h1>Baustatik im Browser –<br><span>klar, schnell, kostenlos.</span></h1>
+        <p>Sieben Werkzeuge für den Ingenieuralltag: von der FE-Platte über Rahmen und Stahlbetonquerschnitte bis zur Geotechnik. Ohne Installation, mit sofortiger Berechnung, druckfertigen Berichten und Nachweisen nach SIA und Eurocode.</p>
+        <div class="pills">
+          <span class="pill" style="--tint: var(--c-series-1)"><i></i>SIA 260 – 267 &amp; Eurocode</span>
+          <span class="pill" style="--tint: var(--c-series-3)"><i></i>Live-Berechnung</span>
+          <span class="pill" style="--tint: var(--c-series-4)"><i></i>Bericht als PDF</span>
+          <span class="pill" style="--tint: var(--c-series-5)"><i></i>Daten bleiben im Browser</span>
+          <span class="pill" style="--tint: var(--c-series-6)"><i></i>Hell &amp; Dunkel</span>
+        </div>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <svg viewBox="0 0 360 210">
+          <defs>
+            <linearGradient id="m" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--c-pos)" stop-opacity=".45"/><stop offset="1" stop-color="var(--c-pos)" stop-opacity=".08"/></linearGradient>
+          </defs>
+          <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M60 70 Q180 150 300 70 Z" fill="url(#m)" stroke="var(--c-pos)" stroke-width="2"/>
+            <path d="M60 170 L60 70 L34 70 Z" stroke="var(--c-neg)" stroke-width="1.6" fill="var(--c-neg-fill)"/>
+            <path d="M300 170 L300 70 L326 70 Z" stroke="var(--c-neg)" stroke-width="1.6" fill="var(--c-neg-fill)"/>
+            <path d="M60 170V70h240v100" stroke="var(--c-struct)" stroke-width="5"/>
+            <g stroke="var(--c-load)" stroke-width="1.6">
+              <path d="M60 36h240M60 36v26M100 36v26M140 36v26M180 36v26M220 36v26M260 36v26M300 36v26" />
+              <path d="M56 56l4 7 4-7M96 56l4 7 4-7M136 56l4 7 4-7M176 56l4 7 4-7M216 56l4 7 4-7M256 56l4 7 4-7M296 56l4 7 4-7" fill="var(--c-load)"/>
+            </g>
+            <path d="M48 186h24M288 186h24M60 170l-9 15h18zM300 170l-9 15h18z" stroke="var(--c-support)" stroke-width="1.8" fill="var(--surface)"/>
+          </g>
+          <text x="180" y="138" text-anchor="middle" font-size="13" font-weight="700" fill="var(--c-pos)">M = 178.1 kNm</text>
+          <text x="180" y="28" text-anchor="middle" font-size="12" fill="var(--c-load)">q = 26 kN/m</text>
+        </svg>
+      </div>
+    </section>
+
+    <div class="section-title">Module</div>
+    <section class="module-grid" id="modules"></section>
+
+    <div class="section-title">So arbeiten Sie mit OpenStatik</div>
+    <section class="steps">
+      <div class="step"><b><span>1</span>Beispiel öffnen</b><p>Jedes Modul startet mit einem fertigen Beispiel. Unter «Beispiele» finden Sie weitere typische Fälle.</p></div>
+      <div class="step"><b><span>2</span>Eingaben anpassen</b><p>Nummerierte Register führen durch die Eingabe. Das «?» neben jedem Feld erklärt Bedeutung und übliche Werte.</p></div>
+      <div class="step"><b><span>3</span>Ergebnisse prüfen</b><p>Grafik und Nachweise aktualisieren sich sofort. Ausnutzungsbalken zeigen auf einen Blick, ob alles erfüllt ist.</p></div>
+      <div class="step"><b><span>4</span>Bericht &amp; Speichern</b><p>Mit «Bericht» entsteht ein druckfertiges Dokument (PDF). «Speichern» lädt die Projektdatei herunter.</p></div>
+    </section>
+  </main>
+
+  <footer class="home-foot">
+    <div class="home-foot-inner">
+      <p><b>Hinweis:</b> OpenStatik ist ein unabhängiges Projekt. Alle Ergebnisse sind ohne Gewähr und müssen von einer fachkundigen Person geprüft werden. Projektdaten werden nur lokal im Browser gespeichert.</p>
+    </div>
+  </footer>
+
+  <script type="module">
+    import { applyTheme, themeButton } from './js/core/app.js';
+    import { h } from './js/core/ui.js';
+    applyTheme();
+    document.getElementById('theme').replaceWith(themeButton());
+    const I = {
+      platte: '<path d="M6 30 24 20l18 10-18 10z"/><path d="M12 26.7 30 36.7M18 23.3 36 33.3M12 33.3 30 23.3M18 36.7 36 26.7"/><path d="M15 35v8M33 35v8M24 40v6" stroke-width="2.4"/>',
+      stabwerk: '<path d="M11 41V13h26v28" stroke-width="2.6"/><path d="M7 41h8M33 41h8"/><path d="M11 9h26M15 9v4M21 9v4M27 9v4M33 9v4"/><path d="M11 13c8 14 18 14 26 0" stroke-dasharray="2 2.5"/>',
+      querschnitt: '<rect x="13" y="7" width="22" height="34" rx="2"/><circle cx="18" cy="35" r="1.8" fill="currentColor"/><circle cx="24" cy="35" r="1.8" fill="currentColor"/><circle cx="30" cy="35" r="1.8" fill="currentColor"/><circle cx="18" cy="13" r="1.3" fill="currentColor"/><circle cx="30" cy="13" r="1.3" fill="currentColor"/><path d="M9 22h30" stroke-dasharray="3 2.5"/>',
+      mauerwerk: '<path d="M7 11h34v28H7z"/><path d="M7 18h34M7 25h34M7 32h34M16 11v7M28 11v7M22 18v7M34 18v7M10 18v7M16 25v7M28 25v7M22 32v7M34 32v7M10 32v7"/>',
+      stahlbau: '<path d="M12 9h24M12 39h24" stroke-width="4"/><path d="M24 9v30" stroke-width="2.6"/><path d="M6 9v30M3 9h6M3 39h6" stroke-width="1.2"/>',
+      stuetze: '<path d="M24 12v30" stroke-width="5"/><path d="M24 3v7M21 7l3 3 3-3"/><path d="M24 12c5 9 5 21 0 30" stroke-dasharray="2 2.5"/><path d="M16 43h16"/>',
+      geotechnik: '<path d="M5 37h14V13h5v24h19"/><path d="M24 17h19" stroke-dasharray="3 2"/><path d="M28 37c0-12 6-19 15-20" stroke-width="2.2"/><circle cx="40" cy="6" r="1.4" fill="currentColor"/><path d="M40 6 28 37" stroke-dasharray="1.5 2" stroke-width="1"/>',
+    };
+    const MODULES = [
+      { id: 'platte', wide: true, title: 'Platte', tag: 'FE', tint: 'var(--c-series-1)', sub: 'FE-Berechnung von Decken und Bodenplatten', items: ['Beliebige Grundrisse, Öffnungen, Stützen und Wände', 'Durchbiegung, Momente, Bewehrung (Wood–Armer)', 'Durchstanznachweis SIA 262'] },
+      { id: 'stabwerk', wide: true, title: 'Stabwerk', tag: '2D', tint: 'var(--c-series-4)', sub: 'Rahmen, Durchlaufträger und Fachwerke', items: ['Zeichnen mit der Maus, Gelenke, Federn', 'Lastfälle & Kombinationen nach SIA 260', 'Theorie 2. Ordnung, Knicklängen'] },
+      { id: 'querschnitt', title: 'Querschnitt', tag: 'BETON', tint: 'var(--c-series-2)', sub: 'Beliebige Stahlbetonquerschnitte', items: ['Querschnittswerte, Spannungen, Dehnungen', 'N-M- und My-Mz-Interaktion', 'Momenten-Krümmungs-Beziehung'] },
+      { id: 'mauerwerk', title: 'Mauerwerk', tag: 'SIA 266', tint: 'var(--c-series-5)', sub: 'Unbewehrtes Mauerwerk', items: ['Normalkraft mit Knicken und Exzentrizität', 'Schubwände in Wandebene', 'Teilflächenlasten, Kellerwände'] },
+      { id: 'stahlbau', title: 'Stahlbau', tag: 'SIA 263', tint: 'var(--c-series-6)', sub: 'Stahlstäbe nach SIA 263 / EN 1993', items: ['Profildatenbank IPE, HEA, HEB, Hohlprofile', 'Knicken, Biegedrillknicken, Interaktion', 'Automatischer Profilvorschlag'] },
+      { id: 'stuetze', title: 'Stütze', tag: 'II. ORDNUNG', tint: 'var(--c-series-3)', sub: 'Stahlbetonstützen nichtlinear', items: ['Theorie 2. Ordnung mit M-κ-Beziehung', 'Kriechen, Imperfektion, Modellstütze', 'Rechteck- und Rundstützen'] },
+      { id: 'geotechnik', title: 'Geotechnik', tag: 'SIA 267', tint: 'var(--c-soil)', sub: 'Grundbau nach klassischen Methoden', items: ['Erddruck, Grundbruch, Setzungen', 'Böschungsbruch (Bishop)', 'Winkelstützmauern'] },
+    ];
+    const grid = document.getElementById('modules');
+    const order = ['platte', 'querschnitt', 'mauerwerk', 'stabwerk', 'stahlbau', 'stuetze', 'geotechnik'];
+    for (const m of order.map((id) => MODULES.find((x) => x.id === id))) {
+      const card = h('a', { class: 'module-card' + (m.wide ? ' wide' : ''), href: `modules/${m.id}/`, style: { '--tint': m.tint } });
+      card.style.setProperty('--tint', m.tint);
+      card.innerHTML = `<div class="ico"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[m.id]}</svg></div>
+        <div><h2>${m.title} <small>${m.tag}</small></h2><div class="sub">${m.sub}</div><ul>${m.items.map((x) => `<li>${x}</li>`).join('')}</ul></div>
+        <svg class="go" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`;
+      grid.append(card);
+    }
+  </script>
+</body>
+</html>
