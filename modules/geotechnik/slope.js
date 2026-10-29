@@ -5,7 +5,7 @@
 //  Fellenius: F = Σ [c'·l + (W·cos α − u·l)·tan φ']  /  Σ W·sin α,   l = b / cos α
 //  α = Neigung der Lamellenbasis (positiv, wo die Basis in Bewegungsrichtung fällt).
 // Intern wird die Böschung so gespiegelt, dass sie nach rechts abfällt.
-import { layerAt, rad } from './soil.js';
+import { rad } from './soil.js';
 
 /**
  * Modell aufbauen.
@@ -46,8 +46,11 @@ export function buildSlopeModel(soil, sl) {
   })() : null;
 
   const depthBelow = Number.isFinite(Number(sl.depthBelow)) ? Math.max(0, Number(sl.depthBelow)) : Hs;
+  // Bodenmodell: Zonen in Koordinaten relativ zur Böschungskrone, bei gespiegelter Böschung x → −x
+  const g = soil.ground;
+  const ground = dir === 1 ? g : { ...g, profileAt: (x) => g.profileAt(-x), soilAt: (x, y) => g.soilAt(-x, y) };
   return {
-    dir, tx, surf, yMax, yMin, Hs, water, q, soil,
+    dir, tx, surf, yMax, yMin, Hs, water, q, soil, ground,
     xmin: surf[0][0], xmax: surf[surf.length - 1][0],
     xCrest, xToe, yBot: yMin - depthBelow,
   };
@@ -67,22 +70,17 @@ export function polyY(pts, x) {
 const waterY = (M, x) => (M.water ? polyY(M.water, x) : -Infinity);
 
 /** Gewicht einer Bodensäule je m Breite zwischen yb und ys an der Stelle x (γ über, γ_sat unter Wasser). */
-function columnWeight(M, x, yb, ys, gFac) {
+function columnWeight(M, x, yb, ys, gFac, prof = M.ground.profileAt(x)) {
   if (ys <= yb) return 0;
-  const { layers } = M.soil;
   const hw = waterY(M, x);
-  // Grenzen in Höhenkoten
-  const cuts = [yb, ys];
-  for (const l of layers) { const y = M.yMax - l.z; if (y > yb && y < ys) cuts.push(y); }
-  if (hw > yb && hw < ys) cuts.push(hw);
-  cuts.sort((a, b) => a - b);
   let w = 0;
-  for (let i = 0; i < cuts.length - 1; i++) {
-    const a = cuts[i], b = cuts[i + 1];
-    if (b - a <= 0) continue;
-    const m = (a + b) / 2;
-    const L = layerAt(layers, M.yMax - m);
-    w += (m < hw ? L.gammaSat : L.gamma) * (b - a);
+  for (const iv of prof) {
+    const top = Math.min(ys, M.yMax + iv.yTop), bot = Math.max(yb, M.yMax + iv.yBot);
+    if (top <= bot) continue;
+    const L = M.ground.soils[iv.soil];
+    if (hw >= top) w += L.gammaSat * (top - bot);
+    else if (hw <= bot) w += L.gamma * (top - bot);
+    else w += L.gammaSat * (hw - bot) + L.gamma * (top - hw);
   }
   return w * gFac;
 }
@@ -90,8 +88,10 @@ function columnWeight(M, x, yb, ys, gFac) {
 /**
  * Scherparameter an einer Höhenkote. P.f: {tanPhi, c, cu, gamma} Divisoren (γ_M), P.undrained.
  */
-function strengthAt(M, y, P) {
-  const L = layerAt(M.soil.layers, M.yMax - y);
+function strengthAt(M, x, y, P, prof = M.ground.profileAt(x)) {
+  const yr = y - M.yMax;
+  let L = M.ground.soils[prof[prof.length - 1].soil];
+  for (const iv of prof) if (yr <= iv.yTop && yr >= iv.yBot) { L = M.ground.soils[iv.soil]; break; }
   if (P.undrained && L.cu > 0) return { tanPhi: 0, c: L.cu / P.f.cu, undrained: true, L };
   return { tanPhi: Math.tan(rad(L.phi)) / P.f.tanPhi, c: L.c / P.f.c, undrained: false, L };
 }
@@ -155,7 +155,8 @@ export function evalCircle(M, xc, yc, R, P) {
     const ys = polyY(M.surf, xm);
     const sa = Math.max(-1, Math.min(1, (xc - xm) / R));
     const alpha = Math.asin(sa);
-    let W = columnWeight(M, xm, yb, ys, 1 / P.f.gamma) * b;
+    const prof = M.ground.profileAt(xm);
+    let W = columnWeight(M, xm, yb, ys, 1 / P.f.gamma, prof) * b;
     const hw = waterY(M, xm);
     if (hw > ys) W += gw * (hw - ys) * b; // Wasserauflast (Teich)
     let Q = 0;
@@ -163,7 +164,7 @@ export function evalCircle(M, xc, yc, R, P) {
       const ov = Math.max(0, Math.min(xm + b / 2, M.q.x2) - Math.max(xm - b / 2, M.q.x1));
       if (ov > 0 && !(P.qFavZero && alpha < 0)) Q = M.q.p * ov * (P.qFac ?? 1);
     }
-    const s = strengthAt(M, yb + 1e-6, P);
+    const s = strengthAt(M, xm, yb + 1e-6, P, prof);
     const u = s.undrained ? 0 : gw * Math.max(0, hw - yb);
     const Wt = W + Q;
     drive += Wt * sa;

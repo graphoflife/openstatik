@@ -92,16 +92,16 @@ function buildCatalog() {
 export const CATALOG = buildCatalog();
 
 export const SERIES = [
-  { id: 'IPE', label: 'IPE – schmale I-Träger', type: 'I' },
-  { id: 'HEA', label: 'HEA – Breitflansch leicht', type: 'I' },
-  { id: 'HEB', label: 'HEB – Breitflansch', type: 'I' },
-  { id: 'HEM', label: 'HEM – Breitflansch verstärkt', type: 'I' },
-  { id: 'UPN', label: 'UPN – U-Profile', type: 'U' },
-  { id: 'SHS', label: 'SHS – quadratische Hohlprofile', type: 'RHS' },
-  { id: 'RHS', label: 'RHS – rechteckige Hohlprofile', type: 'RHS' },
-  { id: 'CHS', label: 'CHS – Rundrohre', type: 'CHS' },
-  { id: 'WI', label: 'Geschweisster I-Querschnitt', type: 'WI' },
-  { id: 'USER', label: 'Benutzerdefinierte Werte', type: 'custom' },
+  { id: 'IPE', label: 'IPE – schmale I-Träger', short: 'IPE', type: 'I' },
+  { id: 'HEA', label: 'HEA – Breitflansch leicht', short: 'HEA', type: 'I' },
+  { id: 'HEB', label: 'HEB – Breitflansch', short: 'HEB', type: 'I' },
+  { id: 'HEM', label: 'HEM – Breitflansch verstärkt', short: 'HEM', type: 'I' },
+  { id: 'UPN', label: 'UPN – U-Profile', short: 'UPN', type: 'U' },
+  { id: 'SHS', label: 'SHS – quadratische Hohlprofile', short: 'SHS', type: 'RHS' },
+  { id: 'RHS', label: 'RHS – rechteckige Hohlprofile', short: 'RHS', type: 'RHS' },
+  { id: 'CHS', label: 'CHS – Rundrohre', short: 'CHS', type: 'CHS' },
+  { id: 'WI', label: 'Geschweisster I-Querschnitt', short: 'Geschweisst', type: 'WI' },
+  { id: 'USER', label: 'Benutzerdefinierte Werte', short: 'Eigene Werte', type: 'custom' },
 ];
 
 /** Serien, die nach dem leichtesten Profil durchsucht werden können. */

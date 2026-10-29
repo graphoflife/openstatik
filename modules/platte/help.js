@@ -2,15 +2,30 @@
 
 export const INTRO = `<h4>So funktioniert's</h4>
 <ol>
-  <li><b>Umriss</b> (Taste U): Eckpunkte der Platte in die Grafik klicken; <b>Öffnung</b> (O) als Rechteck aufziehen.</li>
-  <li>Lager setzen: <b>Wand</b> (W) entlang der Ränder ziehen, <b>Stütze</b> (S) anklicken – oder Plattenfläche wählen › «Wände an allen Rändern».</li>
-  <li>Lasten: Eigengewicht ist automatisch dabei; Flächenlasten für die ganze Platte im Register «Lasten», Teilflächen-, Linien- und Punktlasten mit <b>F</b>, <b>L</b>, <b>P</b>.</li>
-  <li><b>Berechnen</b> (Ctrl+Enter). Elemente anklicken zeigt ihre Werte und Nachweise, «Herleitung» den Rechenweg.</li>
+  <li><b>Platte</b> (U) in der Grafik zeichnen – weitere Platten mit gemeinsamen Rändern sind verbunden, eine Platte innerhalb einer anderen ändert dort die Dicke.</li>
+  <li><b>Wand</b> (W) und <b>Stütze</b> (S) setzen; Platte anklicken › «Wände an freien Rändern».</li>
+  <li>Lasten: <b>Flächenlast</b> (F) in eine Platte klicken, <b>Linienlast</b> (L), <b>Punktlast</b> (P). Eigengewicht und Kombinationen sind automatisch.</li>
+  <li><b>Berechnen</b> (Ctrl+Enter) und oben Durchbiegung, Momente, Bewehrung und Reaktionen ansehen. Klick in die Grafik zeigt die Werte.</li>
 </ol>`;
 
 export const HELP = `
+<h3>Grafisch arbeiten</h3>
+<p>Die Grafik ist der Hauptarbeitsbereich: Werkzeug wählen (Taste in Klammern), Punkte anklicken oder Koordinaten tippen.
+Fang an Punkten, Mitten und Schnittpunkten; <b>X/Y</b> binden an eine Achse, <b>M</b> fängt die Mitte zweier Punkte,
+Shift zeichnet orthogonal. Ein Klick auf ein Element öffnet seine Eigenschaften; Ziehen verschiebt es, verbundene Punkte
+(Wandenden auf Plattenecken, gemeinsame Ecken benachbarter Platten) gehen mit. Die Tabellen links bleiben synchron.</p>
+
+<h3>Mehrere Platten</h3>
+<ul>
+  <li>Platten mit gemeinsamen Rändern bilden eine zusammenhängende, biegesteif verbundene Platte (z.B. Decke und Balkon mit verschiedener Dicke).</li>
+  <li>Liegt eine Platte innerhalb einer anderen, gelten dort ihre Dicke und ihr Beton (Stützenkopfverstärkung, dünnerer Bereich).</li>
+  <li>Eigengewicht, Steifigkeit, statische Höhe der Bemessung und Durchstanzhöhe folgen der Dicke der jeweiligen Platte.</li>
+  <li>Flächenlasten wirken auf alle Platten, eine einzelne Platte (Werkzeug «Flächenlast» und Klick in die Platte) oder eine Lastfläche.</li>
+  <li>Mehrere unabhängige Decken (Positionen) verwalten Sie oben links über «Decke».</li>
+</ul>
+
 <h3>Berechnungsmodell</h3>
-<p>Die Platte wird als schubstarre Kirchhoff-Platte mit konstanter Dicke und linear-elastischem, ungerissenem Beton
+<p>Die Platten werden als schubstarre Kirchhoff-Platten mit stückweise konstanter Dicke und linear-elastischem, ungerissenem Beton
 (E = E<sub>cm</sub>) mit der Methode der finiten Elemente berechnet. Element: <b>DKT</b> (Discrete Kirchhoff Triangle,
 Batoz/Bathe/Ho 1980) mit drei Freiheitsgraden je Knoten (w, θx, θy). Das Dreiecksnetz wird automatisch erzeugt
 (Delaunay-Triangulierung); Plattenrand, Öffnungen, Wände, Linienlasten und Ränder von Lastflächen werden exakt
@@ -19,26 +34,21 @@ abgebildet, Stützen und Punktlasten liegen auf Netzknoten. Um Stützen wird das
 <h3>Vorzeichen und Bezeichnungen</h3>
 <ul>
   <li><b>x, y</b>: Koordinaten in der Plattenebene [m]; Lasten und Durchbiegung <b>w</b> positiv nach unten.</li>
-  <li><b>mx</b>: Moment, das Spannungen in x-Richtung erzeugt (massgebend für die Bewehrung in x-Richtung).
-      Positiv = Zug an der Plattenunterseite. Analog <b>my</b>.</li>
-  <li><b>mxy</b>: Drillmoment. <b>m₁, m₂</b>: Hauptmomente (m₁ ≥ m₂).</li>
+  <li><b>m<sub>x</sub></b>: Moment, das Spannungen in x-Richtung erzeugt (massgebend für die Bewehrung in x-Richtung).
+      Positiv = Zug an der Plattenunterseite. Analog <b>m<sub>y</sub></b>.</li>
+  <li><b>m<sub>xy</sub></b>: Drillmoment. <b>m<sub>1</sub>, m<sub>2</sub></b>: Hauptmomente (m<sub>1</sub> ≥ m<sub>2</sub>).</li>
   <li>Auflagerkräfte positiv = Druck auf das Lager. Linienlager: Verlauf in kN/m.</li>
 </ul>
 
-<h3>Grafische Eingabe</h3>
+<h3>Werkzeuge</h3>
 <ul>
-  <li>Die Grafik ist der Hauptarbeitsbereich (Ansicht «System»). Werkzeuge oben: <b>Umriss</b> (U, Polygon),
-      <b>Öffnung</b> (O, Rechteck), <b>Stütze</b> (S), <b>Wand</b> (W, Linienzug), <b>Flächenlast</b> (F, Polygon),
+  <li><b>Platte</b> (U, Polygon), <b>Öffnung</b> (O, Rechteck), <b>Stütze</b> (S), <b>Wand</b> (W, Linienzug),
+      <b>Flächenlast</b> (F, Klick in eine Platte oder Lastfläche), <b>Lastfläche</b> (Z, Polygon mit Last),
       <b>Linienlast</b> (L) und <b>Punktlast</b> (P). Neue Lasten erhalten den Lastfall, der oben unter «Neue Lasten in» gewählt ist.</li>
-  <li>Punkte fangen an Ecken, Kantenmitten, Schnittpunkten und am Raster. Beim Zeichnen und Verschieben binden
-      <b>X</b>/<b>Y</b> an eine Achse, <b>M</b> nimmt die Mitte zweier Punkte, Ziffern geben Koordinaten direkt ein.</li>
-  <li>Anklicken wählt ein Element und öffnet das Eigenschaftsfenster (Dicke, Beton und Netzweite bei der Plattenfläche;
-      b × h und Federn bei Stützen; «eingespannt» bei Wänden; Wert und Lastfall bei Lasten). Shift+Klick oder ein
-      Rahmen wählt mehrere Elemente.</li>
-  <li>Ziehen verschiebt Punkte und Elemente. Zusammenfallende Punkte bleiben verbunden: Wird eine Plattenecke
-      verschoben, folgen die Wandenden, die dort liegen. Entf löscht, C kopiert (Stützen, Wände, Lasten, Öffnungen).</li>
-  <li>Eine Randkante anklicken › «Punkt in der Mitte einfügen» erzeugt einen weiteren Eckpunkt (z.B. für eine L-Form).</li>
-  <li>Alle Eingaben stehen zusätzlich in den Tabellen links; Tabelle und Grafik sind stets synchron.</li>
+  <li>Eigenschaftsfenster: Name, Dicke, Beton und Lasten auf der ganzen Platte bei Platten; b × h, Federn und
+      Durchstanzergebnis bei Stützen; «eingespannt» und Wandkraft bei Wänden; Wert und Lastfall bei Lasten.</li>
+  <li>Eine Randkante anklicken › «Punkt einfügen» erzeugt einen weiteren Eckpunkt (z.B. für eine L-Form).
+      Entf löscht, C kopiert (Platten samt ihrer Lasten, Stützen, Wände, Lasten, Öffnungen).</li>
 </ul>
 
 <h3>Eingabe in Tabellen</h3>
@@ -80,7 +90,7 @@ wenn sie über eigene Lastfälle, Lastflächen und Kombinationen von Hand defini
 
 <h3>Grenzen des Programms</h3>
 <ul>
-  <li>Linear-elastisch, ungerissen, konstante Dicke, keine Schubverformungen (dünne Platten, L/h ≳ 5),
+  <li>Linear-elastisch, ungerissen, Dicke je Platte konstant (Dickensprünge ohne Ausmittigkeit der Mittelfläche), keine Schubverformungen (dünne Platten, L/h ≳ 5),
       keine Membrankräfte, keine Lagerabhebung (Zuglager wirken mit), keine Temperatur- oder Vorspannlasten.</li>
   <li>Momente unter Punktlasten und an Punktlagern ohne Abmessungen sind singulär, d.h. netzabhängig;
       auch an einspringenden Ecken treten Spannungsspitzen auf. Für die Bemessung über Stützen sind die Werte am

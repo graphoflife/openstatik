@@ -36,9 +36,9 @@ export function columnLawKind(norm, mode) {
 }
 
 export const LAW_LABELS = {
-  linplast: 'linear-elastisch – ideal-plastisch (Ecd, fcd)',
-  parabola: 'Parabel-Rechteck (fcd)',
-  sargin: 'nichtlinear nach EN 1992 3.1.5 (Ecd, fcd)',
+  linplast: 'linear-elastisch – ideal-plastisch (E_cd, f_cd)',
+  parabola: 'Parabel-Rechteck (f_cd)',
+  sargin: 'nichtlinear nach EN 1992 3.1.5 (E_cd, f_cd)',
 };
 
 /**

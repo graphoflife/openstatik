@@ -17,11 +17,11 @@ export const ALPHA = { a0: 0.13, a: 0.21, b: 0.34, c: 0.49, d: 0.76 };
 // Normbezüge (EN 1993-1-1 massgebend für die Rechnung; SIA 263 sinngemäss)
 const REF = {
   class: ['EN 1993-1-1 5.5, Tab. 5.2', 'SIA 263 Tab. 5'],
-  N: ['EN 1993-1-1 6.2.3/6.2.4', 'SIA 263 Querschnittswiderstand'],
-  V: ['EN 1993-1-1 6.2.6', 'SIA 263 Querschnittswiderstand'],
-  Vb: ['EN 1993-1-5 5.2/5.3', 'SIA 263 Schubbeulen'],
-  M: ['EN 1993-1-1 6.2.5/6.2.8', 'SIA 263 Querschnittswiderstand'],
-  NM: ['EN 1993-1-1 6.2.9', 'SIA 263 Querschnittswiderstand'],
+  N: ['EN 1993-1-1 6.2.3/6.2.4', 'SIA 263'],
+  V: ['EN 1993-1-1 6.2.6', 'SIA 263'],
+  Vb: ['EN 1993-1-5 5.2/5.3', 'SIA 263'],
+  M: ['EN 1993-1-1 6.2.5/6.2.8', 'SIA 263'],
+  NM: ['EN 1993-1-1 6.2.9', 'SIA 263'],
   Nb: ['EN 1993-1-1 6.3.1', 'SIA 263 4.5 (Knicken)'],
   NbT: ['EN 1993-1-1 6.3.1.4', 'SIA 263 4.5 (Knicken)'],
   Mb: ['EN 1993-1-1 6.3.2', 'SIA 263 4.5 (Kippen)'],
@@ -449,9 +449,9 @@ function segmentsFrom(restr, L, freeEnds) {
 function buildForcesMember(p) {
   const F = p.forces || {};
   const L = Number(F.L);
-  if (!(L > 0)) throw new Error('Bitte eine Stablänge L grösser als 0 eingeben (Register «Belastung»).');
+  if (!(L > 0)) throw new Error('Bitte eine Stablänge L grösser als 0 eingeben (Register «Lasten»).');
   const cases = F.cases || [];
-  if (!cases.length) throw new Incomplete('Noch keine Bemessungsschnittgrössen erfasst.', 'Den Stab in der Grafik anklicken und im Eigenschaftsfenster «Situation hinzufügen» wählen – oder im Register «Belastung» mindestens eine Zeile mit N, My … erfassen.');
+  if (!cases.length) throw new Incomplete('Noch keine Bemessungsschnittgrössen erfasst.', 'Den Stab in der Grafik anklicken und im Eigenschaftsfenster «Situation hinzufügen» wählen – oder im Register «Lasten» mindestens eine Zeile mit Normalkraft und Momenten erfassen.');
   const supports = [{ x: 0, type: 'pin' }, { x: L, type: 'pin' }];
   const n = 40;
   const xs = Array.from({ length: n + 1 }, (_, i) => L * i / n);
@@ -486,9 +486,9 @@ function buildBeamMember(p, sec, mat) {
   const geo = systemGeometry(b);
   const L = geo.L;
   const lcs = (b.loadCases || []).map((l) => ({ ...l }));
-  if (!lcs.length) throw new Error('Keine Lastfälle definiert – bitte im Register «Belastung» einen Lastfall anlegen.');
+  if (!lcs.length) throw new Error('Keine Lastfälle definiert – bitte im Register «Lasten» einen Lastfall anlegen.');
   if (!(b.loads || []).length) {
-    throw new Incomplete('Noch keine Lasten auf dem Träger.', 'Werkzeug «Streckenlast» (Taste Q) oder «Einzellast» (Taste F) wählen und auf den Träger klicken – oder im Register «Belastung» Lasten erfassen. Fertige Beispiele finden Sie oben unter «Beispiele».');
+    throw new Incomplete('Noch keine Lasten auf dem Träger.', 'Werkzeug «Streckenlast» (Taste Q) oder «Einzellast» (Taste F) wählen und auf den Träger klicken – oder im Register «Lasten» Lasten erfassen. Fertige Beispiele finden Sie oben unter «Beispiele».');
   }
   const ids = new Set(lcs.map((l) => l.id));
   const loads = [];
@@ -670,7 +670,7 @@ function stability(ctx, member, cb, smp, R, effs, p, env) {
   const susceptibleSection = !(sec.closed);
   const ltbActive = susceptibleSection && stab.ltb !== false && !stab.contRestraint && env.MyMax > 1e-9;
   out.ltbActive = ltbActive;
-  out.ltbReason = !susceptibleSection ? 'Hohlprofil – nicht kippgefährdet' : stab.ltb === false ? 'Kippnachweis ausgeschaltet' : stab.contRestraint ? 'Druckgurt durchgehend seitlich gehalten' : env.MyMax <= 1e-9 ? 'kein Biegemoment My' : '';
+  out.ltbReason = !susceptibleSection ? 'Hohlprofil – nicht kippgefährdet' : stab.ltb === false ? 'Kippnachweis ausgeschaltet' : stab.contRestraint ? 'Druckgurt durchgehend seitlich gehalten' : env.MyMax <= 1e-9 ? 'kein Biegemoment M_y' : '';
   const method = ltbMethod(p, sec);
   out.ltbMethod = method;
   const lpos = stab.loadPos || 'top';
@@ -831,7 +831,7 @@ export function compute(p) {
   const member = p.mode === 'forces' ? buildForcesMember(p) : buildBeamMember(p, sec, mat);
   const warnings = [];
   const ulsCombos = member.combos.filter((c) => c.type === 'ULS');
-  if (!ulsCombos.length) throw new Error('Keine Kombination für die Tragsicherheit vorhanden – bitte im Register «Kombinationen» eine ULS-Kombination anlegen.');
+  if (!ulsCombos.length) throw new Error('Keine Kombination für die Tragsicherheit vorhanden – bitte im Register «Lasten» eine ULS-Kombination anlegen.');
   const uls = ulsCombos.map((c) => checkCombo(ctx, member, c, p));
   const sls = member.mode === 'beam' ? slsChecks(member, p) : [];
 
@@ -851,12 +851,12 @@ export function compute(p) {
   const wN = worst((u) => u.cs.N);
   if (hasN) add({ id: 'N', group: 'Querschnitt', label: wN.Ed >= 0 ? 'Normalkraft (Druck)' : 'Normalkraft (Zug)', ref: ref('N', norm), Ed: kN(Math.abs(wN.Ed)), Rd: kN(Math.abs(wN.Rd)), unit: 'kN', eta: wN.eta, u: wN.u, x: wN.x });
   const wVz = worst((u) => u.cs.Vz);
-  add({ id: 'Vz', group: 'Querschnitt', label: 'Querkraft Vz', ref: ref('V', norm), Ed: kN(wVz.Ed), Rd: kN(wVz.Rd), unit: 'kN', eta: wVz.eta, u: wVz.u, x: wVz.x });
+  add({ id: 'Vz', group: 'Querschnitt', label: 'Querkraft V_z', ref: ref('V', norm), Ed: kN(wVz.Ed), Rd: kN(wVz.Rd), unit: 'kN', eta: wVz.eta, u: wVz.u, x: wVz.x });
   const wVb = worst((u) => u.cs.Vb);
   if (wVb) add({ id: 'Vb', group: 'Querschnitt', label: 'Schubbeulen Steg', ref: ref('Vb', norm), Ed: kN(wVb.Ed), Rd: kN(wVb.Rd), unit: 'kN', eta: wVb.eta, u: wVb.u, x: wVb.x });
-  if (hasVy) { const w = worst((u) => u.cs.Vy); add({ id: 'Vy', group: 'Querschnitt', label: 'Querkraft Vy', ref: ref('V', norm), Ed: kN(w.Ed), Rd: kN(w.Rd), unit: 'kN', eta: w.eta, u: w.u, x: w.x }); }
-  if (hasMy) { const w = worst((u) => u.cs.My); add({ id: 'My', group: 'Querschnitt', label: w.rho > 0 ? 'Biegung My (mit Querkraft)' : 'Biegung My', ref: ref('M', norm), Ed: kNm(w.Ed), Rd: kNm(w.Rd), unit: 'kNm', eta: w.eta, u: w.u, x: w.x }); }
-  if (hasMz) { const w = worst((u) => u.cs.Mz); add({ id: 'Mz', group: 'Querschnitt', label: 'Biegung Mz', ref: ref('M', norm), Ed: kNm(w.Ed), Rd: kNm(w.Rd), unit: 'kNm', eta: w.eta, u: w.u, x: w.x }); }
+  if (hasVy) { const w = worst((u) => u.cs.Vy); add({ id: 'Vy', group: 'Querschnitt', label: 'Querkraft V_y', ref: ref('V', norm), Ed: kN(w.Ed), Rd: kN(w.Rd), unit: 'kN', eta: w.eta, u: w.u, x: w.x }); }
+  if (hasMy) { const w = worst((u) => u.cs.My); add({ id: 'My', group: 'Querschnitt', label: w.rho > 0 ? 'Biegung M_y (mit Querkraft)' : 'Biegung M_y', ref: ref('M', norm), Ed: kNm(w.Ed), Rd: kNm(w.Rd), unit: 'kNm', eta: w.eta, u: w.u, x: w.x }); }
+  if (hasMz) { const w = worst((u) => u.cs.Mz); add({ id: 'Mz', group: 'Querschnitt', label: 'Biegung M_z', ref: ref('M', norm), Ed: kNm(w.Ed), Rd: kNm(w.Rd), unit: 'kNm', eta: w.eta, u: w.u, x: w.x }); }
   if ((hasN && (hasMy || hasMz)) || (hasMy && hasMz)) {
     const w = worst((u) => u.cs.NM);
     add({ id: 'NM', group: 'Querschnitt', label: hasN ? 'Normalkraft und Biegung' : 'Zweiachsige Biegung', ref: ref('NM', norm), eta: w.eta, u: w.u, x: w.x, detail: w.method });
@@ -880,7 +880,7 @@ export function compute(p) {
     if (w62) add({ id: 'int62', group: 'Stabilität', label: 'Interaktion N + M (6.62)', ref: ref('int', norm), eta: w62.eta, u: w62.u, seg: w62.seg, detail: 'Ausweichen aus der Ebene (Knicken z-z / Kippen)' });
   }
   const wT = worst((u) => { let b = null; for (const s of u.st.segments) if (s.intT !== undefined && u.MzMax > 1e-9 && (!b || s.intT > b.eta)) b = { eta: s.intT, seg: s }; return b; });
-  if (wT) add({ id: 'intT', group: 'Stabilität', label: 'Kippen und Biegung Mz (Zug)', ref: ref('Mb', norm), eta: wT.eta, u: wT.u, seg: wT.seg });
+  if (wT) add({ id: 'intT', group: 'Stabilität', label: 'Kippen und Biegung M_z (Zug)', ref: ref('Mb', norm), eta: wT.eta, u: wT.u, seg: wT.seg });
   // Gebrauchstauglichkeit
   for (const type of ['SLS-char', 'SLS-qp']) {
     const list = sls.filter((s) => s.combo.type === type);
@@ -904,10 +904,10 @@ export function compute(p) {
   // Hinweise
   if (uls.some((u) => u.cls === 4)) {
     if (sec.type === 'CHS') warnings.push('Querschnittsklasse 4 bei Rundrohr: Schalenbeulen nach EN 1993-1-6 ist nicht abgedeckt – Nachweise mit elastischen Werten, bitte separat prüfen.');
-    else warnings.push('Querschnittsklasse 4: Nachweise mit wirksamen Querschnittswerten nach EN 1993-1-5 (Aeff, Weff).');
+    else warnings.push('Querschnittsklasse 4: Nachweise mit wirksamen Querschnittswerten nach EN 1993-1-5 (A_eff, W_eff).');
   }
   if (sec.type === 'U' && govUls.st.ltbActive) warnings.push('U-Profil: Lasten greifen nicht im Schubmittelpunkt an (Torsion). Kippen nach der Formel für doppelt symmetrische Querschnitte ist eine Näherung.');
-  if (wVb) warnings.push('Der Steg ist schubbeulgefährdet (hw/tw > 72·ε/η) – Nachweis nach EN 1993-1-5 ohne Zwischensteifen.');
+  if (wVb) warnings.push('Der Steg ist schubbeulgefährdet (h_w/t_w > 72·ε/η) – Nachweis nach EN 1993-1-5 ohne Zwischensteifen.');
   if (p.mode === 'forces' && uls.some((u) => u.cs.Vz.eta > 0.5)) warnings.push('Direkte Eingabe: Die Querkraft wird über die ganze Stablänge angesetzt (Interaktion M–V auf der sicheren Seite).');
   return { sec, mat, norm, curves, member, uls, sls, checks, etaMax, gov, govUls, warnings, ltbMethod: ltbMethod(p, sec), gamma: gammaSet(p) };
 }

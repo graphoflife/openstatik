@@ -107,8 +107,8 @@ function idealSection(R) {
   const e6 = (x) => num(x / 1e6, 2);
   const ds = [...new Set(bars.map((b) => b.d))].sort((a, b) => a - b);
   return {
-    id: 'ideell', title: 'Ideelle Querschnittswerte (ungerissen)', ref: 'Wertigkeit n_0 = E_s/E_cm',
-    intro: 'Die Bewehrung wird mit der (n_0 − 1)-fachen Fläche zum Bruttobeton addiert (Kurzzeit, ohne Kriechen).',
+    id: 'ideell', title: 'Ideelle Querschnittswerte (ungerissen)', ref: 'Kurzzeit-Wertigkeit',
+    intro: 'Die Bewehrung wird mit der (n_0 − 1)-fachen Fläche zum Bruttobeton addiert, n_0 = E_s/E_cm (Kurzzeit, ohne Kriechen).',
     steps: [
       { label: 'Wertigkeit', f: 'n_0 = E_s/E_cm', v: `= ${num(R.mat.s.Es, 0)}/${num(R.mat.c.Ecm, 0)}`, r: `= ${num(n, 3)}` },
       { label: 'Bewehrung', f: 'A_s = Σ π·Ø_i^2/4', r: `= ${num(As, 0)} mm²`, note: `${bars.length} Stäbe (Ø ${ds.join(', ')} mm), ρ = A_s/A_c = ${num(As / G.A * 100, 2)} %.` },
@@ -133,7 +133,7 @@ function axialSection(R) {
     id: 'normalkraft', title: 'Zentrischer Widerstand', ref: R.mat.norm === 'SIA' ? 'SIA 262, 4.3.1 / 4.2.1' : 'EN 1992-1-1, 6.1 (5)',
     intro: 'Zentrischer Druck: gleichmässige Stauchung ε_c2 über den ganzen Querschnitt. Zentrischer Zug: nur die Bewehrung trägt (ε_s = ε_ud).',
     steps: [
-      { label: 'Stahlspannung bei ε_c2', f: 'σ_s(ε_c2) = min(E_s·ε_c2, f_sd)', v: `= min(${num(s.Es, 0)}·${num(c.ec2, 4)}, ${num(s.fsd, 1)})`, r: `= ${num(sigC2, 1)} MPa` },
+      { label: 'Stahlspannung bei zentrischem Druck', f: 'σ_s(ε_c2) = min(E_s·ε_c2, f_sd)', v: `= min(${num(s.Es, 0)}·${num(c.ec2, 4)}, ${num(s.fsd, 1)})`, r: `= ${num(sigC2, 1)} MPa` },
       { label: 'Druckwiderstand', f: 'N_Rd,c = −[(A_c − A_s)·f_cd + A_s·σ_s(ε_c2)]', v: `= −[(${num(Ac, 0)} − ${num(As, 0)})·${num(c.fcd, 2)} + ${num(As, 0)}·${num(sigC2, 1)}]·10^{-3}`, r: `= ${num(Nc, 0)} kN`, note: `Fasermodell: N_Rd,c = ${num(R.axial.Nc, 0)} kN.` },
       { label: 'Zugwiderstand', f: R.mat.hardening ? 'N_Rd,t = A_s·k_s·f_sd' : 'N_Rd,t = A_s·f_sd', v: `= ${num(As, 0)}·${num(fu, 1)}·10^{-3}`, r: `= ${num(Nt, 0)} kN`, note: `Fasermodell: N_Rd,t = ${num(R.axial.Nt, 0)} kN.` },
     ],
@@ -185,7 +185,7 @@ function ulsSection(R, c) {
   const rs = u.rstate;
   const resG = toG(u.MyR, u.MzR);
   if (rs) {
-    const crit = /εcu/.test(u.mode) ? `ε_c,min = −ε_cu = ${pm(rs.ext.ecMin, 2)} ‰` : /εud/.test(u.mode) ? `ε_s,max = ε_ud = ${pm(rs.ext.esMax, 2)} ‰` : `ε = −ε_c2 im Drehpunkt`;
+    const crit = /ε_?cu/.test(u.mode) ? `ε_c,min = −ε_cu = ${pm(rs.ext.ecMin, 2)} ‰` : /ε_?ud/.test(u.mode) ? `ε_s,max = ε_ud = ${pm(rs.ext.esMax, 2)} ‰` : `ε = −ε_c2 im Drehpunkt`;
     steps.push({ label: 'Bruchzustand bei gleichem N und gleicher Momentenrichtung', f: crit, note: `Versagensart: ${u.mode}. Die Dehnungsebene wird um den massgebenden Drehpunkt gedreht (Pivot-Methode), bis ∫σ dA = N_Ed.` });
     steps.push(...planeSteps(rs, 'Dehnungsebene im Bruchzustand'));
     const sec = R.secs.uls;

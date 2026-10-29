@@ -25,7 +25,7 @@ export class IncompleteInput extends Error {
 /** Prüft, ob die wesentlichen Eingaben der gewählten Analyse vorhanden sind. */
 export function checkComplete(project) {
   const type = project.analysis || 'erddruck';
-  if (!project.soil?.layers?.length) throw new IncompleteInput('Es ist noch keine Bodenschicht definiert.', 'Im Register «Baugrund» eine Schicht hinzufügen (z.B. über «Vorlage»).');
+  if (!(project.soil?.soils?.length || project.soil?.layers?.length)) throw new IncompleteInput('Es ist noch keine Bodenart definiert.', 'Im Register «Baugrund» unter «Bodenarten» eine Bodenart hinzufügen.');
   const pos = (v) => Number(v) > 0;
   if (type === 'erddruck' && !pos(project.ep?.H)) {
     throw new IncompleteInput('Noch keine Wand definiert.', 'Werkzeug «Wand» (Taste N) wählen und Wandkopf und Wandfuss in der Grafik anklicken – oder die Wandhöhe H im Register «Analyse» eingeben.');
@@ -65,8 +65,10 @@ export function effectiveNorm(project) {
 /** Erddruckanalyse einer Wand mit Vergleichswerten (aktiv / Ruhedruck / passiv). */
 export function earthPressureAnalysis(project, norm) {
   const ep = project.ep;
-  const soil = makeSoil(project.soil, { ignoreWater: !ep.water });
   const H = Number(ep.H);
+  // Bodenprofil in der Mitte der Wandrückseite (Wandkopf bei x = −H·tan α)
+  const xProf = -0.5 * (H || 0) * Math.tan((Number(ep.alpha) || 0) * Math.PI / 180) + 0.01;
+  const soil = makeSoil(project.soil, { ignoreWater: !ep.water, x: xProf });
   if (!(H > 0)) throw new Error('Die Wandhöhe H muss grösser als 0 sein (Register «Wand»).');
   const base = {
     soil, zTop: 0, zBot: H, alpha: Number(ep.alpha) || 0, beta: Number(ep.beta) || 0,

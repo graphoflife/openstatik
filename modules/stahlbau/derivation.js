@@ -2,6 +2,7 @@
 // Formeln nach EN 1993-1-1 (Gleichungsnummern in Klammern); SIA 263 rechnet mit denselben Beziehungen.
 // Die Abschnitts-IDs entsprechen den Nachweis-IDs aus calc.js (Nby/Nbz → Nb, int61/int62 → int, w-… → w).
 import { num } from '../../js/core/formula.js';
+import { rich, unicodeSub } from '../../js/core/ui.js';
 import { ref, E_STEEL, G_STEEL } from './calc.js';
 
 const f0 = (x) => num(x, 0), f1 = (x) => num(x, 1), f2 = (x) => num(x, 2), f3 = (x) => num(x, 3);
@@ -32,6 +33,24 @@ function uniformSS(member) {
 }
 
 export function derivation(app) {
+  return withSubscripts(buildDerivation(app));
+}
+
+/**
+ * Formelzeichen in Titeln und Schrittbezeichnungen: Titel bleiben reiner Text (Inhaltsverzeichnis),
+ * Bezeichnungen mit Index (k_yy, M_cr …) werden echt tiefgestellt.
+ */
+function withSubscripts(sections) {
+  for (const sct of sections) {
+    if (!sct) continue;
+    if (typeof sct.title === 'string') sct.title = unicodeSub(sct.title.replace(/\bM_([yz])\b/g, 'um $1-$1').replace(/\bV_([yz])\b/g, 'in $1'));
+    if (typeof document === 'undefined') continue; // in Node (Tests) bleiben die Bezeichnungen Text
+    for (const st of sct.steps || []) if (st && typeof st.label === 'string' && st.label.includes('_')) st.label = rich(st.label);
+  }
+  return sections;
+}
+
+function buildDerivation(app) {
   const r = app.results;
   if (!r) return [];
   const p = app.project;
@@ -167,8 +186,8 @@ export function derivation(app) {
       proof('V_z,Ed/V_pl,z,Rd', f1(cV.Ed), f1(cV.Rd), cV.eta, '(6.17)'),
     ];
     if (R.hwtw) steps.push({ label: 'Schubbeulen des Stegs', ref: 'EN 1993-1-5 5.1(2)', f: 'h_w/t_w <= 72·ε/η', v: `${f1(R.hwtw)} ${R.hwtw <= R.hwtwLim ? '<=' : '>'} 72·${f3(eps)}/${f1(etaV)} = ${f1(R.hwtwLim)}`, r: R.hwtw <= R.hwtwLim ? '→ kein Beulnachweis nötig' : '→ Beulnachweis (Abschnitt «Schubbeulen»)' });
-    if (cV.eta > 0.5) steps.push({ label: 'Interaktion mit Biegung', ref: '6.2.8', f: 'V_Ed > 0.5·V_pl,Rd → Abminderung des Biegewiderstands mit ρ', note: 'siehe Abschnitt «Biegung My»' });
-    out.push({ id: 'Vz', title: 'Querkraft Vz', ref: ref('V', norm), intro: where(cV), steps, result: result(cV.eta) });
+    if (cV.eta > 0.5) steps.push({ label: 'Interaktion mit Biegung', ref: '6.2.8', f: 'V_Ed > 0.5·V_pl,Rd → Abminderung des Biegewiderstands mit ρ', note: 'siehe Abschnitt «Biegung um y-y»' });
+    out.push({ id: 'Vz', title: 'Querkraft in z', ref: ref('V', norm), intro: where(cV), steps, result: result(cV.eta) });
   }
   const cVb = ck('Vb');
   if (cVb) {
@@ -188,7 +207,7 @@ export function derivation(app) {
   if (cVy) {
     const R = cVy.u.R;
     out.push({
-      id: 'Vy', title: 'Querkraft Vy', ref: ref('V', norm), intro: where(cVy),
+      id: 'Vy', title: 'Querkraft in y', ref: ref('V', norm), intro: where(cVy),
       steps: [
         { label: 'Schubfläche', ref: '6.2.6(3)', f: isI ? 'A_v,y = 2·b·t_f' : 'A_v,y', r: `= ${f0(R.Avy)} mm²` },
         { label: 'Plastischer Querkraftwiderstand', ref: '(6.18)', f: 'V_pl,y,Rd = A_v,y·(f_y/sqrt(3))/γ_M0', v: `= ${f0(R.Avy)}·(${fy}/sqrt(3))/${f2(g0)}`, r: `= ${f1(kN(R.VplyRd))} kN` },
@@ -209,13 +228,13 @@ export function derivation(app) {
       steps.push({ label: 'Abgeminderter Biegewiderstand', ref: '(6.30)', f: R.Aw ? `M_y,V,Rd = (${Wname(R.cls, 'y')} − ρ·A_w^2/(4·t_w))·f_y/γ_M0 <= M_c,y,Rd` : 'M_y,V,Rd = (1 − ρ)·M_c,y,Rd', r: `= ${f1(cMy.Rd)} kNm`, note: R.Aw ? `A_w = h_w·t_w = ${f0(R.Aw)} mm²` : '' });
     }
     steps.push(proof(`M_y,Ed/${rho > 0 ? 'M_y,V,Rd' : 'M_c,y,Rd'}`, f1(cMy.Ed), f1(cMy.Rd), cMy.eta, '(6.12)'));
-    out.push({ id: 'My', title: 'Biegung My', ref: ref('M', norm), intro: where(cMy), steps, result: result(cMy.eta) });
+    out.push({ id: 'My', title: 'Biegung um y-y', ref: ref('M', norm), intro: where(cMy), steps, result: result(cMy.eta) });
   }
   const cMz = ck('Mz');
   if (cMz) {
     const R = cMz.u.R;
     out.push({
-      id: 'Mz', title: 'Biegung Mz', ref: ref('M', norm), intro: where(cMz),
+      id: 'Mz', title: 'Biegung um z-z', ref: ref('M', norm), intro: where(cMz),
       steps: [
         { label: `Biegewiderstand (Klasse ${R.cls})`, ref: Mref(R.cls), f: `M_c,z,Rd = ${Wname(R.cls, 'z')}·f_y/γ_M0`, v: `= ${f1(R.Wz / 1e3)}·10^3·${fy}/${f2(g0)}`, r: `= ${f1(kNm(R.MczRd))} kNm` },
         proof('M_z,Ed/M_c,z,Rd', f1(cMz.Ed), f1(cMz.Rd), cMz.eta, '(6.12)'),

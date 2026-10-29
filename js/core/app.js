@@ -18,7 +18,7 @@
 //   report?(app) → [{title, content}],
 //   help?: HTML-String,
 // })
-import { h, clear, button, icon, dropdown, segmented, tabs, textField, toast, modal, downloadText, pickFile, clone, checkField, rangeField, selectField } from './ui.js';
+import { h, clear, button, icon, dropdown, segmented, tabs, textField, toast, modal, downloadText, pickFile, clone, checkField, rangeField, selectField, subscriptify, rich } from './ui.js';
 import { SvgView } from './svgview.js';
 import { openReport } from './report.js';
 import { createEditor } from './editor.js';
@@ -180,7 +180,7 @@ export function createApp(def) {
   // ---------------------------------------------------------------- Status
   let lastStatusAt = 0;
   app.status = (msg, kind = '', opts = {}) => {
-    statusMsg.textContent = msg;
+    statusMsg.replaceChildren(rich(String(msg ?? '')) || '');
     statusMsg.className = `status-msg ${kind}`;
     if (!opts.auto) lastStatusAt = performance.now();
   };
@@ -201,20 +201,123 @@ export function createApp(def) {
     return p;
   }
 
-  app.setProject = (p, opts = {}) => {
-    app.project = withMeta(def.migrate ? def.migrate(p) : p);
-    app.results = null;
-    app.stale = true;
-    app.error = null;
+  // ---------------------------------------------------------------- Dokument mit Positionen
+  // Ein Dokument enthält mehrere Positionen (z.B. mehrere Querschnitte); das Modul sieht in app.project
+  // immer nur die aktive Position. Projektangaben (meta) gelten für das ganze Dokument.
+  const inst = { label: 'Position', plural: 'Positionen', ...(def.instance || {}) };
+  let uidCounter = 0;
+  const newId = () => `p${Date.now().toString(36)}${(uidCounter++).toString(36)}`;
+  const prep = (p) => (def.migrate ? def.migrate(p) : p);
+  const emptyJson = () => { try { return JSON.stringify(prep(def.defaultProject())); } catch { return ''; } };
+  const isEmptyProject = (p) => { const c = { ...p }; delete c.meta; return JSON.stringify(c) === emptyJson(); };
+
+  function docFromProject(p, name) {
+    const meta = { ...newMeta(), ...(p?.meta || {}) };
+    const proj = { ...p }; delete proj.meta;
+    return { meta, items: [{ id: newId(), name: name || `${inst.label} 1`, project: proj }], active: 0 };
+  }
+  function normalizeDoc(doc) {
+    doc.meta = { ...newMeta(), ...(doc.meta || {}) };
+    doc.items = (doc.items || []).filter((it) => it && it.project);
+    if (!doc.items.length) doc.items.push({ id: newId(), name: `${inst.label} 1`, project: def.defaultProject() });
+    for (const it of doc.items) { it.id ||= newId(); it.name ||= inst.label; delete it.project.meta; it.project = prep(it.project); }
+    doc.active = Math.min(Math.max(0, doc.active | 0), doc.items.length - 1);
+    return doc;
+  }
+  function serializeDoc() {
+    return JSON.stringify({ ...app.doc, items: app.doc.items.map((it) => { const pr = { ...it.project }; delete pr.meta; return { ...it, project: pr }; }) });
+  }
+  const resultCache = new Map();
+  function activate(i) {
+    const doc = app.doc;
+    doc.active = Math.min(Math.max(0, i), doc.items.length - 1);
+    const it = doc.items[doc.active];
+    app.project = it.project;
+    app.project.meta = doc.meta; // gemeinsame Projektangaben
+    app.instance = it;
+  }
+  function cacheResults() {
+    const it = app.instance;
+    if (it) resultCache.set(it.id, { results: app.results, stale: app.stale, error: app.error, errorIncomplete: app.errorIncomplete, errorHint: app.errorHint });
+  }
+  function afterSwitch(opts = {}) {
+    const c = !opts.fresh && resultCache.get(app.instance.id);
+    app.results = c ? c.results : null;
+    app.stale = c ? c.stale : true;
+    app.error = c ? c.error : null;
+    app.errorIncomplete = c ? c.errorIncomplete : false;
+    app.errorHint = c ? c.errorHint : null;
     app.selection = null;
-    if (!opts.keepUndo) { app.undoStack = [JSON.stringify(app.project)]; app.redoStack = []; }
+    if (app.editor) app.editor.sel = [];
     app.view.modelBounds = null;
     app.view.fitted = false;
     autosave();
     renderInputs();
-    if (def.autoCompute) app.compute(); else { renderView(); renderResults(); }
+    if (def.autoCompute && (!c || c.stale || opts.fresh)) app.compute(); else { renderView(); renderResults(); }
     updateUndo();
+  }
+
+  /** Ganzes Dokument ersetzen (Öffnen, Neu, Rückgängig). */
+  app.setDocument = (doc, opts = {}) => {
+    app.doc = normalizeDoc(doc);
+    resultCache.clear();
+    activate(app.doc.active);
+    if (!opts.keepUndo) { app.undoStack = [serializeDoc()]; app.redoStack = []; }
+    afterSwitch({ fresh: true });
   };
+
+  /** Projekt der aktiven Position ersetzen (z.B. Beispiel laden). */
+  app.setProject = (p, opts = {}) => {
+    if (!app.doc) { app.setDocument(docFromProject(p, opts.name), opts); return; }
+    const proj = { ...p }; delete proj.meta;
+    app.instance.project = prep(proj);
+    if (opts.name) app.instance.name = opts.name;
+    resultCache.delete(app.instance.id);
+    activate(app.doc.active);
+    if (!opts.keepUndo) pushUndo(true);
+    afterSwitch({ fresh: true });
+  };
+
+  /** Position wechseln, anlegen, duplizieren, umbenennen, löschen. */
+  app.switchInstance = (i) => {
+    if (i === app.doc.active) return;
+    cacheResults();
+    activate(i);
+    afterSwitch();
+    app.status(`${inst.label} «${app.instance.name}»`);
+  };
+  app.addInstance = (project, name) => {
+    cacheResults();
+    const proj = prep(project || def.defaultProject()); delete proj.meta;
+    app.doc.items.push({ id: newId(), name: name || nextName(), project: proj });
+    activate(app.doc.items.length - 1);
+    pushUndo(true);
+    afterSwitch({ fresh: true });
+  };
+  app.duplicateInstance = (i = app.doc.active) => {
+    cacheResults();
+    const src = app.doc.items[i];
+    const proj = JSON.parse(JSON.stringify({ ...src.project, meta: undefined }));
+    app.doc.items.splice(i + 1, 0, { id: newId(), name: `${src.name} (Kopie)`, project: prep(proj) });
+    activate(i + 1);
+    pushUndo(true);
+    afterSwitch({ fresh: true });
+  };
+  app.renameInstance = (i, name) => { if (!name) return; app.doc.items[i].name = name; autosave(); pushUndo(true); renderInstbar(); };
+  app.removeInstance = (i) => {
+    if (app.doc.items.length < 2) { toast(`Die letzte ${inst.label} kann nicht gelöscht werden.`, 'warn'); return; }
+    const [it] = app.doc.items.splice(i, 1);
+    resultCache.delete(it.id);
+    activate(Math.min(app.doc.active > i ? app.doc.active - 1 : app.doc.active, app.doc.items.length - 1));
+    pushUndo(true);
+    afterSwitch();
+  };
+  function nextName() {
+    let n = app.doc.items.length + 1;
+    const names = new Set(app.doc.items.map((it) => it.name));
+    while (names.has(`${inst.label} ${n}`)) n++;
+    return `${inst.label} ${n}`;
+  }
 
   let undoTimer = null, computeTimer = null;
   /**
@@ -239,10 +342,11 @@ export function createApp(def) {
     }
   };
 
-  function autosave() { store.set(`${def.id}.autosave`, JSON.stringify(app.project)); }
+  function autosave() { if (app.doc) store.set(`${def.id}.doc`, serializeDoc()); }
 
   function pushUndo() {
-    const s = JSON.stringify(app.project);
+    if (!app.doc) return;
+    const s = serializeDoc();
     if (app.undoStack[app.undoStack.length - 1] === s) return;
     app.undoStack.push(s);
     if (app.undoStack.length > 80) app.undoStack.shift();
@@ -266,7 +370,12 @@ export function createApp(def) {
     restore(s);
   }
   function restore(s) {
-    app.project = JSON.parse(s);
+    const activeId = app.instance?.id;
+    const doc = normalizeDoc(JSON.parse(s));
+    app.doc = doc;
+    const idx = doc.items.findIndex((it) => it.id === activeId);
+    activate(idx >= 0 ? idx : doc.active);
+    resultCache.delete(app.instance.id);
     app.stale = true; app.results = def.autoCompute ? app.results : null;
     autosave();
     renderInputs();
@@ -275,16 +384,25 @@ export function createApp(def) {
   }
 
   function newProject() {
-    modal('Neues Projekt', h('p', {}, 'Aktuelle Eingaben verwerfen und ein neues Projekt beginnen? Nicht gespeicherte Änderungen gehen verloren.'), [
+    modal('Neues Projekt', h('p', {}, `Alle ${inst.plural} verwerfen und ein neues, leeres Projekt beginnen? Nicht gespeicherte Änderungen gehen verloren. (Eine weitere ${inst.label} fügen Sie oben links mit «+» hinzu.)`), [
       { label: 'Abbrechen' },
-      { label: 'Neues Projekt', primary: true, onClick: () => { app.setProject(def.defaultProject()); app.status('Neues Projekt'); } },
+      { label: 'Neues Projekt', primary: true, onClick: () => { app.setDocument(docFromProject(def.defaultProject())); app.status('Neues Projekt'); } },
     ]);
   }
 
   function loadExample(ex) {
     const p = ex.project();
-    p.meta = { ...newMeta(), name: ex.name, ...(p.meta || {}) };
-    app.setProject(p);
+    if (!app.doc) {
+      const d = docFromProject(p, ex.name);
+      d.meta.name = ex.name;
+      app.setDocument(d);
+    } else if (isEmptyProject(app.project)) {
+      app.setProject(p, { name: ex.name });
+      if (app.doc.meta.name === 'Neues Projekt') { app.doc.meta.name = ex.name; autosave(); }
+    } else {
+      app.addInstance(p, ex.name);
+      toast(`Beispiel als neue ${inst.label} «${ex.name}» hinzugefügt – Ihre bisherigen ${inst.plural} bleiben oben links auswählbar.`, 'ok', 5000);
+    }
     app.status(`Beispiel geladen: ${ex.name}`, 'ok');
   }
 
@@ -293,8 +411,8 @@ export function createApp(def) {
       const { name, text } = await pickFile(`.json,.${def.id}.json,application/json`);
       const data = JSON.parse(text);
       if (data.app && data.app !== def.id) throw new Error(`Die Datei gehört zum Modul «${data.app}».`);
-      const p = data.project || data;
-      app.setProject(p);
+      if (data.document) app.setDocument(data.document);
+      else app.setDocument(docFromProject(data.project || data));
       app.status(`Geöffnet: ${name}`, 'ok');
     } catch (e) {
       if (e.message !== 'Keine Datei gewählt') toast(`Datei konnte nicht geöffnet werden: ${e.message}`, 'error');
@@ -302,13 +420,64 @@ export function createApp(def) {
   }
 
   function saveProject() {
-    const name = (app.project.meta?.name || def.id).replace(/[^\w\-äöüÄÖÜ ]+/g, '_').trim() || def.id;
-    downloadText(`${name}.${def.id}.json`, JSON.stringify({ app: def.id, version: def.version || 1, saved: new Date().toISOString(), project: app.project }, null, 1));
+    const name = (app.doc.meta?.name || def.id).replace(/[^\w\-äöüÄÖÜ ]+/g, '_').trim() || def.id;
+    downloadText(`${name}.${def.id}.json`, JSON.stringify({ app: def.id, version: 2, saved: new Date().toISOString(), document: JSON.parse(serializeDoc()) }, null, 1));
     app.status(`Gespeichert: ${name}.${def.id}.json`, 'ok');
+  }
+
+  // ---------------------------------------------------------------- Positionsleiste
+  const instbar = h('div', { class: 'instbar' });
+  function renderInstbar() {
+    clear(instbar);
+    if (!app.doc) return;
+    const n = app.doc.items.length;
+    const pickBtn = h('button', { type: 'button', class: 'inst-pick', title: `${inst.plural} verwalten: wechseln, umbenennen, duplizieren, löschen` },
+      h('span', { class: 'inst-kind' }, inst.label),
+      h('span', { class: 'inst-name' }, app.instance?.name || ''),
+      n > 1 ? h('span', { class: 'inst-n' }, `${app.doc.active + 1}/${n}`) : null,
+      icon('chevron', 14));
+    pickBtn.addEventListener('click', (e) => { e.stopPropagation(); openInstMenu(pickBtn); });
+    instbar.append(pickBtn,
+      button('', { icon: 'plus', title: `Neue ${inst.label} (leer)`, onClick: () => app.addInstance() }),
+      button('', { icon: 'copy', title: `${inst.label} duplizieren`, onClick: () => app.duplicateInstance() }));
+  }
+  function openInstMenu(anchor) {
+    document.querySelectorAll('.inst-menu').forEach((m) => m.remove());
+    const r = anchor.getBoundingClientRect();
+    const menu = h('div', { class: 'inst-menu', role: 'menu' });
+    const close = () => { menu.remove(); document.removeEventListener('click', onDoc); };
+    const onDoc = (e) => { if (!menu.contains(e.target)) close(); };
+    app.doc.items.forEach((it, i) => {
+      const nameEl = h('span', { class: 'inst-name' }, it.name);
+      const row = h('div', { class: `inst-item${i === app.doc.active ? ' active' : ''}`, role: 'menuitem', onclick: (e) => { if (e.target.closest('.lst-act')) return; close(); app.switchInstance(i); } },
+        nameEl,
+        h('span', { class: 'lst-act' },
+          button('', { icon: 'edit', small: true, ghost: true, title: 'Umbenennen', onClick: () => {
+            const inp = h('input', { type: 'text', value: it.name });
+            nameEl.replaceWith(inp); inp.focus(); inp.select();
+            const done = () => { app.renameInstance(i, inp.value.trim() || it.name); close(); };
+            inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(); if (e.key === 'Escape') close(); });
+            inp.addEventListener('blur', done);
+          } }),
+          button('', { icon: 'copy', small: true, ghost: true, title: 'Duplizieren', onClick: () => { close(); app.duplicateInstance(i); } }),
+          app.doc.items.length > 1 ? button('', { icon: 'trash', small: true, ghost: true, title: 'Löschen', onClick: () => {
+            close();
+            modal(`${inst.label} löschen`, h('p', {}, `«${it.name}» wirklich löschen? (Rückgängig mit Ctrl+Z möglich)`), [{ label: 'Abbrechen' }, { label: 'Löschen', primary: true, onClick: () => app.removeInstance(i) }]);
+          } }) : null));
+      menu.append(row);
+    });
+    menu.append(h('div', { class: 'inst-foot' },
+      button(`Neue ${inst.label}`, { icon: 'plus', small: true, onClick: () => { close(); app.addInstance(); } }),
+      button('Duplizieren', { icon: 'copy', small: true, onClick: () => { close(); app.duplicateInstance(); } })));
+    menu.style.left = `${r.left}px`;
+    menu.style.top = `${r.bottom + 6}px`;
+    document.body.append(menu);
+    setTimeout(() => document.addEventListener('click', onDoc), 0);
   }
 
   // ---------------------------------------------------------------- Eingabe
   let inputTabs = null;
+  let firstVisitDone = false;
   function renderInputs() {
     const active = inputTabs?.active();
     clear(inputPanel);
@@ -316,9 +485,21 @@ export function createApp(def) {
     const defs = [...def.inputTabs.map((t, i) => ({ id: t.id, label: numbered ? [h('span', { class: 'tab-num' }, String(i + 1)), t.label] : t.label, render: (el) => t.render(el, app) })),
       { id: '_project', label: 'Projekt', render: (el) => renderMeta(el) }];
     inputTabs = tabs(defs, { active, onSwitch: (id, initial) => { app.activeTab = id; if (!initial) def.onTabSwitch?.(id, app); } });
+    renderInstbar();
+    inputPanel.append(instbar);
     if (def.intro && store.get(`${def.id}.introHidden`) !== '1') {
       const card = h('div', { class: 'intro' });
       card.innerHTML = def.intro;
+      subscriptify(card);
+      // Titel als Klappkopf, Rest als Inhalt
+      const head = card.querySelector('h4') || h('h4', {}, 'So funktioniert\'s');
+      const body = h('div', { class: 'intro-body' });
+      [...card.childNodes].forEach((n) => { if (n !== head) body.append(n); });
+      card.replaceChildren(head, body);
+      const ic = store.get(`${def.id}.introCollapsed`);
+      // beim ersten Besuch offen, danach standardmässig eingeklappt (Klick öffnet)
+      if (ic === '1' || (ic === null && firstVisitDone)) card.classList.add('collapsed');
+      head.addEventListener('click', () => { card.classList.toggle('collapsed'); store.set(`${def.id}.introCollapsed`, card.classList.contains('collapsed') ? '1' : '0'); });
       card.append(button('', { icon: 'close', small: true, ghost: true, title: 'Ausblenden (über «?» wieder abrufbar)', onClick: () => { store.set(`${def.id}.introHidden`, '1'); card.remove(); } }));
       inputPanel.append(card);
     }
@@ -507,7 +688,8 @@ export function createApp(def) {
     try {
       const sections = def.report(app);
       if (def.derivation && def.reportDerivation !== false) sections.push(derivationReport(def.derivation(app)));
-      openReport({ title: def.title, subtitle: def.subtitle, project: app.project.meta }, sections);
+      const multi = app.doc.items.length > 1 || !/^\S+ 1$/.test(app.instance.name);
+      openReport({ title: def.title, subtitle: multi ? `${def.subtitle} · ${inst.label}: ${app.instance.name}` : def.subtitle, project: app.doc.meta }, sections);
     } catch (e) {
       console.error(e);
       toast(`Bericht konnte nicht erstellt werden: ${e.message}`, 'error');
@@ -516,26 +698,39 @@ export function createApp(def) {
 
   /** Erzeugt eine Momentaufnahme der Grafik in einer bestimmten Darstellung (für Berichte). */
   app.snapshot = (mode, opts = {}) => {
+    const v = app.view;
     const prev = app.viewMode;
     const prevOpts = opts.viewOpts ? { ...app.viewOpts } : null;
     if (opts.viewOpts) Object.assign(app.viewOpts, opts.viewOpts);
     if (mode) app.viewMode = mode;
+    // Berichtsgrafik in fester Breite; das Seitenverhältnis folgt dem Modell (nicht dem Bildschirmfenster)
+    const saved = { s: v.s, tx: v.tx, ty: v.ty, w: v.width, h: v.height, fitted: v.fitted, user: v.userAdjusted, insets: v.insets };
     drawView();
-    app.view.fit(opts.padding ?? 36);
-    const svg = app.view.snapshot();
+    const b = v.modelBounds || v.bbox;
+    const W = opts.width || 960;
+    const ratio = b ? Math.min(1.25, Math.max(0.42, (b.y1 - b.y0) / Math.max(1e-9, b.x1 - b.x0) * 1.08)) : 0.6;
+    v.width = W; v.height = Math.round(opts.height || W * ratio);
+    v.insets = null;
+    v.fit(opts.padding ?? 40);
+    const svg = v.snapshot();
     svg.removeAttribute('width');
     svg.removeAttribute('height');
     svg.style.width = '100%';
     svg.style.height = 'auto';
+    // Ansicht wiederherstellen
+    Object.assign(v, { width: saved.w, height: saved.h, insets: saved.insets });
     app.viewMode = prev;
     if (prevOpts) app.viewOpts = prevOpts;
     drawView();
+    v.s = saved.s; v.tx = saved.tx; v.ty = saved.ty; v.fitted = saved.fitted; v.userAdjusted = saved.user;
+    v._apply();
     return svg;
   };
 
   function showHelp() {
     const body = h('div');
     body.innerHTML = (def.intro ? `<div class="intro" style="margin:0 0 12px;padding-right:12px">${def.intro}</div>` : '') + (def.help || '');
+    subscriptify(body);
     if (def.intro) store.set(`${def.id}.introHidden`, '0');
     modal(`Hilfe – ${def.title}`, body);
   }
@@ -552,19 +747,29 @@ export function createApp(def) {
 
   // ---------------------------------------------------------------- Start
   window.openstatik = app; // für Fehlersuche in der Konsole
-  let initial = null;
+  firstVisitDone = store.get(`${def.id}.visited`) === '1';
+  store.set(`${def.id}.visited`, '1');
   const params = new URLSearchParams(location.search);
   const exParam = +(params.get('beispiel') || params.get('example') || 0);
-  const saved = store.get(`${def.id}.autosave`);
-  if (saved) { try { initial = JSON.parse(saved); } catch { initial = null; } }
+  // Zwischenstand: Dokument (neu) oder einzelnes Projekt (ältere Version)
+  let initial = null;
+  try {
+    const d = store.get(`${def.id}.doc`);
+    if (d) initial = JSON.parse(d);
+    else { const old = store.get(`${def.id}.autosave`); if (old) initial = docFromProject(JSON.parse(old)); }
+  } catch { initial = null; }
   if (exParam >= 1 && def.examples?.[exParam - 1]) {
-    loadExample(def.examples[exParam - 1]);
+    const ex = def.examples[exParam - 1];
+    const d = docFromProject(ex.project(), ex.name);
+    d.meta.name = ex.name;
+    app.setDocument(d);
+    app.status(`Beispiel geladen: ${ex.name}`, 'ok');
   } else if (initial && !params.has('neu')) {
-    app.setProject(initial);
+    app.setDocument(initial);
     app.status('Letzter Arbeitsstand wiederhergestellt – «Neu» beginnt ein leeres Projekt');
   } else {
     // Standard: leeres Projekt; Beispiele bleiben oben unter «Beispiele» abrufbar
-    app.setProject(def.defaultProject());
+    app.setDocument(docFromProject(def.defaultProject()));
     app.status(def.examples?.length ? 'Leeres Projekt – Beispiele finden Sie oben unter «Beispiele»' : 'Leeres Projekt');
   }
   const viewParam = params.get('ansicht') || params.get('view');

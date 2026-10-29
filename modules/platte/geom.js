@@ -177,3 +177,66 @@ export function triMinAngle(ax, ay, bx, by, cx, cy) {
   const ang = (o, p, q) => Math.acos(Math.max(-1, Math.min(1, (p * p + q * q - o * o) / (2 * p * q))));
   return Math.min(ang(a, b, c), ang(b, c, a), ang(c, a, b)) * 180 / Math.PI;
 }
+
+// ------------------------------------------------------------------ Gebiet aus mehreren Platten
+
+/** Liegt der Punkt in mindestens einem der Ringe (Vereinigung) und in keiner Öffnung? */
+export function inUnion(x, y, outlines, holes = []) {
+  let inside = false;
+  for (const r of outlines) if (pointInPolygon(x, y, r)) { inside = true; break; }
+  if (!inside) return false;
+  for (const h of holes) if (pointInPolygon(x, y, h)) return false;
+  return true;
+}
+
+/** Liegt der Punkt (innerhalb tol) auf dem Rand eines der Ringe? */
+export function onAnyRing(x, y, rings, tol = 1e-7) {
+  for (const r of rings) if (distToPolygon(x, y, r) < tol) return true;
+  return false;
+}
+
+/**
+ * Freie Ränder der Vereinigung mehrerer Plattenpolygone (ohne Öffnungen): Kanten bzw. Kantenteile,
+ * auf deren einer Seite keine Platte liegt. Gemeinsame Kanten benachbarter Platten und Ränder innen
+ * liegender Platten (Verstärkungen) sind keine freien Ränder. → [[a, b], …]
+ */
+export function freeEdges(outlines, holes = [], tol = 1e-7) {
+  const out = [];
+  const L = Math.max(1, ...outlines.flat().map((p) => Math.max(Math.abs(p[0]), Math.abs(p[1]))));
+  const eps = 1e-5 * L;
+  for (const r of outlines) {
+    for (let i = 0; i < r.length; i++) {
+      const a = r[i], b = r[(i + 1) % r.length];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len < tol) continue;
+      // an Eckpunkten anderer Platten unterteilen
+      const ts = [0, 1];
+      for (const o of outlines) {
+        if (o === r) continue;
+        for (const q of o) {
+          const d = distPointSeg(q[0], q[1], a[0], a[1], b[0], b[1]);
+          if (d.d < tol && d.t > 1e-9 && d.t < 1 - 1e-9) ts.push(d.t);
+        }
+      }
+      ts.sort((p, q) => p - q);
+      const nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len;
+      for (let k = 0; k + 1 < ts.length; k++) {
+        if (ts[k + 1] - ts[k] < 1e-9) continue;
+        const tm = (ts[k] + ts[k + 1]) / 2;
+        const mx = a[0] + (b[0] - a[0]) * tm, my = a[1] + (b[1] - a[1]) * tm;
+        const s1 = inUnion(mx + nx * eps, my + ny * eps, outlines, []);
+        const s2 = inUnion(mx - nx * eps, my - ny * eps, outlines, []);
+        if (s1 !== s2) {
+          out.push([[a[0] + (b[0] - a[0]) * ts[k], a[1] + (b[1] - a[1]) * ts[k]], [a[0] + (b[0] - a[0]) * ts[k + 1], a[1] + (b[1] - a[1]) * ts[k + 1]]]);
+        }
+      }
+    }
+  }
+  void holes;
+  return out;
+}
+
+/** Bounding Box mehrerer Ringe. */
+export function bboxOfRings(rings) {
+  return bboxOf(rings.flat());
+}

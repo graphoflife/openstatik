@@ -293,17 +293,19 @@ export function solvePlate(mesh, opts) {
 /**
  * Schnittmomente: je Element im Schwerpunkt sowie gemittelt an den Knoten (Mittelung der
  * Eckwerte aller angrenzenden Elemente, flächengewichtet).
- * Mit elemFactor > 1 markierte Elemente (starre Stützenköpfe) gehen nicht in die Knotenmittelung
+ * Elemente starrer Stützenköpfe (headMask[t] = 1; ohne headMask: elemFactor > 1) gehen nicht in die Knotenmittelung
  * der Randknoten ein; Knoten im Inneren eines Stützenkopfes erhalten den Mittelwert der Werte am
  * Stützenrand (Moment am Anschnitt statt singulärer Spitze der Punktlagerung).
  * Rückgabe: {emx, emy, emxy (Elementschwerpunkt), mx, my, mxy (Knoten)}
  */
-export function plateMoments(mesh, u, D, nu, elemFactor = null) {
+export function plateMoments(mesh, u, D, nu, elemFactor = null, headMask = null) {
   const { x, y, tri, nNodes: n } = mesh;
   const nt = tri.length / 3;
   const emx = new Float64Array(nt), emy = new Float64Array(nt), emxy = new Float64Array(nt);
   const mx = new Float64Array(n), my = new Float64Array(n), mxy = new Float64Array(n), wsum = new Float64Array(n);
-  const soft = elemFactor ? new Uint8Array(n) : null;
+  const isHead = headMask ? (t) => headMask[t] === 1 : (t) => !!elemFactor && elemFactor[t] > 1;
+  const anyHead = headMask ? headMask.some((v) => v === 1) : !!elemFactor;
+  const soft = anyHead ? new Uint8Array(n) : null;
   const ue = new Float64Array(9), B = new Float64Array(27);
   const corners = [[0, 0], [1, 0], [0, 1]];
   for (let t = 0; t < nt; t++) {
@@ -311,7 +313,7 @@ export function plateMoments(mesh, u, D, nu, elemFactor = null) {
     const co = dktCoefficients(x[i1], y[i1], x[i2], y[i2], x[i3], y[i3]);
     const nodes = [i1, i2, i3];
     for (let k = 0; k < 3; k++) { ue[3 * k] = u[3 * nodes[k]]; ue[3 * k + 1] = u[3 * nodes[k] + 1]; ue[3 * k + 2] = u[3 * nodes[k] + 2]; }
-    const stiff = elemFactor && elemFactor[t] > 1;
+    const stiff = isHead(t);
     const De = elemFactor ? D * elemFactor[t] : D;
     const mc = dktMoments(co, ue, De, nu, 1 / 3, 1 / 3, B);
     emx[t] = mc[0]; emy[t] = mc[1]; emxy[t] = mc[2];
@@ -325,11 +327,11 @@ export function plateMoments(mesh, u, D, nu, elemFactor = null) {
     }
   }
   for (let i = 0; i < n; i++) if (wsum[i] > 0) { mx[i] /= wsum[i]; my[i] /= wsum[i]; mxy[i] /= wsum[i]; }
-  if (elemFactor) {
+  if (anyHead) {
     // Knoten nur in starren Elementen: Mittelwert der benachbarten Randknoten
     const sx = new Float64Array(n), sy = new Float64Array(n), sxy = new Float64Array(n), cnt = new Float64Array(n);
     for (let t = 0; t < nt; t++) {
-      if (!(elemFactor[t] > 1)) continue;
+      if (!isHead(t)) continue;
       for (let k = 0; k < 3; k++) {
         const a = tri[3 * t + k];
         if (soft[a] || wsum[a] <= 0) continue;
@@ -342,7 +344,7 @@ export function plateMoments(mesh, u, D, nu, elemFactor = null) {
     }
     for (let i = 0; i < n; i++) if (cnt[i] > 0) { mx[i] = sx[i] / cnt[i]; my[i] = sy[i] / cnt[i]; mxy[i] = sxy[i] / cnt[i]; }
     for (let t = 0; t < nt; t++) {
-      if (!(elemFactor[t] > 1)) continue;
+      if (!isHead(t)) continue;
       const a = tri[3 * t], b = tri[3 * t + 1], c = tri[3 * t + 2];
       emx[t] = (mx[a] + mx[b] + mx[c]) / 3; emy[t] = (my[a] + my[b] + my[c]) / 3; emxy[t] = (mxy[a] + mxy[b] + mxy[c]) / 3;
     }

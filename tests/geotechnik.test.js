@@ -14,6 +14,7 @@ import { wallAnalysis } from '../modules/geotechnik/wall.js';
 import { compute, IncompleteInput } from '../modules/geotechnik/calc.js';
 import { derivation } from '../modules/geotechnik/derivation.js';
 import { EXAMPLES, defaultProject } from '../modules/geotechnik/examples.js';
+import { makeGround, layersToGround, migrateSoil, splitRing, ringArea, FAR } from '../modules/geotechnik/ground.js';
 
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg ?? ''} erwartet ${b}, erhalten ${a} (Toleranz ${tol})`);
 const rel = (a, b, r, msg) => near(a, b, Math.abs(b) * r, msg);
@@ -279,7 +280,8 @@ test('Leeres Standardprojekt: freundlicher Hinweis (IncompleteInput) statt Fehle
   for (const t of ['erddruck', 'grundbruch', 'setzung', 'boeschung', 'stuetzmauer']) {
     const p = defaultProject();
     p.analysis = t;
-    assert.equal(p.soil.layers.length, 1);
+    assert.equal(p.soil.soils.length, 1);
+    assert.equal(p.soil.zones.length, 0);
     assert.throws(() => compute(p), (e) => e instanceof IncompleteInput && e.incomplete === true && typeof e.hint === 'string' && e.hint.length > 20, t);
   }
   // Grundbruch mit Fundament, aber ohne Lasten → Hinweis auf Lasten
@@ -318,4 +320,93 @@ test('Spannungen und Mittelwerte im Schichtprofil', () => {
   near(s.u, 30, 1e-12);
   const a = averageParams(soil, 1, 3);
   near(a.phi, Math.atan((Math.tan(Math.PI / 6) + Math.tan(20 * Math.PI / 180)) / 2) * 180 / Math.PI, 1e-9);
+});
+
+// ------------------------------------------------------------------ Frei geformte Schichten (Polygone)
+
+/** Waagrechte Schichten als endliche, gezeichnete Polygone (wie in der Grafik) statt breiter Bänder. */
+function asDrawnPolygons(soilIn, x0, x1, top) {
+  const g = layersToGround(soilIn.layers);
+  const zones = g.zones.map((z) => {
+    const ys = z.ring.map((q) => q[1]);
+    const yt = Math.min(Math.max(...ys), top), yb = Math.min(...ys);
+    return { soil: z.soil, ring: [[x0, yt], [x0, yb], [x1, yb], [x1, yt]] };
+  });
+  return { soils: g.soils, zones, base: g.base, gw: soilIn.gw, gammaW: soilIn.gammaW };
+}
+
+test('Bodenmodell: Profil, Punktabfrage, Linse und Vorrang späterer Flächen', () => {
+  const G = makeGround({
+    soils: [{ name: 'A', gamma: 20 }, { name: 'B', gamma: 18 }, { name: 'C', gamma: 21 }],
+    zones: [{ soil: 0, ring: [[-FAR, 50], [FAR, 50], [FAR, -2], [-FAR, -2]] }, { soil: 1, ring: [[2, -1], [6, -1], [6, -4], [2, -4]] }],
+    base: 2,
+  });
+  const below = (x) => G.profileAt(x).filter((iv) => iv.yTop <= 50).map((iv) => [iv.soil, iv.yBot]); // ohne Luftraum über der obersten Fläche
+  assert.deepEqual(below(0), [[0, -2], [2, -Infinity]]);
+  assert.deepEqual(below(4), [[0, -1], [1, -4], [2, -Infinity]]);
+  assert.equal(G.soilAt(4, -3).name, 'B');
+  assert.equal(G.soilAt(4, -0.5).name, 'A');
+  assert.equal(G.soilAt(10, -3).name, 'C');
+  // geneigte Grenze: Tiefe der Grenze linear in x
+  const H = makeGround({ soils: [{ name: 'A' }, { name: 'B' }], zones: [{ soil: 1, ring: [[-10, -2], [10, -4], [10, -20], [-10, -20]] }], base: 0 });
+  near(H.profileAt(0)[0].yBot, -3, 1e-12);
+  near(H.profileAt(5)[0].yBot, -3.5, 1e-12);
+});
+
+test('Polygon teilen: zwei Teilflächen, Gesamtfläche bleibt erhalten', () => {
+  const ring = [[-10, 0], [10, 0], [10, -4], [-10, -4]];
+  const parts = splitRing(ring, [[-2, -1], [2, -3]]);
+  assert.ok(parts);
+  near(Math.abs(ringArea(parts[0])) + Math.abs(ringArea(parts[1])), 80, 1e-9);
+  // waagrecht verlängert: links bei y = −1, rechts bei y = −3
+  const G = makeGround({ soils: [{ name: 'A' }, { name: 'B' }, { name: 'C' }], zones: [{ soil: 0, ring: parts[0] }, { soil: 1, ring: parts[1] }], base: 2 });
+  const bounds = (x) => G.profileAt(x).map((iv) => iv.yBot);
+  assert.ok(bounds(8).some((y) => Math.abs(y + 3) < 1e-9), 'rechts Grenze bei −3');
+  assert.ok(bounds(-8).some((y) => Math.abs(y + 1) < 1e-9), 'links Grenze bei −1');
+  assert.ok(bounds(0).some((y) => Math.abs(y + 2) < 1e-9), 'Mitte Grenze bei −2');
+  assert.equal(splitRing(ring, [[-2, 5], [2, 6]]), null);
+});
+
+test('Migration: waagrechte Schichten als gezeichnete Polygone liefern dieselben Ergebnisse', () => {
+  const cmp = (name, a, b, tol = 1e-9) => near(a, b, Math.max(tol, Math.abs(b) * 1e-9), name);
+  for (const ex of EXAMPLES) {
+    const p = ex.project();
+    if (p.soil.zones.some((z) => !(z.ring.length === 4 && z.ring.every((q) => Math.abs(Math.abs(q[0]) - FAR) < 1e-6)))) continue; // bereits frei gezeichnet
+    // altes Format rekonstruieren (Schichttiefen) und über die Migration rechnen
+    const layers = p.soil.soils.map((s, i) => ({ ...s, z: i === p.soil.base ? -Math.min(...p.soil.zones.map((z) => Math.min(...z.ring.map((q) => q[1]))), 0) : -Math.max(...(p.soil.zones.find((z) => z.soil === i)?.ring.map((q) => q[1]) ?? [0])) }));
+    for (const L of layers) if (!(L.z > 0)) L.z = 0;
+    const legacy = { ...p, soil: { layers, gw: p.soil.gw, gammaW: p.soil.gammaW } };
+    const drawn = { ...p, soil: asDrawnPolygons(legacy.soil, -60, 120, 40) };
+    const A = compute(legacy), B = compute(drawn), C = compute(p);
+    const key = (r) => r.ep?.Eh ?? r.bc?.gov.Rd ?? r.st?.sRef ?? r.sl?.F ?? r.rw?.etaMax;
+    cmp(`${ex.name}: Migration`, key(C), key(A));
+    cmp(`${ex.name}: Polygone`, key(B), key(A));
+  }
+  // migrateSoil wandelt das alte Projektformat um
+  const old = { layers: [{ name: 'A', z: 0 }, { name: 'B', z: 3 }], gw: { on: false } };
+  migrateSoil(old);
+  assert.equal(old.soils.length, 2); assert.equal(old.zones.length, 1); assert.equal(old.base, 1); assert.equal(old.layers, undefined);
+});
+
+test('Böschung: geneigte Weichschicht (Polygon) ist ungünstiger als dieselbe Schicht waagrecht', () => {
+  const ex = EXAMPLES.find((e) => /Weichschicht/.test(e.name));
+  const p = ex.project();
+  const Fincl = compute(p).sl.F;
+  p.soil.zones[0].ring = [[-10, -3], [50, -3], [50, -4], [-10, -4]];
+  const Fhor = compute(p).sl.F;
+  p.soil.zones = [];
+  const Fnone = compute(p).sl.F;
+  assert.ok(Fincl < Fhor - 0.05, `geneigt ${Fincl} vs. waagrecht ${Fhor}`);
+  assert.ok(Fhor < Fnone, `waagrecht ${Fhor} vs. ohne ${Fnone}`);
+});
+
+test('Stützmauer und Grundbruch: Profil an der massgebenden Stelle (Linse unter der Ferse)', () => {
+  const p = EXAMPLES.find((e) => /Winkelstützmauer/.test(e.name)).project();
+  const base = compute(p).rw;
+  // weiche Linse nur unter der Zehe (x < 0.5 m, unter der Sohle): Ersatzwand bei x = B unverändert
+  p.soil.soils.push({ name: 'weich', gamma: 18, gammaP: 8, phi: 20, c: 0, cu: 0, ME: 3, dr: 0.5, col: 4 });
+  p.soil.zones.push({ soil: p.soil.soils.length - 1, ring: [[-3, -4.2], [0.4, -4.2], [0.4, -8], [-3, -8]] });
+  const r = compute(p).rw;
+  near(r.ep.Eh, base.ep.Eh, 1e-9, 'Erddruck auf die Ersatzwand');
+  assert.ok(r.govB.Rd <= base.govB.Rd + 1e-9);
 });

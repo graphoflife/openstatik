@@ -14,7 +14,7 @@ function project(nodes, members, supports, loads, extra = {}) {
   return {
     nodes: nodes.map(([x, y]) => ({ x, y })),
     members: members.map(([i, j, hi = false, hj = false]) => ({ i, j, sec: 1, hi, hj })),
-    sections: [SEC],
+    sections: [{ ...SEC }],
     supports,
     loadCases: [{ name: 'LF1', kind: 'G', selfWeight: false, nodal: [], dist: [], point: [], temp: [], settle: [], ...loads }],
     combinations: [],
@@ -144,4 +144,28 @@ test('Theorie 2. Ordnung mit Schiefstellung: Gleichgewicht der Kräfte bleibt er
   const c = analyze(p).combos[0].res;
   near(c.sumRx + c.sumFx, 0, 1e-6, 'ΣH');
   near(c.sumRy + c.sumFy, 0, 1e-6, 'ΣV');
+});
+
+test('Material und Querschnitt getrennt: gleicher Querschnitt, verschiedene Materialien', async () => {
+  const { newMaterial, newSection, migrateMaterials } = await import('../modules/stabwerk/sections.js');
+  const L = 5, P = 10;
+  const base = (mat) => ({
+    nodes: [{ x: 0, y: 0 }, { x: L, y: 0 }],
+    members: [{ i: 1, j: 2, sec: 1, mat, hi: false, hj: false }],
+    sections: [newSection('profile')], // HEB 200: I = 5696 cm⁴
+    materials: [newMaterial('Beton', 'C25/30'), newMaterial('Baustahl', 'S355')],
+    supports: [{ node: 1, ux: true, uy: true, rz: true }],
+    loadCases: [{ name: 'LF', kind: 'G', selfWeight: false, nodal: [{ node: 2, fx: 0, fy: -P, m: 0 }], dist: [], point: [], temp: [], settle: [] }],
+    combinations: [], analysis: {},
+  });
+  const wSteel = analyze(base(2)).lc[0].disp[1][1];
+  near(wSteel, -P * L ** 3 / (3 * 210000e3 * 5696e-8), 1e-6, 'Stahl E = 210 GPa');
+  const wConc = analyze(base(1)).lc[0].disp[1][1];
+  near(wSteel / wConc, newMaterial('Beton', 'C25/30').E / 210000, 1e-6, 'Verhältnis der E-Moduli');
+  // Altformat: Material im Querschnitt wird in eine Materialliste überführt
+  const old = { sections: [{ name: 'A', type: 'rect', mat: 'S355', b: 100, h: 200 }, { name: 'B', type: 'rect', mat: 'C30/37', b: 300, h: 300 }], members: [{ sec: 2 }, { sec: 1 }] };
+  migrateMaterials(old);
+  assert.deepEqual(old.materials.map((m) => m.name), ['S355', 'C30/37']);
+  assert.deepEqual(old.members.map((m) => m.mat), [2, 1]);
+  assert.equal(old.sections[0].mat, undefined);
 });

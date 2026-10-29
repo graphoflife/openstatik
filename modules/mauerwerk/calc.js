@@ -102,37 +102,37 @@ export function effectiveHeight(o) {
   const { h, t } = o;
   if (o.mode === 'manual') {
     const rho = o.rhoManual > 0 ? o.rhoManual : 1;
-    return { rho, rho2: rho, hef: rho * h, notes, formula: `hef = ρ·h = ${f3(rho)}·${f3(h)} = ${f3(rho * h)} m (ρ manuell)` };
+    return { rho, rho2: rho, hef: rho * h, notes, formula: `h_ef = ρ·h = ${f3(rho)}·${f3(h)} = ${f3(rho * h)} m (ρ manuell)` };
   }
   let rho2 = o.mode === 'slab' ? 0.75 : 1.0;
   if (o.mode === 'slab' && Math.abs(o.eTop || 0) > 0.25 * t) {
     rho2 = 1.0;
-    notes.push('ρ2 = 1.0 statt 0.75, da die Exzentrizität am Wandkopf grösser als 0.25·t ist (EN 1996-1-1, 5.5.1.2).');
+    notes.push('ρ_2 = 1.0 statt 0.75, da die Exzentrizität am Wandkopf grösser als 0.25·t ist (EN 1996-1-1, 5.5.1.2).');
   }
-  let rho = rho2, formula = `ρ2 = ${f3(rho2)}`;
+  let rho = rho2, formula = `ρ_2 = ${f3(rho2)}`;
   const ls = o.ls > 0 ? o.ls : Infinity;
   if (o.sides === 1) {
     if (ls >= 15 * t) {
       notes.push('Seitliche Halterung mit Abstand ≥ 15·t wird nicht angerechnet (EN 1996-1-1, 5.5.1.2 (12)).');
     } else if (h <= 3.5 * ls) {
       rho = Math.max(0.3, rho2 / (1 + (rho2 * h / (3 * ls)) ** 2));
-      formula = `ρ3 = ρ2 / (1 + (ρ2·h/(3·l))²) = ${f3(rho)}`;
+      formula = `ρ_3 = ρ_2/(1 + (ρ_2·h/(3·l))²) = ${f3(rho)}`;
     } else {
       rho = Math.max(0.3, 1.5 * ls / h);
-      formula = `ρ3 = 1.5·l/h = ${f3(rho)}`;
+      formula = `ρ_3 = 1.5·l/h = ${f3(rho)}`;
     }
   } else if (o.sides === 2) {
     if (ls >= 30 * t) {
       notes.push('Seitliche Halterungen mit Abstand ≥ 30·t werden nicht angerechnet (EN 1996-1-1, 5.5.1.2 (12)).');
     } else if (h <= 1.15 * ls) {
       rho = rho2 / (1 + (rho2 * h / ls) ** 2);
-      formula = `ρ4 = ρ2 / (1 + (ρ2·h/l)²) = ${f3(rho)}`;
+      formula = `ρ_4 = ρ_2/(1 + (ρ_2·h/l)²) = ${f3(rho)}`;
     } else {
       rho = 0.5 * ls / h;
-      formula = `ρ4 = 0.5·l/h = ${f3(rho)}`;
+      formula = `ρ_4 = 0.5·l/h = ${f3(rho)}`;
     }
   }
-  return { rho, rho2, hef: rho * h, notes, formula: `${formula}; hef = ρ·h = ${f3(rho)}·${f3(h)} = ${f3(rho * h)} m` };
+  return { rho, rho2, hef: rho * h, notes, formula: `${formula}; h_ef = ρ·h = ${f3(rho)}·${f3(h)} = ${f3(rho * h)} m` };
 }
 
 const f3 = (x) => (Number.isFinite(x) ? (Math.round(x * 1000) / 1000).toFixed(3) : '–');
@@ -472,16 +472,16 @@ export const CHECK_INFO = {
   top: { label: 'Normalkraft Wandkopf', ref: 'SIA 266, 4.3 · Spannungsblock' },
   bot: { label: 'Normalkraft Wandfuss', ref: 'SIA 266, 4.3 · Spannungsblock' },
   buck: { label: 'Normalkraft mit Knicken', ref: 'SIA 266, 4.3 · Th. 2. Ordnung' },
-  buckEN: { label: 'Normalkraft Wandmitte (Φm)', ref: 'EN 1996-1-1, 6.1.2, Anh. G' },
+  buckEN: { label: 'Normalkraft Wandmitte (Φ_m)', ref: 'EN 1996-1-1, 6.1.2, Anh. G' },
   shear: { label: 'Querkraft in Wandebene', ref: 'SIA 266, 4.4 · Spannungsfeld' },
   shearEN: { label: 'Querkraft in Wandebene', ref: 'EN 1996-1-1, 6.2' },
-  shearN: { label: 'Normalkraft in Wandebene', ref: 'EN 1996-1-1, 6.1.2 · lc = l − 2e' },
+  shearN: { label: 'Normalkraft in Wandebene', ref: 'EN 1996-1-1, 6.1.2' },
   conc: { label: 'Teilflächenpressung', ref: 'EN 1996-1-1, 6.1.3' },
   concMid: { label: 'Lastausbreitung bis Wandmitte', ref: 'EN 1996-1-1, 6.1.3 (4)' },
   lat: { label: 'Querbelastung (Stützlinie)', ref: 'SIA 266, 4.3 · Th. 2. Ordnung' },
   basMax: { label: 'Kellerwand: Normalkraft max.', ref: 'EN 1996-3, 4.5 (4.15)' },
   basMin: { label: 'Kellerwand: Normalkraft min.', ref: 'EN 1996-3, 4.5 (4.16)' },
-  slender: { label: 'Schlankheit hef/t', ref: 'EN 1996-1-1, 5.5.1.4' },
+  slender: { label: 'Schlankheit h_ef/t', ref: 'EN 1996-1-1, 5.5.1.4' },
   crack: { label: 'Klaffende Fuge (Gebrauch)', ref: 'Empfehlung e ≤ t/3' },
 };
 
@@ -720,12 +720,12 @@ export function computeWall(p) {
     if (h > 2.6) notes.push('EN 1996-3, 4.5: Lichte Wandhöhe h ≤ 2.6 m ist nicht eingehalten – vereinfachter Kellerwandnachweis nicht anwendbar.');
     if (t < 0.2) notes.push('EN 1996-3, 4.5: Wanddicke t ≥ 200 mm ist nicht eingehalten – vereinfachter Kellerwandnachweis nicht anwendbar.');
     if ((earth.qs || 0) > 5) notes.push('EN 1996-3, 4.5: Auflast auf der Geländeoberfläche > 5 kN/m² – vereinfachter Kellerwandnachweis nicht anwendbar.');
-    if (he > h) notes.push('EN 1996-3, 4.5: Anschütthöhe he grösser als die Wandhöhe – vereinfachter Kellerwandnachweis nicht anwendbar.');
+    if (he > h) notes.push('EN 1996-3, 4.5: Anschütthöhe h_e grösser als die Wandhöhe – vereinfachter Kellerwandnachweis nicht anwendbar.');
   }
-  if (Math.abs(eD) >= t / 2) notes.push(`Die Exzentrizität der Deckenauflagerkraft eD = ${(eD * 1000).toFixed(1)} mm liegt ausserhalb der Wanddicke (|eD| ≥ t/2) – Eingabe prüfen.`);
-  if (Math.abs(eBot) >= t / 2) notes.push(`Die Exzentrizität am Wandfuss eu = ${(eBot * 1000).toFixed(1)} mm liegt ausserhalb der Wanddicke (|eu| ≥ t/2) – kein Tragwiderstand am Wandfuss.`);
-  if (S.method === 'EN' && earthOn && S.basementEN !== false) notes.push('EN-Verfahren: Φm wird in Kombinationen mit Erddruck ohne Erddruckmoment ermittelt; die Querbelastung aus Erddruck ist durch EN 1996-3, 4.5 und den Stützliniennachweis abgedeckt.');
-  if (S.method === 'EN' && earthOn && S.basementEN === false) notes.push('EN-Verfahren: Φm nach Anhang G berücksichtigt keine Bogenwirkung. Für Kelleraussenwände den vereinfachten Nachweis nach EN 1996-3, 4.5 aktivieren oder das SIA-Verfahren verwenden.');
+  if (Math.abs(eD) >= t / 2) notes.push(`Die Exzentrizität der Deckenauflagerkraft e_D = ${(eD * 1000).toFixed(1)} mm liegt ausserhalb der Wanddicke (|e_D| ≥ t/2) – Eingabe prüfen.`);
+  if (Math.abs(eBot) >= t / 2) notes.push(`Die Exzentrizität am Wandfuss e_u = ${(eBot * 1000).toFixed(1)} mm liegt ausserhalb der Wanddicke (|e_u| ≥ t/2) – kein Tragwiderstand am Wandfuss.`);
+  if (S.method === 'EN' && earthOn && S.basementEN !== false) notes.push('EN-Verfahren: Φ_m wird in Kombinationen mit Erddruck ohne Erddruckmoment ermittelt; die Querbelastung aus Erddruck ist durch EN 1996-3, 4.5 und den Stützliniennachweis abgedeckt.');
+  if (S.method === 'EN' && earthOn && S.basementEN === false) notes.push('EN-Verfahren: Φ_m nach Anhang G berücksichtigt keine Bogenwirkung. Für Kelleraussenwände den vereinfachten Nachweis nach EN 1996-3, 4.5 aktivieren oder das SIA-Verfahren verwenden.');
   const conc = L.conc || {};
   if (conc.on && Math.abs((conc.ec || 0) / 1000) > t / 4) notes.push('Teilflächenbelastung: Die Exzentrizität der Einzellast ist grösser als t/4 – EN 1996-1-1, 6.1.3 (4) nicht erfüllt, Nachweis gesondert führen.');
   if (conc.on && !md.solid) notes.push('Teilflächenbelastung: Keine Vollsteine (Steingruppe 1) – Erhöhungsfaktor β = 1.0 (EN 1996-1-1, 6.1.3 (1)).');

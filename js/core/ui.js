@@ -1,7 +1,47 @@
 // UI-Bausteine: DOM-Helfer, Formularfelder, editierbare Tabellen, Tabs, Nachweistabellen, Dialoge
-import { fmt, parseNum } from './format.js';
+import { fmt, parseNum, subTokens, hasSub, subHtml, unicodeSub } from './format.js';
 
-export { fmt, fmtU, fmtPct, fmtSig, parseNum } from './format.js';
+export { fmt, fmtU, fmtPct, fmtSig, parseNum, subHtml, unicodeSub } from './format.js';
+
+/** Bezeichnung mit echter Tief-/Hochstellung (f_cd → f<sub>cd</sub>); Nodes werden unverändert zurückgegeben. */
+export function rich(text) {
+  if (text === null || text === undefined || text === false) return null;
+  if (typeof text !== 'string') return text;
+  if (!hasSub(text)) return text;
+  const span = document.createElement('span');
+  span.innerHTML = subHtml(text);
+  return span;
+}
+
+/** Wendet die Tief-/Hochstellung auf alle Textknoten eines HTML-Elements an (Tags bleiben erhalten). */
+export function subscriptify(root) {
+  if (!root) return root;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement?.closest('code, pre, kbd, sub, sup, script, style') || !hasSub(n.nodeValue) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const n of nodes) {
+    const span = document.createElement('span');
+    span.innerHTML = subHtml(n.nodeValue);
+    n.replaceWith(...span.childNodes);
+  }
+  return root;
+}
+
+/** Füllt ein SVG-<text> mit Tief-/Hochstellung (tspan mit baseline-shift). */
+export function svgRich(el, str) {
+  const s = String(str ?? '');
+  if (!hasSub(s)) { el.textContent = s; return el; }
+  while (el.firstChild) el.removeChild(el.firstChild);
+  for (const tk of subTokens(s)) {
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+    t.textContent = tk.s;
+    if (tk.t !== 'n') { t.setAttribute('baseline-shift', tk.t === 'sub' ? 'sub' : 'super'); t.setAttribute('font-size', '78%'); }
+    el.append(t);
+  }
+  return el;
+}
 
 // ------------------------------------------------------------------ DOM
 
@@ -45,7 +85,7 @@ export function svgEl(tag, attrs = {}, ...children) {
     if (v === undefined || v === null) continue;
     if (k === 'style' && typeof v === 'object') {
       for (const [sk, sv] of Object.entries(v)) if (sv !== undefined && sv !== null) el.style.setProperty(sk.replace(/[A-Z]/g, (m) => '-' + m.toLowerCase()), sv);
-    } else if (k === 'text') el.textContent = v;
+    } else if (k === 'text') svgRich(el, v);
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
     else el.setAttribute(k, v);
   }
@@ -89,6 +129,7 @@ const ICONS = {
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
   grid: '<path d="M4 4h16v16H4zM4 10h16M4 16h16M10 4v16M16 4v16"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
 };
 
 /** Liefert ein Inline-SVG-Icon. */
@@ -116,7 +157,7 @@ export function segmented(items, active, onSelect) {
         el.children[items.indexOf(it)].classList.add('active');
         onSelect(it.id);
       },
-    }, it.label));
+    }, rich(it.label)));
   }
   return el;
 }
@@ -150,11 +191,39 @@ if (typeof document !== 'undefined') {
 
 // ------------------------------------------------------------------ Gruppen & Tabs
 
-/** Abschnitt mit Titel. opts: {collapsible, collapsed, actions: [Node]} */
+/**
+ * Abschnitt als Karte mit Titelzeile. Standardmässig einklappbar; der Zustand wird je Seite gespeichert.
+ * opts: {collapsible (Standard true), collapsed (Startzustand), actions: [Node], info, count, id, flat}
+ * Ein Zähler «Titel (3)» im Titel wird als Plakette dargestellt.
+ */
 export function group(title, children = [], opts = {}) {
-  const el = h('section', { class: ['group', opts.collapsible && 'collapsible', opts.collapsed && 'collapsed', opts.class] });
-  const head = h('div', { class: 'group-title' }, title, opts.info ? infoTip(opts.info) : null, opts.actions ? h('span', { class: 'actions', onclick: (e) => e.stopPropagation() }, opts.actions) : null);
-  if (opts.collapsible) head.addEventListener('click', () => el.classList.toggle('collapsed'));
+  let count = opts.count;
+  let name = title;
+  if (typeof title === 'string') {
+    const m = /^(.*?)\s*\((\d+)\)\s*$/.exec(title);
+    if (m && count === undefined) { name = m[1]; count = +m[2]; }
+  }
+  const collapsible = opts.collapsible !== false && !opts.flat;
+  const key = opts.id || (typeof name === 'string' ? name : null);
+  const storeKey = key ? `openstatik.grp.${location.pathname}.${key}` : null;
+  let collapsed = !!opts.collapsed;
+  if (collapsible && storeKey) { try { const v = localStorage.getItem(storeKey); if (v !== null) collapsed = v === '1'; } catch { /* */ } }
+  const el = h('section', { class: ['group', collapsible && 'collapsible', collapsed && 'collapsed', opts.flat && 'flat', opts.class] });
+  const head = h('div', { class: 'group-title', role: collapsible ? 'button' : null, tabindex: collapsible ? 0 : null, 'aria-expanded': collapsible ? String(!collapsed) : null },
+    h('span', { class: 'group-name' }, rich(name)),
+    count !== undefined && count !== null ? h('span', { class: 'group-count' }, String(count)) : null,
+    opts.info ? infoTip(opts.info) : null,
+    opts.actions ? h('span', { class: 'actions', onclick: (e) => e.stopPropagation() }, opts.actions) : null);
+  if (collapsible) {
+    const toggle = () => {
+      el.classList.toggle('collapsed');
+      const c = el.classList.contains('collapsed');
+      head.setAttribute('aria-expanded', String(!c));
+      if (storeKey) { try { localStorage.setItem(storeKey, c ? '1' : '0'); } catch { /* */ } }
+    };
+    head.addEventListener('click', (e) => { if (!e.target.closest('.info-tip, .actions, button, input, select')) toggle(); });
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  }
   el.append(head);
   append(el, [children]);
   return el;
@@ -171,7 +240,7 @@ export function tabs(defs, opts = {}) {
   let current = opts.active && defs.some((d) => d.id === opts.active) ? opts.active : defs[0]?.id;
   const buttons = {};
   for (const d of defs) {
-    buttons[d.id] = h('button', { type: 'button', role: 'tab', onclick: () => select(d.id) }, d.label);
+    buttons[d.id] = h('button', { type: 'button', role: 'tab', onclick: () => select(d.id) }, Array.isArray(d.label) ? d.label : rich(d.label));
     bar.append(buttons[d.id]);
   }
   function select(id, initial = false) {
@@ -199,7 +268,8 @@ export function numField(label, obj, key, opts = {}) {
   const id = nextId();
   const input = numInput(obj, key, { ...opts, id });
   return h('div', { class: 'field', title: opts.title || '' },
-    labelEl(id, label, opts.info), input, h('span', { class: 'unit' }, opts.unit || ''),
+    labelEl(id, label, opts.info),
+    h('div', { class: 'ig' }, input, opts.unit ? h('span', { class: 'ig-unit' }, rich(opts.unit)) : null),
     opts.help ? h('div', { class: 'help' }, opts.help) : null);
 }
 
@@ -234,7 +304,7 @@ export function selectField(label, obj, key, options, opts = {}) {
 export function selectInput(obj, key, options, opts = {}) {
   const sel = h('select', { id: opts.id });
   const list = (typeof options === 'function' ? options() : options).map((o) => (typeof o === 'object' ? o : { value: o, label: String(o) }));
-  for (const o of list) sel.append(h('option', { value: String(o.value) }, o.label));
+  for (const o of list) sel.append(h('option', { value: String(o.value) }, unicodeSub(String(o.label))));
   sel.value = String(obj[key]);
   sel.addEventListener('change', () => {
     const o = list.find((x) => String(x.value) === sel.value);
@@ -285,7 +355,7 @@ export function dataTable(columns, rows, opts = {}) {
   const table = h('table', { class: 'dt' });
   const tbody = h('tbody');
   const head = h('tr', {}, numbered ? h('th', {}, '#') : null,
-    columns.map((c) => h('th', { style: c.width ? { width: c.width } : undefined, title: c.title || '' }, c.label, c.info ? infoTip(c.info) : null, c.unit ? h('span', { class: 'unit' }, `[${c.unit}]`) : null)),
+    columns.map((c) => h('th', { style: c.width ? { width: c.width } : undefined, title: c.title || '' }, rich(c.label), c.info ? infoTip(c.info) : null, c.unit ? h('span', { class: 'unit' }, rich(c.unit)) : null)),
     h('th', {}, ''));
   table.append(h('thead', {}, head), tbody);
   wrap.append(table);
@@ -416,7 +486,8 @@ export function dataTable(columns, rows, opts = {}) {
   const foot = h('div', { class: 'dt-foot' });
   if (opts.canAdd !== false) foot.append(button('Zeile', { icon: 'plus', small: true, onClick: addRow, title: 'Zeile hinzufügen' }));
   if (opts.extraButtons) foot.append(...opts.extraButtons);
-  foot.append(h('span', { class: 'hint' }, opts.hint ?? 'Einfügen aus Excel möglich'));
+  if (opts.hint) foot.append(h('span', { class: 'hint' }, opts.hint));
+  wrap.title = 'Tipp: Werte lassen sich direkt aus Excel einfügen (Ctrl+V in eine Zelle)';
   const el = h('div', { class: 'dt-container' }, wrap, foot);
   el.refresh = render;
   el.select = (i) => { selected = i; render(); };
@@ -428,7 +499,7 @@ export function dataTable(columns, rows, opts = {}) {
 /** Schlüssel-Wert-Tabelle. rows: [[label, value(number|string|Node), unit, digits]] */
 export function kvTable(rows) {
   return h('table', { class: 'kv' }, h('tbody', {}, rows.filter(Boolean).map(([label, value, unit, digits]) =>
-    h('tr', {}, h('td', {}, label), h('td', { class: 'val' }, typeof value === 'number' ? fmt(value, digits ?? 2) : value ?? '–'), h('td', { class: 'unit' }, unit || '')))));
+    h('tr', {}, h('td', {}, rich(label)), h('td', { class: 'val' }, typeof value === 'number' ? fmt(value, digits ?? 2) : rich(value) ?? '–'), h('td', { class: 'unit' }, rich(unit || ''))))));
 }
 
 /**
@@ -439,7 +510,7 @@ export function resultTable(headers, rows, opts = {}) {
   const hs = headers.map((x) => (typeof x === 'string' ? { label: x } : x));
   const t = h('table', { class: 'rt' });
   if (opts.caption) t.append(h('caption', {}, opts.caption));
-  t.append(h('thead', {}, h('tr', {}, hs.map((c) => h('th', { class: c.num ? 'num' : '' }, c.label, c.unit ? ` [${c.unit}]` : '')))));
+  t.append(h('thead', {}, h('tr', {}, hs.map((c) => h('th', { class: c.num ? 'num' : '' }, rich(c.label), c.unit ? [' [', rich(c.unit), ']'] : '')))));
   const tb = h('tbody');
   rows.forEach((r, i) => tb.append(h('tr', { class: opts.rowClass ? opts.rowClass(r, i) : '' }, r.map((v, j) => {
     const c = hs[j] || {};
@@ -480,19 +551,19 @@ export function checksTable(checks, opts = {}) {
     const d = c.digits ?? 1;
     const kind = !Number.isFinite(eta) || eta > 1.0001 ? 'fail' : eta > 0.95 ? 'warn' : 'ok';
     const w = Number.isFinite(eta) ? Math.min(100, Math.max(0, eta * 100)) : 100;
-    const val = (v) => `${fmt(v, d)}${c.unit ? ' ' + c.unit : ''}`;
+    const val = (v) => [fmt(v, d), c.unit ? ' ' : '', rich(c.unit || '')];
     const sub = [c.ref, c.detail].filter(Boolean);
     list.append(h('div', { class: `chk ${kind}`, style: { animationDelay: `${Math.min(i, 10) * 25}ms` }, title: `η = ${Number.isFinite(eta) ? fmt(eta, 3) : '∞'}` },
       h('div', { class: 'chk-head' },
         h('span', { class: 'chk-icon', 'aria-hidden': 'true' }, kind === 'fail' ? '✕' : '✓'),
-        h('span', { class: 'chk-label' }, c.label),
+        h('span', { class: 'chk-label' }, rich(c.label)),
         c.deriv ? h('button', { type: 'button', class: 'chk-link', title: 'Rechenweg dieses Nachweises anzeigen', onclick: () => document.dispatchEvent(new CustomEvent('os-derivation', { detail: c.deriv })) }, 'Herleitung ›') : null,
         h('span', { class: `chk-eta ${kind}` }, Number.isFinite(eta) ? fmt(eta, 2) : '∞')),
-      sub.length ? h('div', { class: 'chk-sub' }, sub.map((x, k) => [k ? ' · ' : '', x])) : null,
+      sub.length ? h('div', { class: 'chk-sub' }, sub.map((x, k) => [k ? ' · ' : '', rich(x)])) : null,
       c.Ed !== undefined || c.Rd !== undefined
         ? h('div', { class: 'chk-vals' },
-          c.Ed !== undefined ? h('span', {}, h('i', {}, ed), ' ', val(c.Ed)) : null,
-          c.Rd !== undefined ? h('span', {}, h('i', {}, rd), ' ', val(c.Rd)) : null)
+          c.Ed !== undefined ? h('span', {}, h('i', {}, rich(ed)), ' ', val(c.Ed)) : null,
+          c.Rd !== undefined ? h('span', {}, h('i', {}, rich(rd)), ' ', val(c.Rd)) : null)
         : null,
       h('div', { class: 'chk-bar' }, h('i', { style: { width: `${w}%` } }))));
   });
@@ -503,7 +574,7 @@ export function checksTable(checks, opts = {}) {
 export function summaryCard(etaMax, label = 'Maximale Ausnutzung', extra = null) {
   const ok = Number.isFinite(etaMax) && etaMax <= 1.0001;
   return h('div', { class: `summary-card ${ok ? 'ok' : 'fail'}` },
-    h('div', { class: 'label' }, label),
+    h('div', { class: 'label' }, rich(label)),
     h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
       h('span', { class: 'big' }, Number.isFinite(etaMax) ? `η = ${fmt(etaMax, 2)}` : 'η = ∞'),
       etaBadge(etaMax)),
@@ -513,12 +584,12 @@ export function summaryCard(etaMax, label = 'Maximale Ausnutzung', extra = null)
 /** Kennzahlen-Kacheln. items: [[label, value, unit, digits]] */
 export function stats(items) {
   return h('div', { class: 'stats' }, items.filter(Boolean).map(([label, value, unit, digits]) =>
-    h('div', { class: 'stat' }, h('div', { class: 'label' }, label),
-      h('div', { class: 'value' }, typeof value === 'number' ? fmt(value, digits ?? 2) : value, unit ? h('small', {}, unit) : null))));
+    h('div', { class: 'stat' }, h('div', { class: 'label' }, rich(label)),
+      h('div', { class: 'value' }, typeof value === 'number' ? fmt(value, digits ?? 2) : rich(value), unit ? h('small', {}, rich(unit)) : null))));
 }
 
 export function note(text, kind = '') {
-  return h('div', { class: `note ${kind}` }, text);
+  return h('div', { class: `note ${kind}` }, rich(text));
 }
 
 /** Leerer Zustand mit Anleitung, z.B. "Noch keine Lasten – mit «+ Zeile» hinzufügen". */
@@ -533,7 +604,7 @@ export function infoTip(text) {
   const show = () => {
     hide();
     const r = tip.getBoundingClientRect();
-    popover = h('div', { class: 'popover', role: 'tooltip', html: text });
+    popover = subscriptify(h('div', { class: 'popover', role: 'tooltip', html: text }));
     document.body.append(popover);
     const pr = popover.getBoundingClientRect();
     let left = Math.min(window.innerWidth - pr.width - 8, Math.max(8, r.left + r.width / 2 - pr.width / 2));
@@ -552,7 +623,7 @@ export function infoTip(text) {
 }
 
 function labelEl(id, label, info) {
-  return h('label', { for: id }, label, info ? infoTip(info) : null);
+  return h('label', { for: id }, rich(label), info ? infoTip(info) : null);
 }
 
 // ------------------------------------------------------------------ Meldungen & Dialoge
@@ -607,3 +678,67 @@ export function pickFile(accept = '.json,application/json') {
 
 /** Tiefe Kopie (JSON-sicher). */
 export const clone = (o) => JSON.parse(JSON.stringify(o));
+
+// ------------------------------------------------------------------ Listenbaustein
+
+/**
+ * Liste mit aufklappbaren Details (Materialien, Querschnitte, Lastfälle, Schichten …). Verändert `items` direkt.
+ * opts: {
+ *   label(it, i) → Name, sub(it, i) → Kurzinfo (Text/Node), swatch(it, i) → CSS-Farbe,
+ *   detail(el, it, i) → Editor des geöffneten Eintrags,
+ *   active: Index des geöffneten Eintrags (oder null), onActive(i),
+ *   add: [{label, icon, create() → neuer Eintrag}] – Knöpfe unter der Liste,
+ *   duplicate(it) → Kopie (Standard: tiefe Kopie mit «(Kopie)»), canRemove(it, i) → bool, onRemove(i) → false bricht ab,
+ *   onChange({type: 'add'|'remove'|'duplicate'|'move', index}), empty: Text bei leerer Liste, badge(it, i) → Node
+ * }
+ */
+export function listEditor(items, opts = {}) {
+  const el = h('div', { class: 'lst-container' });
+  let active = opts.active ?? null;
+  const notify = (type, index) => opts.onChange?.({ type, index });
+  const setActive = (i) => { active = i; opts.onActive?.(i); render(); };
+  function render() {
+    clear(el);
+    const list = h('div', { class: 'lst' });
+    if (!items.length) list.append(h('div', { class: 'lst-empty' }, opts.empty || 'Noch keine Einträge.'));
+    items.forEach((it, i) => {
+      const isActive = i === active;
+      const removable = opts.canRemove ? opts.canRemove(it, i) : true;
+      const row = h('div', { class: `lst-row${isActive ? ' active' : ''}`, tabindex: 0, role: 'button', 'aria-expanded': String(isActive),
+        onclick: (e) => { if (!e.target.closest('.lst-act')) setActive(isActive ? null : i); },
+        onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === row) { e.preventDefault(); setActive(isActive ? null : i); } } },
+      h('span', { class: 'lst-swatch', style: { background: opts.swatch?.(it, i) || 'var(--accent)' } }),
+      h('div', { class: 'lst-main' }, h('div', { class: 'lst-name' }, rich(opts.label ? opts.label(it, i) : it.name || `Eintrag ${i + 1}`)), opts.sub ? h('div', { class: 'lst-sub' }, rich(opts.sub(it, i))) : null),
+      h('span', { class: 'lst-side' }, opts.badge?.(it, i) || null),
+      h('span', { class: 'lst-act' },
+        opts.duplicate !== false ? button('', { icon: 'copy', small: true, ghost: true, title: 'Duplizieren', onClick: () => {
+          const copy = typeof opts.duplicate === 'function' ? opts.duplicate(it) : { ...clone(it), name: `${it.name || 'Eintrag'} (Kopie)` };
+          items.splice(i + 1, 0, copy); active = i + 1; notify('duplicate', i + 1); render();
+        } }) : null,
+        removable ? button('', { icon: 'trash', small: true, ghost: true, title: 'Löschen', onClick: () => {
+          if (opts.onRemove && opts.onRemove(i) === false) return;
+          items.splice(i, 1);
+          if (active !== null) active = active === i ? null : active > i ? active - 1 : active;
+          notify('remove', i); render();
+        } }) : null));
+      list.append(row);
+      if (isActive && opts.detail) {
+        const d = h('div', { class: 'lst-detail' });
+        opts.detail(d, it, i);
+        list.append(d);
+      }
+    });
+    el.append(list);
+    if (opts.add?.length) {
+      el.append(h('div', { class: 'lst-add' }, opts.add.map((a) => button(a.label, { icon: a.icon || 'plus', small: true, onClick: () => {
+        const it = a.create();
+        if (!it) return;
+        items.push(it); active = items.length - 1; notify('add', active); render();
+      } }))));
+    }
+  }
+  render();
+  el.refresh = render;
+  el.setActive = setActive;
+  return el;
+}

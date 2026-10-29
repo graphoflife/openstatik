@@ -203,13 +203,13 @@ export function missingInput(project) {
   if (!(project.bars || []).some((b) => b.d > 0 && Number.isFinite(b.y) && Number.isFinite(b.z))) {
     return {
       msg: 'Es fehlt noch die Bewehrung.',
-      hint: 'Bewehrung setzen mit «Stab» (Taste B: Stabmitte anklicken) oder «Stabreihe» (Taste L: Anfangs- und Endpunkt anklicken). Die Fangpunkte ○ liegen im Achsabstand c + Øw + Ø/2 vom Rand. Ganze Lagen erzeugt das Register «Bewehrung».',
+      hint: 'Bewehrung setzen mit «Stab» (Taste B: Stabmitte anklicken) oder «Stabreihe» (Taste L: Anfangs- und Endpunkt anklicken). Die Fangpunkte ○ liegen im Achsabstand der Bewehrung vom Rand. Ganze Lagen erzeugt das Register «Bewehrung».',
     };
   }
   if (!(project.loads || []).length) {
     return {
       msg: 'Es fehlt noch ein Lastfall.',
-      hint: 'Lastfall erfassen: im Register «Lasten» mit «+ Zeile» N, My und Mz eintragen – oder im Eigenschaftsfenster (nichts ausgewählt) «Lastfall anlegen».',
+      hint: 'Lastfall erfassen: im Register «Lasten» mit «GZT-Lastfall» N und die Momente eintragen – oder im Eigenschaftsfenster (nichts ausgewählt) «Lastfall anlegen».',
     };
   }
   return null;
@@ -336,10 +336,10 @@ export function resistancePlane(sec, N, MyC, MzC, util) {
 /** Versagensart einer Bruchdehnungsebene. */
 export function failureMode(sec, info) {
   const cl = sec.concreteLaw, bl = sec.barLaw;
-  if (info.ext.ecMax <= 1e-9 && Math.abs(info.ext.ecMax - info.ext.ecMin) < 1e-6) return 'zentrischer Druck (εc2)';
-  if (info.ext.ecMin <= cl.epsMin * 0.995) return 'Betonstauchung εcu erreicht';
-  if (bl && info.bars.length && Math.max(...info.bars.map((b) => b.eps)) >= bl.epsMax * 0.995) return 'Stahldehnung εud erreicht';
-  return 'Druckbereich (εc2-Drehpunkt)';
+  if (info.ext.ecMax <= 1e-9 && Math.abs(info.ext.ecMax - info.ext.ecMin) < 1e-6) return 'zentrischer Druck (ε_c2)';
+  if (info.ext.ecMin <= cl.epsMin * 0.995) return 'Betonstauchung ε_cu erreicht';
+  if (bl && info.bars.length && Math.max(...info.bars.map((b) => b.eps)) >= bl.epsMax * 0.995) return 'Stahldehnung ε_ud erreicht';
+  return 'Drehpunkt ε_c2 im Druckbereich';
 }
 
 // ------------------------------------------------------------------ GZG: Spannungsbegrenzung
@@ -358,7 +358,7 @@ export const SLS_REQUIREMENTS = [
   { value: 'normal', label: 'normale Anforderungen' },
   { value: 'erhoeht', label: 'erhöhte Anforderungen' },
   { value: 'hoch', label: 'hohe Anforderungen' },
-  { value: 'manual', label: 'σs,adm manuell' },
+  { value: 'manual', label: 'Grenzwert vorgeben' },
 ];
 
 export function interpTable(tab, x) {
@@ -374,14 +374,14 @@ export function interpTable(tab, x) {
 
 /** Zulässige Stahlspannung im GZG. Rückgabe {value, ref, label}. */
 export function steelStressLimit(mat, sls = {}, spacing = 150) {
-  if (mat.norm === 'EC') return { value: 0.8 * mat.s.fsk, ref: 'EN 1992-1-1, 7.2(5): σs ≤ k3·fyk = 0.8·fyk', label: '0.8·fyk' };
+  if (mat.norm === 'EC') return { value: 0.8 * mat.s.fsk, ref: 'EN 1992-1-1, 7.2(5): σ_s ≤ k_3·f_yk = 0.8·f_yk', label: '0.8·f_yk' };
   const req = sls.req || 'normal';
-  if (req === 'manual') return { value: sls.sigmaAdm > 0 ? sls.sigmaAdm : mat.s.fsd, ref: 'SIA 262, 4.4.2: σs,adm vorgegeben', label: 'manuell' };
+  if (req === 'manual') return { value: sls.sigmaAdm > 0 ? sls.sigmaAdm : mat.s.fsd, ref: 'SIA 262, 4.4.2: σ_s,adm vorgegeben', label: 'manuell' };
   if (req === 'erhoeht' || req === 'hoch') {
     const v = Math.min(mat.s.fsd, interpTable(SIA_FIG31[req], spacing));
     return { value: v, ref: `SIA 262, 4.4.2 / Fig. 31 (Näherung), ${req === 'hoch' ? 'hohe' : 'erhöhte'} Anforderungen, s = ${Math.round(spacing)} mm`, label: req === 'hoch' ? 'hoch' : 'erhöht' };
   }
-  return { value: mat.s.fsd, ref: 'SIA 262, 4.4.2: normale Anforderungen – Kontrolle σs ≤ fsd (Rissbreite über Mindestbewehrung)', label: 'normal' };
+  return { value: mat.s.fsd, ref: 'SIA 262, 4.4.2: normale Anforderungen – Kontrolle σ_s ≤ f_sd (Rissbreite über Mindestbewehrung)', label: 'normal' };
 }
 
 /**
@@ -446,8 +446,8 @@ export function shearCheck(mat, g, sh, VEd, NEd = 0, etaM = 1) {
       const kc = 0.55;
       const VRdc = g.bw * g.z * kc * c.fcd * Math.sin(ang) * Math.cos(ang) / 1000;
       Object.assign(out, { VRds, VRdc, kc, VRd: Math.min(VRds, VRdc) });
-      checks.push({ label: 'Querkraftbewehrung VRd,s', ref: 'SIA 262, 4.3.3.4.3: VRd,s = (Asw/s)·z·fsd·cot α', Ed: V, Rd: VRds, unit: 'kN' });
-      checks.push({ label: 'Betondruckfeld VRd,c', ref: 'SIA 262, 4.3.3.4.6: VRd,c = bw·z·kc·fcd·sin α·cos α, kc = 0.55', Ed: V, Rd: VRdc, unit: 'kN' });
+      checks.push({ label: 'Querkraftbewehrung V_Rd,s', ref: 'SIA 262, 4.3.3.4.3: V_Rd,s = (A_sw/s)·z·f_sd·cot α', Ed: V, Rd: VRds, unit: 'kN' });
+      checks.push({ label: 'Betondruckfeld V_Rd,c', ref: 'SIA 262, 4.3.3.4.6: V_Rd,c = b_w·z·k_c·f_cd·sin α·cos α, k_c = 0.55', Ed: V, Rd: VRdc, unit: 'kN' });
       const deg = ang * 180 / Math.PI;
       if (deg < 25 - 1e-9 || deg > 45 + 1e-9) notes.push('Neigung α ausserhalb 25° … 45° (SIA 262, 4.3.3.3.2).');
     } else {
@@ -456,7 +456,7 @@ export function shearCheck(mat, g, sh, VEd, NEd = 0, etaM = 1) {
       const kd = 1 / (1 + epsv * g.d * kg);
       const VRd = kd * c.tcd * g.d * g.bw / 1000;
       Object.assign(out, { kg, epsv, kd, VRd, tcd: c.tcd });
-      checks.push({ label: 'Querkraftwiderstand ohne Querkraftbewehrung', ref: 'SIA 262, 4.3.3.2.1: VRd = kd·τcd·d·bw, kd = 1/(1 + εv·d·kg)', Ed: V, Rd: VRd, unit: 'kN' });
+      checks.push({ label: 'Querkraft ohne Bügel V_Rd', ref: 'SIA 262, 4.3.3.2.1: V_Rd = k_d·τ_cd·d·b_w, k_d = 1/(1 + ε_v·d·k_g)', Ed: V, Rd: VRd, unit: 'kN' });
     }
   } else {
     const gc = c.gammaC;
@@ -471,12 +471,12 @@ export function shearCheck(mat, g, sh, VEd, NEd = 0, etaM = 1) {
       const nu1 = 0.6 * (1 - c.fck / 250);
       const VRdmax = g.bw * g.z * nu1 * c.fcd / (cot + tan) / 1000;
       Object.assign(out, { VRds, VRdmax, nu1, VRd: Math.min(VRds, VRdmax) });
-      checks.push({ label: 'Querkraftbewehrung VRd,s', ref: 'EN 1992-1-1, 6.2.3 (6.8): VRd,s = (Asw/s)·z·fywd·cot θ', Ed: V, Rd: VRds, unit: 'kN' });
-      checks.push({ label: 'Druckstrebe VRd,max', ref: 'EN 1992-1-1, 6.2.3 (6.9): VRd,max = αcw·bw·z·ν1·fcd/(cot θ + tan θ)', Ed: V, Rd: VRdmax, unit: 'kN' });
+      checks.push({ label: 'Querkraftbewehrung V_Rd,s', ref: 'EN 1992-1-1, 6.2.3 (6.8): V_Rd,s = (A_sw/s)·z·f_ywd·cot θ', Ed: V, Rd: VRds, unit: 'kN' });
+      checks.push({ label: 'Druckstrebe V_Rd,max', ref: 'EN 1992-1-1, 6.2.3 (6.9): V_Rd,max = α_cw·b_w·z·ν_1·f_cd/(cot θ + tan θ)', Ed: V, Rd: VRdmax, unit: 'kN' });
       if (cot < 1 - 1e-9 || cot > 2.5 + 1e-9) notes.push('cot θ ausserhalb 1.0 … 2.5 (EN 1992-1-1, 6.2.3(2)).');
     } else {
       out.VRd = VRdc;
-      checks.push({ label: 'Querkraftwiderstand ohne Querkraftbewehrung VRd,c', ref: 'EN 1992-1-1, 6.2.2 (6.2a/b)', Ed: V, Rd: VRdc, unit: 'kN' });
+      checks.push({ label: 'Querkraft ohne Bügel V_Rd,c', ref: 'EN 1992-1-1, 6.2.2 (6.2a/b)', Ed: V, Rd: VRdc, unit: 'kN' });
     }
   }
   out.eta = checks.reduce((m, ch) => Math.max(m, ch.Rd > 0 ? ch.Ed / ch.Rd : Infinity), 0);
@@ -600,7 +600,7 @@ export function mymzCurve(sec, N, n = 72) {
 // ------------------------------------------------------------------ Cache & Gesamtberechnung
 
 export function createCache() {
-  return { key: null, secs: null, util: new Map(), lazy: new Map() };
+  return { key: null, secs: null, util: new Map(), lazy: new Map(), entries: new Map() };
 }
 
 function memo(map, key, fn, max = 200) {
@@ -644,15 +644,22 @@ export function analyze(project, cache = createCache()) {
   // solange sich dieser Schlüssel nicht ändert (Bezugspunkt, GZG-Wertigkeit, Kriechen beeinflussen ihn nicht).
   const m = project.material || {};
   const key = JSON.stringify({ o: gm.outer, h: gm.holes, b: gm.bars, m: [mat.norm, m.concrete, m.steel, m.gammaC, m.gammaS, m.alphaCC, !!m.hardening] });
-  if (cache.key !== key) {
+  // Mehrere Querschnitte (Positionen) nebeneinander: je Fasermodell ein Eintrag (zuletzt benutzte zuerst behalten)
+  cache.entries ||= new Map();
+  let entry = cache.entries.get(key);
+  if (entry) cache.entries.delete(key);
+  else {
     const regions = [{ pts: gm.outer }, ...gm.holes.map((pts) => ({ pts }))];
     const mesh = chooseMesh(regions);
-    cache.key = key;
-    cache.secs = { uls: buildWithLaws(gm, mat.uls, mesh, G), mesh, byKey: new Map() };
-    cache.util = new Map();
-    cache.lazy = new Map();
+    entry = { secs: { uls: buildWithLaws(gm, mat.uls, mesh, G), mesh, byKey: new Map() }, util: new Map(), lazy: new Map() };
   }
-  const secs = cache.secs;
+  cache.entries.set(key, entry);
+  while (cache.entries.size > 6) cache.entries.delete(cache.entries.keys().next().value);
+  cache.key = key; cache.secs = entry.secs; cache.util = entry.util; cache.lazy = entry.lazy;
+  // Die Maps werden festgehalten: zwischengespeicherte Resultate einer Position bleiben gültig, auch wenn
+  // inzwischen eine andere Position gerechnet wurde.
+  const utilMap = entry.util, lazyMap = entry.lazy;
+  const secs = entry.secs;
   /** Weitere Fasermodelle mit anderen Werkstoffgesetzen (gleiches Netz), zwischengespeichert. */
   const secWith = (k, lawsFn) => memo(secs.byKey, k, () => buildWithLaws(gm, lawsFn(), secs.mesh, G), 12);
   const secU = secs.uls;
@@ -660,7 +667,7 @@ export function analyze(project, cache = createCache()) {
   secs.sls = secS;
   const axial = rc.axialCapacity(secU);
   const capAt0 = (th) => rc.capacityAtN(secU, th, 0);
-  const mrd = memo(cache.lazy, 'mrd', () => {
+  const mrd = memo(lazyMap, 'mrd', () => {
     const a = capAt0(Math.PI / 2), b = capAt0(-Math.PI / 2), cc = capAt0(Math.PI), d = capAt0(0);
     return { MyPos: a ? -a.My : NaN, MyNeg: b ? -b.My : NaN, MzPos: cc ? -cc.Mz : NaN, MzNeg: d ? -d.Mz : NaN };
   });
@@ -694,7 +701,7 @@ export function analyze(project, cache = createCache()) {
   const capFor = (N, MyU, MzU) => {
     const mg = toG(N, MyU, MzU);
     const { My, Mz } = userToCore(mg.My, mg.Mz);
-    const u = memo(cache.util, `${N}|${My}|${Mz}`, () => {
+    const u = memo(utilMap, `${N}|${My}|${Mz}`, () => {
       const util = utilizationAtN(secU, N, My, Mz, 96);
       const plane = resistancePlane(secU, N, My, Mz, util);
       const rinfo = plane ? stateInfo(secU, plane) : null;
@@ -739,13 +746,13 @@ export function analyze(project, cache = createCache()) {
         const lim = steelStressLimit(mat, project.sls, spacing);
         const checks = [];
         const sigS = Math.max(0, num(st.sigmaSmax, 0));
-        if (gm.bars.length) checks.push({ label: 'Stahlspannung σs (Zug)', ref: lim.ref, Ed: sigS, Rd: lim.value, unit: 'MPa', digits: 0 });
+        if (gm.bars.length) checks.push({ label: 'Stahlspannung σ_s', ref: lim.ref, Ed: sigS, Rd: lim.value, unit: 'MPa', digits: 0 });
         const sigC = -st.sigmaCmin;
-        if (mat.norm === 'EC') checks.push({ label: 'Betondruckspannung |σc|', ref: 'EN 1992-1-1, 7.2(2): |σc| ≤ k1·fck = 0.6·fck', Ed: sigC, Rd: 0.6 * mat.c.fck, unit: 'MPa', digits: 1 });
+        if (mat.norm === 'EC') checks.push({ label: 'Betondruckspannung |σ_c|', ref: 'EN 1992-1-1, 7.2(2): |σ_c| ≤ k_1·f_ck = 0.6·f_ck', Ed: sigC, Rd: 0.6 * mat.c.fck, unit: 'MPa', digits: 1 });
         const eta = checks.reduce((mx, ch) => Math.max(mx, ch.Ed / ch.Rd), 0);
         const notes = [];
-        if (sigS > mat.s.fsk) notes.push('σs > fsk: Stahl fliesst – linear-elastische Berechnung nicht mehr zutreffend.');
-        if (sigC > 0.6 * mat.c.fck && mat.norm === 'SIA') notes.push('|σc| > 0.6·fck: ausgeprägtes nichtlineares Kriechen möglich.');
+        if (sigS > mat.s.fsk) notes.push('σ_s > f_sk: Stahl fliesst – linear-elastische Berechnung nicht mehr zutreffend.');
+        if (sigC > 0.6 * mat.c.fck && mat.norm === 'SIA') notes.push('|σ_c| > 0.6·f_ck: ausgeprägtes nichtlineares Kriechen möglich.');
         r.sls = { eta, checks, spacing, spacingAuto: sAuto !== null, lim, sigS, sigC, notes };
       }
       r.eta = r.sls.eta;
@@ -773,10 +780,10 @@ export function analyze(project, cache = createCache()) {
   };
   results.lazy = {
     cap: capFor,
-    nm: (axis) => memo(cache.lazy, `nm|${axis}`, () => nmDiagram(secU, axis))
+    nm: (axis) => memo(lazyMap, `nm|${axis}`, () => nmDiagram(secU, axis))
       .map((pt) => ({ N: pt.N, M: axis === 'Mz' ? pt.M - pt.N * dy : pt.M + pt.N * dz })),
-    mymz: (N) => memo(cache.lazy, `mymz|${N}`, () => mymzCurve(secU, N, 72)).map((pt) => ({ ...toR(N, pt.My, pt.Mz), theta: pt.theta })),
-    mk: (law, N, theta) => mkToR(memo(cache.lazy, `mk|${law}|${N}|${theta}|${mat.phi}`, () => {
+    mymz: (N) => memo(lazyMap, `mymz|${N}`, () => mymzCurve(secU, N, 72)).map((pt) => ({ ...toR(N, pt.My, pt.Mz), theta: pt.theta })),
+    mk: (law, N, theta) => mkToR(memo(lazyMap, `mk|${law}|${N}|${theta}|${mat.phi}`, () => {
       if (law === 'mean') {
         const laws = mat.mkMean();
         return mkCurve(secWith(`mean|${mat.phi}`, () => laws), N, theta, { crackStrain: mat.c.fctm / laws.c.Ec });

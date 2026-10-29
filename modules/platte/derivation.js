@@ -48,22 +48,36 @@ export function derivation(app) {
   const c = r.conc, st = r.steel, sia = r.norm === 'SIA';
 
   // ---------------------------------------------------------------- Baustoffe und Steifigkeit
+  const slabs = r.slabs || [{ name: 'Platte', h: r.h, conc: c, D: r.D }];
+  const concs = [...new Map(slabs.map((sl) => [sl.conc.name, sl.conc])).values()];
+  const matSteps = [];
+  for (const cc of concs) {
+    const tag = concs.length > 1 ? ` (${cc.name})` : '';
+    matSteps.push(
+      { label: `Mittelwert der Zylinderdruckfestigkeit${tag}`, f: 'f_{cm} = f_{ck} + 8', v: `= ${n0(cc.fck)} + 8`, r: `= ${n0(cc.fcm)} MPa` },
+      sia
+        ? { label: `Elastizitätsmodul${tag}`, f: 'E_{cm} = 10 000·f_{cm}^{1/3}', v: `= 10 000·${n0(cc.fcm)}^{1/3}`, r: `= ${n0(cc.Ecm)} MPa`, ref: 'SIA 262, 3.1.2.3' }
+        : { label: `Elastizitätsmodul${tag}`, f: 'E_{cm} = 22 000·(f_{cm}/10)^{0.3}', v: `= 22 000·(${n0(cc.fcm)}/10)^{0.3}`, r: `= ${n0(cc.Ecm)} MPa`, ref: 'EN 1992-1-1, Tab. 3.1' },
+      sia
+        ? { label: `Bemessungswert der Betondruckfestigkeit${tag}`, f: 'f_{cd} = η_{fc}·f_{ck}/γ_c,  η_{fc} = (30/f_{ck})^{1/3} <= 1', v: `= ${n3(cc.etaFc)}·${n0(cc.fck)}/${n2(cc.gammaC)}`, r: `= ${n1(cc.fcd)} MPa`, ref: 'SIA 262, 2.3.2.3' }
+        : { label: `Bemessungswert der Betondruckfestigkeit${tag}`, f: 'f_{cd} = α_{cc}·f_{ck}/γ_c', v: `= 1.0·${n0(cc.fck)}/${n2(cc.gammaC)}`, r: `= ${n1(cc.fcd)} MPa`, ref: 'EN 1992-1-1, 3.1.6' },
+      sia ? { label: `Bemessungswert der Schubspannungsgrenze${tag}`, f: 'τ_{cd} = 0.3·sqrt(f_{ck})/γ_c', v: `= 0.3·sqrt(${n0(cc.fck)})/${n2(cc.gammaC)}`, r: `= ${n3(cc.tcd)} MPa`, ref: 'SIA 262, 2.3.2.4' } : null,
+    );
+  }
+  matSteps.push({ label: 'Fliessgrenze Betonstahl', f: 'f_{sd} = f_{sk}/γ_s', v: `= ${n0(st.fsk)}/${n2(st.gammaS)}`, r: `= ${n0(st.fsd)} MPa` });
+  for (const sl of slabs) {
+    const tag = slabs.length > 1 ? ` «${sl.name}»` : '';
+    matSteps.push(
+      { label: `Biegesteifigkeit${tag}`, f: 'D = E_{cm}·h^3/(12·(1 − ν^2))', v: `= ${n0(sl.conc.Ecm * 1000)}·${n3(sl.h)}^3/(12·(1 − ${n2(r.nu)}^2))`, r: `= ${n0(sl.D)} kNm`, note: 'E in kN/m², h in m.' },
+      { label: `Eigengewicht${tag}`, f: 'g_0 = γ_{Beton}·h', v: `= 25·${n3(sl.h)}`, r: `= ${n2(25 * sl.h)} kN/m²` },
+    );
+  }
   out.push({
-    id: 'material', title: 'Baustoffe und Plattensteifigkeit', ref: sia ? 'SIA 262, 2.3 und 3.1' : 'EN 1992-1-1, 3.1–3.2',
-    intro: `Beton ${c.name}, Betonstahl ${st.name}. Die Platte wird linear-elastisch und ungerissen mit E_{cm} gerechnet.`,
-    steps: [
-      { label: 'Mittelwert der Zylinderdruckfestigkeit', f: 'f_{cm} = f_{ck} + 8', v: `= ${n0(c.fck)} + 8`, r: `= ${n0(c.fcm)} MPa` },
-      sia
-        ? { label: 'Elastizitätsmodul', f: 'E_{cm} = 10 000·f_{cm}^{1/3}', v: `= 10 000·${n0(c.fcm)}^{1/3}`, r: `= ${n0(c.Ecm)} MPa`, ref: 'SIA 262, 3.1.2.3' }
-        : { label: 'Elastizitätsmodul', f: 'E_{cm} = 22 000·(f_{cm}/10)^{0.3}', v: `= 22 000·(${n0(c.fcm)}/10)^{0.3}`, r: `= ${n0(c.Ecm)} MPa`, ref: 'EN 1992-1-1, Tab. 3.1' },
-      sia
-        ? { label: 'Bemessungswert der Betondruckfestigkeit', f: 'f_{cd} = η_{fc}·f_{ck}/γ_c,  η_{fc} = (30/f_{ck})^{1/3} <= 1', v: `= ${n3(c.etaFc)}·${n0(c.fck)}/${n2(c.gammaC)}`, r: `= ${n1(c.fcd)} MPa`, ref: 'SIA 262, 2.3.2.3' }
-        : { label: 'Bemessungswert der Betondruckfestigkeit', f: 'f_{cd} = α_{cc}·f_{ck}/γ_c', v: `= 1.0·${n0(c.fck)}/${n2(c.gammaC)}`, r: `= ${n1(c.fcd)} MPa`, ref: 'EN 1992-1-1, 3.1.6' },
-      sia ? { label: 'Bemessungswert der Schubspannungsgrenze', f: 'τ_{cd} = 0.3·sqrt(f_{ck})/γ_c', v: `= 0.3·sqrt(${n0(c.fck)})/${n2(c.gammaC)}`, r: `= ${n3(c.tcd)} MPa`, ref: 'SIA 262, 2.3.2.4' } : null,
-      { label: 'Fliessgrenze Betonstahl', f: 'f_{sd} = f_{sk}/γ_s', v: `= ${n0(st.fsk)}/${n2(st.gammaS)}`, r: `= ${n0(st.fsd)} MPa` },
-      { label: 'Biegesteifigkeit der Platte', f: 'D = E_{cm}·h^3/(12·(1 − ν^2))', v: `= ${n0(c.Ecm * 1000)}·${n3(r.h)}^3/(12·(1 − ${n2(r.nu)}^2))`, r: `= ${n0(r.D)} kNm`, note: 'E in kN/m², h in m.' },
-      { label: 'Eigengewicht', f: 'g_0 = γ_{Beton}·h', v: `= 25·${n3(r.h)}`, r: `= ${n2(25 * r.h)} kN/m²` },
-    ],
+    id: 'material', title: slabs.length > 1 ? 'Baustoffe und Steifigkeit je Platte' : 'Baustoffe und Plattensteifigkeit', ref: sia ? 'SIA 262, 2.3 und 3.1' : 'EN 1992-1-1, 3.1–3.2',
+    intro: slabs.length > 1
+      ? `${slabs.length} Platten: ${slabs.map((sl) => `${sl.name} (h = ${n2(sl.h)} m, ${sl.conc.name})`).join(', ')}. Liegt eine Platte innerhalb einer anderen, gelten dort ihre Dicke und ihr Beton. Linear-elastisch und ungerissen mit E_{cm}.`
+      : `Beton ${c.name}, Betonstahl ${st.name}. Die Platte wird linear-elastisch und ungerissen mit E_{cm} gerechnet.`,
+    steps: matSteps.filter(Boolean),
   });
 
   // ---------------------------------------------------------------- Modell
@@ -124,20 +138,22 @@ export function derivation(app) {
       const bottom = k[0] === 'b';
       const c0 = bottom ? inp.cBot : inp.cTop, phi = bottom ? inp.dBot : inp.dTop;
       const outer = (bottom ? inp.outerBot : inp.outerTop) === k[1];
-      const ra = requiredAs(md, L.d, d.fcd, d.fsd, d.lambda);
+      const fcdL = L.fcd ?? d.fcd, hL = L.h ?? r.h;
+      const concL = r.slabs?.[L.slabIdx]?.conc || c;
+      const ra = requiredAs(md, L.d, fcdL, d.fsd, d.lambda);
       const omega = ra.mu !== undefined ? 1 - Math.sqrt(1 - 2 * ra.mu) : 0;
-      const req = Math.max(L.asMax, L.asMin);
+      const req = L.asReq ?? Math.max(L.asMax, L.asMin);
       const bars = barSuggestion(req);
       const steps = [
-        { label: `Schnittmomente am Knoten (x = ${n2(r.mesh.x[i])}, y = ${n2(r.mesh.y[i])} m)`, f: `m_x = ${n1(mx)},  m_y = ${n1(my)},  m_{xy} = ${n1(mxy)} kNm/m`, note: `Kombination ${gov.name}; dieser Knoten ergibt die grösste erforderliche Bewehrung der Lage.` },
+        { label: `Schnittmomente am Knoten (x = ${n2(r.mesh.x[i])}, y = ${n2(r.mesh.y[i])} m)`, f: `m_x = ${n1(mx)},  m_y = ${n1(my)},  m_{xy} = ${n1(mxy)} kNm/m`, note: `Kombination ${gov.name}; dieser Knoten ergibt die grösste Biegebewehrung der Lage${(r.slabs?.length || 1) > 1 ? ` (Platte «${L.slab}», h = ${n2(hL)} m)` : ''}.` },
         ...wa.steps,
         outer
-          ? { label: 'Statische Höhe (äussere Lage)', f: 'd = h − c − Ø/2', v: `= ${n0(r.h * 1000)} − ${n0(c0)} − ${n0(phi)}/2`, r: `= ${n0(L.d)} mm` }
-          : { label: 'Statische Höhe (innere Lage)', f: 'd = h − c − 1.5·Ø', v: `= ${n0(r.h * 1000)} − ${n0(c0)} − 1.5·${n0(phi)}`, r: `= ${n0(L.d)} mm` },
+          ? { label: 'Statische Höhe (äussere Lage)', f: 'd = h − c − Ø/2', v: `= ${n0(hL * 1000)} − ${n0(c0)} − ${n0(phi)}/2`, r: `= ${n0(L.d)} mm` }
+          : { label: 'Statische Höhe (innere Lage)', f: 'd = h − c − 1.5·Ø', v: `= ${n0(hL * 1000)} − ${n0(c0)} − 1.5·${n0(phi)}`, r: `= ${n0(L.d)} mm` },
       ];
       if (md > 0 && ra.ok) {
         steps.push(
-          { label: 'Bezogenes Moment', f: 'μ = m_d/(b·d^2·f_{cd})', v: `= ${n1(md)}·10^6/(1000·${n0(L.d)}^2·${n1(d.fcd)})`, r: `= ${num(ra.mu, 4)}` },
+          { label: 'Bezogenes Moment', f: 'μ = m_d/(b·d^2·f_{cd})', v: `= ${n1(md)}·10^6/(1000·${n0(L.d)}^2·${n1(fcdL)})`, r: `= ${num(ra.mu, 4)}` },
           { label: 'Mechanischer Bewehrungsgehalt', f: 'ω = 1 − sqrt(1 − 2·μ)', v: `= 1 − sqrt(1 − 2·${num(ra.mu, 4)})`, r: `= ${num(omega, 4)}` },
           { label: 'Druckzonenhöhe', f: `x = ω·d/${n2(d.lambda)}`, v: `= ${num(omega, 4)}·${n0(L.d)}/${n2(d.lambda)}`, r: `= ${n1(ra.x)} mm (x/d = ${n3(ra.xd)})`, note: ra.xd > 0.35 ? 'x/d > 0.35: Verformungsvermögen eingeschränkt – Platte verstärken oder Druckbewehrung prüfen.' : 'x/d ≤ 0.35: ausreichendes Verformungsvermögen.' },
           { label: 'Innerer Hebelarm', f: 'z = d − ω·d/2', v: `= ${n0(L.d)} − ${num(omega, 4)}·${n0(L.d)}/2`, r: `= ${n1(ra.z)} mm` },
@@ -147,9 +163,9 @@ export function derivation(app) {
         steps.push({ label: 'Biegedruckzone', f: 'μ = m_d/(b·d^2·f_{cd}) >= 0.5', note: 'Der Querschnitt kann das Moment ohne Druckbewehrung nicht aufnehmen – Plattendicke oder Betonsorte erhöhen.' });
       }
       steps.push(L.asMin > 0
-        ? { label: 'Mindestbewehrung', f: inp.asMinMode === 'user' ? 'a_{s,min} = ρ_{min}·b·d' : 'a_{s,min} = max(0.26·f_{ctm}/f_{sk}; 0.0013)·b·d', v: inp.asMinMode === 'user' ? `= ${num(inp.rhoMin / 100, 4)}·1000·${n0(L.d)}` : `= max(0.26·${n2(c.fctm)}/${n0(st.fsk)}; 0.0013)·1000·${n0(L.d)}`, r: `= ${n0(L.asMin)} mm²/m`, ref: 'EN 1992-1-1, 9.2.1.1' }
+        ? { label: 'Mindestbewehrung', f: inp.asMinMode === 'user' ? 'a_{s,min} = ρ_{min}·b·d' : 'a_{s,min} = max(0.26·f_{ctm}/f_{sk}; 0.0013)·b·d', v: inp.asMinMode === 'user' ? `= ${num(inp.rhoMin / 100, 4)}·1000·${n0(L.d)}` : `= max(0.26·${n2(concL.fctm)}/${n0(st.fsk)}; 0.0013)·1000·${n0(L.d)}`, r: `= ${n0(L.asMin)} mm²/m`, ref: 'EN 1992-1-1, 9.2.1.1' }
         : { label: 'Mindestbewehrung', f: 'nicht berücksichtigt' });
-      steps.push({ label: 'Gewählte Bewehrung', f: `a_{s,erf} = max(a_s; a_{s,min}) = ${n0(req)} mm²/m`, r: `→ ${bars.label} = ${n0(bars.as)} mm²/m` });
+      steps.push({ label: 'Gewählte Bewehrung', f: `a_{s,erf} = max(a_s; a_{s,min}) = ${n0(req)} mm²/m`, r: `→ ${bars.label} = ${n0(bars.as)} mm²/m`, note: L.minGoverns ? 'Massgebend ist die Mindestbewehrung (grösster Wert aller Platten).' : '' });
       out.push({
         id: `as-${k}`, title: `Biegebewehrung ${layerLabel(k)}`, ref: 'Wood–Armer',
         intro: 'Bemessungsmomente nach Wood (1968) und Armer (1968) für eine orthogonale x/y-Bewehrung; Umhüllende aller Tragsicherheitskombinationen.',
@@ -165,7 +181,7 @@ export function derivation(app) {
     const t = TYPE_LABEL[pc.type];
     const steps = [
       { label: 'Stützenkraft', f: 'V_d = max R (Tragsicherheit)', r: `= ${n1(pc.Vd)} kN`, note: `Kombination ${pc.combo}; ohne Abzug der Last innerhalb des Nachweisschnitts.` },
-      { label: 'Mittlere statische Höhe (obere Lagen)', f: 'd = (d_x + d_y)/2', v: `= (${n0(r.design.depths.tx)} + ${n0(r.design.depths.ty)})/2`, r: `= ${n0(pc.d)} mm` },
+      { label: 'Mittlere statische Höhe (obere Lagen)', f: 'd = (d_x + d_y)/2', v: `= (${n0(pc.dTx ?? r.design.depths.tx)} + ${n0(pc.dTy ?? r.design.depths.ty)})/2`, r: `= ${n0(pc.d)} mm`, note: (r.slabs?.length || 1) > 1 ? `Platte «${pc.slab}», h = ${n2(pc.hSlab)} m` : '' },
     ];
     if (sia) {
       const [msdF] = MSD[pc.type];
@@ -183,7 +199,7 @@ export function derivation(app) {
         { label: 'Plattenrotation', f: 'ψ = 1.5·(r_s/d)·(f_{sd}/E_s)·(m_{sd}/m_{Rd})^{1.5}', v: `x: 1.5·(${n0(pc.rsx * 1000)}/${n0(pc.d)})·(${n0(st.fsd)}/${n0(st.Es)})·(${n1(pc.msd)}/${n1(pc.mRdx)})^{1.5}`, r: `= ${num(pc.res.psiX * 1000, 3)} ‰ (y: ${num(pc.res.psiY * 1000, 3)} ‰)`, ref: 'SIA 262, (59) Näherungsstufe 2' },
         { label: 'Grösstkornbeiwert', f: 'k_g = 48/(16 + D_{max})', v: `= 48/(16 + ${n0(r.design.inputs?.Dmax ?? 32)})`, r: `= ${n3(pc.res.kg)}` },
         { label: 'Beiwert', f: 'k_r = 1/(0.45 + 0.18·ψ·d·k_g) <= 2', v: `= 1/(0.45 + 0.18·${num(pc.res.psi, 5)}·${n0(pc.d)}·${n3(pc.res.kg)})`, r: `= ${n3(pc.res.kr)}`, ref: 'SIA 262, (58)' },
-        { label: 'Durchstanzwiderstand ohne Durchstanzbewehrung', f: 'V_{Rd,c} = k_r·τ_{cd}·d_v·k_e·u', v: `= ${n3(pc.res.kr)}·${n3(c.tcd)}·${n0(pc.dv)}·${n2(pc.ke)}·${n0(pc.u * 1000)}·10^{-3}`, r: `= ${n1(pc.VRd)} kN`, ref: 'SIA 262, (57)' },
+        { label: 'Durchstanzwiderstand ohne Durchstanzbewehrung', f: 'V_{Rd,c} = k_r·τ_{cd}·d_v·k_e·u', v: `= ${n3(pc.res.kr)}·${n3((pc.conc || c).tcd)}·${n0(pc.dv)}·${n2(pc.ke)}·${n0(pc.u * 1000)}·10^{-3}`, r: `= ${n1(pc.VRd)} kN`, ref: 'SIA 262, (57)' },
       );
       if (pc.eta > 1) steps.push({ label: 'Maximaler Widerstand mit Durchstanzbewehrung', f: 'V_{Rd,max} = 2·k_r·τ_{cd}·d_v·k_e·u <= 3.5·τ_{cd}·d_v·k_e·u', r: `= ${n1(pc.res.VRdmax)} kN`, ref: 'SIA 262, 4.3.6.5.7', note: pc.res.possible ? 'V_d ≤ V_{Rd,max}: mit Durchstanzbewehrung möglich.' : 'V_d > V_{Rd,max}: Platte verstärken, Stütze vergrössern oder Stützenkopf vorsehen.' });
       steps.push({ label: 'Nachweis', f: 'η = V_d/V_{Rd,c}', v: `= ${n1(pc.Vd)}/${n1(pc.VRd)}`, r: `= ${n2(pc.eta)}` });
@@ -214,9 +230,9 @@ export function derivation(app) {
       intro: `Kombination ${s.combo}; grösste elastische Durchbiegung bei x = ${n2(s.x)}, y = ${n2(s.y)} m.`,
       steps: [
         { label: 'Elastische Durchbiegung (ungerissen)', f: 'w_{el}', r: `= ${n2(s.wEl * 1000)} mm` },
-        { label: 'Langzeitwert (Kriechen, Rissbildung)', f: 'w_∞ = k·w_{el}', v: `= ${n2(s.factor)}·${n2(s.wEl * 1000)}`, r: `= ${n2(s.wLong * 1000)} mm` },
+        { label: 'Langzeitwert (Kriechen, Rissbildung)', f: 'w_{∞} = k·w_{el}', v: `= ${n2(s.factor)}·${n2(s.wEl * 1000)}`, r: `= ${n2(s.wLong * 1000)} mm` },
         { label: 'Grenzwert', f: `w_{lim} = L/${n0(s.limit)}`, v: `= ${n0(s.Lspan * 1000)}/${n0(s.limit)}`, r: `= ${n2(s.wLim * 1000)} mm`, note: s.autoSpan ? 'L automatisch: grösste Stützweite zwischen benachbarten Lagern bzw. kürzere Plattenabmessung.' : '' },
-        { label: 'Nachweis', f: 'η = w_∞/w_{lim}', v: `= ${n2(s.wLong * 1000)}/${n2(s.wLim * 1000)}`, r: `= ${n2(s.eta)}` },
+        { label: 'Nachweis', f: 'η = w_{∞}/w_{lim}', v: `= ${n2(s.wLong * 1000)}/${n2(s.wLim * 1000)}`, r: `= ${n2(s.eta)}` },
       ],
       result: { eta: s.eta, text: s.eta <= 1 ? 'Durchbiegung eingehalten' : 'Durchbiegung zu gross' },
     });

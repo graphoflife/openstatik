@@ -146,8 +146,8 @@ export function settlementAnalysis(soil, s) {
     const Lr = layerAt(soil.layers, (a + b) / 2);
     const n = Math.max(4, Math.ceil((b - a) / Math.max(0.02, (zLim - D) / 200)));
     const dz = (b - a) / n;
-    let row = layerSum.get(Lr.idx);
-    if (!row) { row = { idx: Lr.idx, name: Lr.name, ME: Lr.ME, from: a, to: b, ds: Object.fromEntries(pts.map((p) => [p.key, 0])), dsig: 0, len: 0 }; layerSum.set(Lr.idx, row); }
+    let row = layerSum.get(Lr.z);
+    if (!row) { row = { idx: Lr.idx, name: Lr.name, ME: Lr.ME, from: a, to: b, ds: Object.fromEntries(pts.map((p) => [p.key, 0])), dsig: 0, len: 0 }; layerSum.set(Lr.z, row); }
     row.to = b;
     for (let k = 0; k < n; k++) {
       const zm = a + (k + 0.5) * dz;

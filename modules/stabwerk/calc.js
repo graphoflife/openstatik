@@ -5,7 +5,7 @@
 // Schnittgrössen: N Zug positiv; M positiv bei Zug auf der Seite −y (bei waagrechtem Stab von links nach rechts:
 // Zug unten); V positiv, wenn es am positiven Schnittufer in −y-Richtung wirkt (V = dM/dx).
 import { SkylineMatrix, rcm, eigGeneral, SingularError, GAUSS } from '../../js/core/linalg.js';
-import { sectionProps } from './sections.js';
+import { sectionProps, migrateMaterials } from './sections.js';
 
 export const LC_KINDS = {
   G: { label: 'Ständig', short: 'G', variable: false, psi: [1, 1, 1] },
@@ -86,14 +86,16 @@ export function buildModel(p, opts = {}) {
   const nodes = p.nodes.map((n, i) => ({ x: +n.x, y: +n.y, id: i }));
   if (nodes.length < 2) throw new Error('Mindestens zwei Knoten erforderlich.');
   if (!p.members.length) throw new Error('Keine Stäbe definiert.');
-  const secs = p.sections.map((s) => sectionProps(s));
+  if (!Array.isArray(p.materials)) migrateMaterials(p);
   const members = p.members.map((m, k) => {
     const i = Math.round(m.i) - 1, j = Math.round(m.j) - 1;
     if (!(i >= 0 && i < nodes.length && j >= 0 && j < nodes.length)) throw new Error(`Stab ${k + 1}: Knotennummer ungültig.`);
     if (i === j) throw new Error(`Stab ${k + 1}: Anfangs- und Endknoten identisch.`);
     const si = Math.round(m.sec) - 1;
-    const sp = secs[si];
-    if (!sp) throw new Error(`Stab ${k + 1}: Querschnitt ${m.sec} existiert nicht.`);
+    const mi = Math.round(m.mat || 1) - 1;
+    if (!p.sections[si]) throw new Error(`Stab ${k + 1}: Querschnitt ${m.sec} existiert nicht.`);
+    if (!p.materials[mi]) throw new Error(`Stab ${k + 1}: Material ${m.mat} existiert nicht.`);
+    const sp = sectionProps(p.sections[si], p.materials[mi]);
     if (!(sp.A > 0 && sp.I > 0 && sp.E > 0)) throw new Error(`Stab ${k + 1}: Querschnittswerte unvollständig (A, I, E > 0).`);
     const dx = nodes[j].x - nodes[i].x, dy = nodes[j].y - nodes[i].y, L = Math.hypot(dx, dy);
     if (L < 1e-9) throw new Error(`Stab ${k + 1}: Länge null.`);

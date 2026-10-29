@@ -85,7 +85,8 @@ export function drawAnsicht(v, app) {
   const M = Math.max(l, hh);
   const sfB = sideFlags(W);
   const lat = !!(L.wind || (L.earth?.on && L.earth.he > 0));
-  bounds(v, -0.1 * M - (sfB.L ? 0.15 : 0), -SLAB - 0.14 * M, l + (lat ? 0.2 : 0.1) * M + (sfB.R ? 0.15 : 0), hh + SLAB + 0.2 * M);
+  const hasV = Math.abs(L.Vw || 0) + Math.abs(L.Ve || 0) > 0;
+  bounds(v, -(hasV ? 0.4 : 0.1) * M - (sfB.L ? 0.15 : 0), -SLAB - 0.14 * M, l + (lat ? 0.2 : 0.1) * M + (sfB.R ? 0.15 : 0), hh + SLAB + 0.2 * M);
   const c = pickCombo(app, 'ansicht');
   const showLoads = app.viewOpts.loads !== false, showDims = app.viewOpts.dims !== false;
 
@@ -126,9 +127,9 @@ export function drawAnsicht(v, app) {
     v.line(x + a, hh - 0.05, x + a + Math.min(l - x - a, ce.spread), hh / 2, st);
     v.polygon([[x, hh - 0.05], [x + a, hh - 0.05], [xr, hh / 2], [xl, hh / 2]], { fill: 'var(--c-load-fill)', stroke: 'none' });
     v.line(xl, hh / 2, xr, hh / 2, { stroke: 'var(--c-load)', width: 1.4 });
-    if (showDims) v.text((xl + xr) / 2, hh / 2, `lefm = ${fmt(xr - xl, 2)} m`, { dy: 11, size: 10.5, color: 'var(--c-load)' });
+    if (showDims) v.text((xl + xr) / 2, hh / 2, `l_efm = ${fmt(xr - xl, 2)} m`, { dy: 11, size: 10.5, color: 'var(--c-load)' });
     if (showLoads) {
-      const Nc = c?.conc ? `Nc,d = ${fmt(c.conc.Nc, 0)} kN` : `Gk + Qk = ${fmt((C.G || 0) + (C.Q || 0), 0)} kN`;
+      const Nc = c?.conc ? `N_c,d = ${fmt(c.conc.Nc, 0)} kN` : `G_k + Q_k = ${fmt((C.G || 0) + (C.Q || 0), 0)} kN`;
       v.arrow(x + a / 2, hh + SLAB, 0, -1, { length: 54, head: 9, width: 2.2 });
       v.text(x + a / 2, hh + SLAB + v.px(54), Nc, { anchor: 'start', dx: 8, dy: 2, size: 11.5, bold: true, color: 'var(--c-load)' });
     }
@@ -137,11 +138,11 @@ export function drawAnsicht(v, app) {
   // Lasten
   if (showLoads) {
     const nk = (L.gW || 0) + (L.qW || 0) + (L.gD || 0) + (L.qD || 0);
-    if (nk > 0) distributedArrows(v, 0, l, hh + SLAB, c ? `nd = ${fmt(c.nTop, 1)} kN/m (${c.name})` : `gk + qk = ${fmt(nk, 1)} kN/m`);
+    if (nk > 0) distributedArrows(v, 0, l, hh + SLAB, c ? `n_d = ${fmt(c.nTop, 1)} kN/m (${c.name})` : `g_k + q_k = ${fmt(nk, 1)} kN/m`);
     const V = c ? (c.F.w * (L.Vw || 0) + c.F.ae * (L.Ve || 0)) : (L.Vw || 0) + (L.Ve || 0);
     if (Math.abs(V) > 1e-9) {
       const hV = L.hV > 0 ? Math.min(L.hV, hh + SLAB) : hh;
-      v.arrow(0, hV, 1, 0, { length: 60, head: 9, width: 2.2, label: `V${c ? 'd' : ''} = ${fmt(Math.abs(V), 1)} kN`, offset: 4 });
+      v.arrow(0, hV, 1, 0, { length: 60, head: 9, width: 2.2, label: `V_${c ? 'd' : 'k'} = ${fmt(Math.abs(V), 1)} kN`, offset: 4 });
     }
   }
   // Querlast (senkrecht zur Ansichtsebene): Symbol neben der Wand, Gelände bei Erddruck
@@ -149,7 +150,7 @@ export function drawAnsicht(v, app) {
   if (E.on && E.he > 0) {
     const he = Math.min(E.he, hh);
     v.line(-0.25, he, l + 0.25, he, { stroke: 'var(--c-soil)', width: 1.6, dash: '8 4' });
-    v.text(l + 0.25, he, `Gelände (he = ${fmt(E.he, 2)} m)`, { anchor: 'end', dy: -8, size: 10, color: 'var(--c-soil)' });
+    v.text(l + 0.25, he, `Gelände (h_e = ${fmt(E.he, 2)} m)`, { anchor: 'end', dy: -8, size: 10, color: 'var(--c-soil)' });
   }
   if (L.wind || (E.on && E.he > 0)) {
     const xs = l + 0.12 * Math.max(l, hh);
@@ -158,7 +159,7 @@ export function drawAnsicht(v, app) {
       g.append(svgEl('path', { d: 'M-6.5 -6.5L6.5 6.5M6.5 -6.5L-6.5 6.5', style: { stroke: 'var(--c-load)', strokeWidth: 1.6 } }));
     });
     const parts = [];
-    if (L.wind) parts.push(`w = ${fmt(L.wind, 2)} kN/m²`);
+    if (L.wind) parts.push(`w_k = ${fmt(L.wind, 2)} kN/m²`);
     if (E.on && E.he > 0) parts.push('Erddruck');
     v.text(xs, hh / 2, parts.join(' + '), { dy: 22, size: 10.5, color: 'var(--c-load)' });
     v.text(xs, hh / 2, 'quer', { dy: -20, size: 9.5, color: 'var(--text-3)' });
@@ -245,7 +246,7 @@ export function drawSchnitt(v, app) {
       if (Math.abs(pv) * sc * v.scale > 12) v.arrow(x0, z, Math.sign(pv) || 1, 0, { length: Math.abs(pv) * sc * v.scale, head: 6, width: 1.2 });
     }
     const zl = earthOn ? Math.min(hh, earth.he) * 0.25 : hh * 0.75;
-    v.text(x0 - Math.abs(pf(zl)) * sc, zl, `p = ${fmt(Math.abs(pf(earthOn ? 0 : zl)), 2)} kN/m²${earthOn ? ' (Fuss)' : ''}`, { anchor: 'end', dx: -6, size: 10.5, color: 'var(--c-load)' });
+    v.text(x0 - Math.abs(pf(zl)) * sc, zl, `p_d = ${fmt(Math.abs(pf(earthOn ? 0 : zl)), 2)} kN/m²${earthOn ? ' (Fuss)' : ''}`, { anchor: 'end', dx: -6, size: 10.5, color: 'var(--c-load)' });
   }
 
   let legendCheck = '';
@@ -259,7 +260,7 @@ export function drawSchnitt(v, app) {
     legend.push({ label: 'Exzentrizität Th. 1. O.', color: 'var(--c-dim)', dash: '6 4' });
     if (prof.ok) {
       v.polyline(prof.pts.map((q) => [X(q.e), q.z]), { stroke: 'var(--c-pos)', width: 2.6 });
-      legend.push({ label: useLat && c.lat.arching ? `Stützlinie Th. 2. O. (Bogen, eu = ${fmt(c.lat.eU * 1000, 0)} mm)` : 'Stützlinie Th. 2. O. (inkl. e0)', color: 'var(--c-pos)' });
+      legend.push({ label: useLat && c.lat.arching ? `Stützlinie Th. 2. O. (Bogen, e_u = ${fmt(c.lat.eU * 1000, 0)} mm)` : 'Stützlinie Th. 2. O. (inkl. e_0)', color: 'var(--c-pos)' });
     } else {
       v.text(0, hh / 2, 'Kein Gleichgewicht unter Bemessungslasten', { size: 12, bold: true, color: 'var(--fail)' });
     }
@@ -277,18 +278,18 @@ export function drawSchnitt(v, app) {
       v.rect(X(xa), q.z - bh, X(xb - xa), bh, { fill: 'var(--c-neg-fill)', stroke: 'var(--c-neg)', width: 1.2 });
       v.dot(X(q.e), q.z, 3.5, { fill: 'var(--c-pos)' });
       v.text(tw + 0.08, q.z, `z = ${fmt(q.z, 2)} m`, { anchor: 'start', dx: 4, dy: -7, size: 10.5, color: 'var(--c-neg)' });
-      legend.push({ label: `Spannungsblock fxd: ${fmt(cw * 1000, 0)} mm ≤ t − 2e = ${fmt((t - 2 * Math.abs(q.e)) * 1000, 0)} mm`, fill: 'var(--c-neg-fill)', color: 'var(--c-neg)' });
+      legend.push({ label: `Spannungsblock f_xd: ${fmt(cw * 1000, 0)} mm ≤ t − 2e = ${fmt((t - 2 * Math.abs(q.e)) * 1000, 0)} mm`, fill: 'var(--c-neg-fill)', color: 'var(--c-neg)' });
       legend.push({ label: `massgebend: z = ${fmt(q.z, 2)} m, e = ${fmt(q.e * 1000, 1)} mm`, color: 'var(--c-neg)', dash: '5 3', width: 1.2 });
     }
     // Normalkraft oben und unten
     if (showLoads) {
       v.arrow(X(c.eTop), hh, 0, -1, { length: 40, head: 9, width: 2.2 });
-      v.text(X(c.eTop), hh + v.px(40), `nd,o = ${fmt(c.nTop, 1)} kN/m`, { anchor: 'start', dx: 8, dy: 4, size: 11, bold: true, color: 'var(--c-load)' });
+      v.text(X(c.eTop), hh + v.px(40), `n_d,o = ${fmt(c.nTop, 1)} kN/m`, { anchor: 'start', dx: 8, dy: 4, size: 11, bold: true, color: 'var(--c-load)' });
       v.arrow(X(c.eBot), 0, 0, 1, { length: 40, head: 9, width: 2.2, color: 'var(--c-support)' });
-      v.text(X(c.eBot), -v.px(40), `nd,u = ${fmt(c.nBot, 1)} kN/m`, { anchor: 'start', dx: 8, dy: -2, size: 11, bold: true, color: 'var(--c-support)' });
+      v.text(X(c.eBot), -v.px(40), `n_d,u = ${fmt(c.nBot, 1)} kN/m`, { anchor: 'start', dx: 8, dy: -2, size: 11, bold: true, color: 'var(--c-support)' });
     }
-    if (showDims && Math.abs(c.eTop) > 1e-5) v.text(X(c.eTop), hh, `eo = ${fmt(c.eTop * 1000, 1)} mm`, { anchor: c.eTop > 0 ? 'start' : 'end', dx: c.eTop > 0 ? 8 : -8, dy: 10, size: 10, color: 'var(--c-load)' });
-    if (showDims && Math.abs(c.eBot) > 1e-5) v.text(X(c.eBot), 0, `eu = ${fmt(c.eBot * 1000, 1)} mm`, { anchor: c.eBot > 0 ? 'start' : 'end', dx: c.eBot > 0 ? 8 : -8, dy: -10, size: 10, color: 'var(--c-support)' });
+    if (showDims && Math.abs(c.eTop) > 1e-5) v.text(X(c.eTop), hh, `e_o = ${fmt(c.eTop * 1000, 1)} mm`, { anchor: c.eTop > 0 ? 'start' : 'end', dx: c.eTop > 0 ? 8 : -8, dy: 10, size: 10, color: 'var(--c-load)' });
+    if (showDims && Math.abs(c.eBot) > 1e-5) v.text(X(c.eBot), 0, `e_u = ${fmt(c.eBot * 1000, 1)} mm`, { anchor: c.eBot > 0 ? 'start' : 'end', dx: c.eBot > 0 ? 8 : -8, dy: -10, size: 10, color: 'var(--c-support)' });
   }
   if (showDims) {
     const xd = outer ? tw + ext : tw + ext * 0.8;
@@ -358,7 +359,7 @@ export function drawSchub(v, app) {
       const r = Math.min(1, s.sx / R.fxd);
       depth = sc * r + 0.1;
       v.rect(b0, -sc * r - 0.1, lc, sc * r, { fill: 'var(--c-neg-fill)', stroke: 'var(--c-neg)', width: 1.2 });
-      v.text(b0 + lc / 2, -sc * r - 0.1, `σx = ${fmt(s.sx / 1000, 2)} MPa · τ = ${fmt(s.tau / 1000, 2)} MPa`, { dy: 12, size: 10.5, color: 'var(--c-neg)' });
+      v.text(b0 + lc / 2, -sc * r - 0.1, `σ_x = ${fmt(s.sx / 1000, 2)} MPa · τ = ${fmt(s.tau / 1000, 2)} MPa`, { dy: 12, size: 10.5, color: 'var(--c-neg)' });
       legend.push({ label: 'Druckspannung am Wandfuss', fill: 'var(--c-neg-fill)', color: 'var(--c-neg)' });
       v.text((b0 + t0) / 2 + lc / 2, yTop / 2, `α = ${fmt(s.alpha * 180 / Math.PI, 1)}°`, { size: 11, bold: true, color: 'var(--c-pos)' });
     } else {
@@ -369,19 +370,19 @@ export function drawSchub(v, app) {
       const sm = Math.max(smax, 1e-9);
       depth = sc * Math.min(1, sm / R.fxd) + 0.1;
       v.polygon([[b0, -0.1], [b1, -0.1], [b1, -0.1 - sc * Math.min(1, smax / R.fxd)], [b0, -0.1 - sc * Math.min(1, smin / R.fxd)]], { fill: 'var(--c-neg-fill)', stroke: 'var(--c-neg)', width: 1.2 });
-      v.text(b1, -0.1 - sc * Math.min(1, sm / R.fxd), `σmax = ${fmt(smax / 1000, 2)} MPa`, { anchor: 'end', dy: 12, size: 10.5, color: 'var(--c-neg)' });
+      v.text(b1, -0.1 - sc * Math.min(1, sm / R.fxd), `σ_max = ${fmt(smax / 1000, 2)} MPa`, { anchor: 'end', dy: 12, size: 10.5, color: 'var(--c-neg)' });
       legend.push({ label: 'Normalspannung (linear, gerissen)', fill: 'var(--c-neg-fill)', color: 'var(--c-neg)' });
     }
-    if (showDims) v.dimension(b0, -0.1, b1, -0.1, `lc = ${fmt(lc, 2)} m`, -((depth - 0.1) * v.scale + 38));
+    if (showDims) v.dimension(b0, -0.1, b1, -0.1, `l_c = ${fmt(lc, 2)} m`, -((depth - 0.1) * v.scale + 38));
   } else {
-    v.text(l / 2, hh / 2, 'Keine Druckzone – Wand kippt (V·h0 ≥ N·l/2)', { size: 12, bold: true, color: 'var(--fail)' });
+    v.text(l / 2, hh / 2, 'Keine Druckzone – Wand kippt (V·h_0 ≥ N·l/2)', { size: 12, bold: true, color: 'var(--fail)' });
   }
   if (showLoads) {
-    distributedArrows(v, 0, l, hh + SLAB, `Nd = ${fmt(N, 0)} kN (inkl. Eigengewicht)`);
-    v.arrow(0, yTop, 1, 0, { length: 64, head: 10, width: 2.4, label: `Vd = ${fmt(V, 1)} kN`, offset: 4 });
+    distributedArrows(v, 0, l, hh + SLAB, `N_d = ${fmt(N, 0)} kN (inkl. Eigengewicht)`);
+    v.arrow(0, yTop, 1, 0, { length: 64, head: 10, width: 2.4, label: `V_d = ${fmt(V, 1)} kN`, offset: 4 });
     if (lc > 0) v.dot(Math.min(l, l / 2 + s.e), 0, 4.5, { fill: 'var(--c-pos)', title: 'Resultierende am Wandfuss' });
   }
   if (showDims) v.dimension(0, 0, 0, hh, `h = ${fmt(hh, 2)} m`, 34);
   viewLegend(v, legend);
-  v.caption(`Schub · ${c.name} · ${s.method === 'SIA' ? 'Spannungsfeld SIA 266' : 'EN 1996-1-1, 6.2'} · h0 = ${fmt(h0, 2)} m${L.topFixed ? ' (Kopf eingespannt)' : ' (Kragscheibe)'}`);
+  v.caption(`Schub · ${c.name} · ${s.method === 'SIA' ? 'Spannungsfeld SIA 266' : 'EN 1996-1-1, 6.2'} · h_0 = ${fmt(h0, 2)} m${L.topFixed ? ' (Kopf eingespannt)' : ' (Kragscheibe)'}`);
 }

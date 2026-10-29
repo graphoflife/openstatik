@@ -304,7 +304,7 @@ function dSL(r, p) {
     steps: [
       st('Bishop', "F = Σ T_i / Σ W_i·sin α_i,  T_i = [c'·b + (W − u·b)·tan φ'] / m_α,  m_α = cos α + sin α·tan φ'/F"),
       st('Fellenius (Vergleich)', "F = Σ [c'·l + (W·cos α − u·l)·tan φ'] / Σ W·sin α"),
-      ...soil.layers.map((L) => st(`${L.name}: Bemessungswerte`, "tan φ'_d = tan φ'_k/γ_φ,  c'_d = c'_k/γ_c", `= tan ${deg(L.phi)}/${d2(n.gPhi)},  ${d1(L.c)}/${d2(n.gC)}`, `φ'_d = ${deg(Math.atan(Math.tan(rad(L.phi)) / n.gPhi) * 180 / Math.PI)}, c'_d = ${d1(L.c / n.gC)} kN/m²${L.cu > 0 && R.undrained ? `, c_u,d = ${d1(L.cu / n.gCu)}` : ''}`)),
+      ...soil.ground.soils.map((L) => st(`${L.name}: Bemessungswerte`, "tan φ'_d = tan φ'_k/γ_φ,  c'_d = c'_k/γ_c", `= tan ${deg(L.phi)}/${d2(n.gPhi)},  ${d1(L.c)}/${d2(n.gC)}`, `φ'_d = ${deg(Math.atan(Math.tan(rad(L.phi)) / n.gPhi) * 180 / Math.PI)}, c'_d = ${d1(L.c / n.gC)} kN/m²${L.cu > 0 && R.undrained ? `, c_u,d = ${d1(L.cu / n.gCu)}` : ''}`)),
       st('Veränderliche Lasten', 'q_d = γ_Q·q  (nur ungünstig, d.h. bei α >= 0)', `γ_Q = ${d2(n.gQslope)}`, ''),
     ],
   });

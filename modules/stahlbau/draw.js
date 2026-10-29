@@ -4,13 +4,13 @@ import { sectionProps, plasticNeutralAxis } from './profiles.js';
 import { beamModel, normLoad } from './beam.js';
 import { latRestraintPositions } from './calc.js';
 
-const CAT_COLOR = { G: 'var(--c-series-1)', Nutzlast: 'var(--c-load)', Schnee: 'var(--c-series-6)', Wind: 'var(--c-series-5)' };
+export const CAT_COLOR = { G: 'var(--c-series-1)', Nutzlast: 'var(--c-load)', Schnee: 'var(--c-series-6)', Wind: 'var(--c-series-5)' };
 const QTY = {
-  My: { label: 'My', unit: 'kNm', color: 'var(--c-pos)', down: true },
-  Vz: { label: 'Vz', unit: 'kN', color: 'var(--c-series-3)' },
+  My: { label: 'M_y', unit: 'kNm', color: 'var(--c-pos)', down: true },
+  Vz: { label: 'V_z', unit: 'kN', color: 'var(--c-series-3)' },
   N: { label: 'N (Druck +)', unit: 'kN', color: 'var(--c-series-4)' },
-  Mz: { label: 'Mz', unit: 'kNm', color: 'var(--c-series-6)', down: true },
-  Vy: { label: 'Vy', unit: 'kN', color: 'var(--c-series-5)' },
+  Mz: { label: 'M_z', unit: 'kNm', color: 'var(--c-series-6)', down: true },
+  Vy: { label: 'V_y', unit: 'kN', color: 'var(--c-series-5)' },
 };
 
 /** Gewählte Kombination für die Darstellung. */
@@ -155,7 +155,7 @@ export function drawSystem(v, app) {
     if (ptsR[0] > 1e-9) segs.push([0, ptsR[0]]);
     for (let i = 0; i < ptsR.length - 1; i++) segs.push([ptsR[i], ptsR[i + 1]]);
     if (ptsR[ptsR.length - 1] < L - 1e-9) segs.push([ptsR[ptsR.length - 1], L]);
-    if (segs.length > 1 || geo.fields.length > 1) for (const [a, b] of segs) v.dimension(a, 0, b, 0, `Kipplänge ${fmt(b - a, 2)} m`, -92, { color: 'var(--c-highlight)' });
+    if (segs.length > 1 || geo.fields.length > 1) for (const [a, b] of segs) v.dimension(a, 0, b, 0, `L_LT = ${fmt(b - a, 2)} m`, -92, { color: 'var(--c-highlight)' });
   }
   const noLoads = !(p.beam.loads || []).length;
   if (labels && noLoads) v.text(L / 2, lay.yTop, 'Werkzeug «Streckenlast» (Q) wählen und auf den Träger klicken', { color: 'var(--text-3)', size: 12 });
@@ -208,20 +208,20 @@ function drawForcesSystem(v, app) {
     };
     const maxY = Math.max(...Array.from({ length: n + 1 }, (_, i) => Math.abs(cb.My(L * i / n))));
     const maxZ = Math.max(...Array.from({ length: n + 1 }, (_, i) => Math.abs(cb.Mz(L * i / n))));
-    draw((s) => cb.My(s), -1, 'var(--c-pos)', 'My', maxY);
-    draw((s) => cb.Mz(s), 1, 'var(--c-series-6)', 'Mz', maxZ);
+    draw((s) => cb.My(s), -1, 'var(--c-pos)', 'M_y', maxY);
+    draw((s) => cb.Mz(s), 1, 'var(--c-series-6)', 'M_z', maxZ);
     if (Math.abs(c.N) > 1e-9) {
       const [x, y] = P(L, 0);
       v.arrow(x, y, ...(vert ? [0, c.N > 0 ? -1 : 1] : [c.N > 0 ? -1 : 1, 0]), { color: 'var(--c-series-4)', length: 48, tail: c.N < 0, label: labels ? `N = ${fmt(Math.abs(c.N), 1)} kN ${c.N > 0 ? '(Druck)' : '(Zug)'}` : '' });
     }
-    if (labels) v.caption(`${c.name || `Situation ${ci + 1}`}: N = ${fmt(c.N || 0, 1)} kN · My = ${fmt(c.My || 0, 1)} kNm · Mz = ${fmt(c.Mz || 0, 1)} kNm · Vz = ${fmt(c.Vz || 0, 1)} kN`);
+    if (labels) v.caption(`${c.name || `Situation ${ci + 1}`}: N = ${fmt(c.N || 0, 1)} kN · M_y = ${fmt(c.My || 0, 1)} kNm · M_z = ${fmt(c.Mz || 0, 1)} kNm · V_z = ${fmt(c.Vz || 0, 1)} kN`);
   }
   const restr = latRestraintPositions(p, L, [{ x: 0 }, { x: L }], []);
   if (!p.stab?.contRestraint) for (const x of restr) if (x > 1e-6 && x < L - 1e-6) restraintMark(v, ...P(x, 0), 'seitliche Halterung (Gabellager)');
   if (vert) v.dimension(...P(0, 0), ...P(L, 0), `L = ${fmt(L, 2)} m`, 70);
   else v.dimension(...P(0, 0), ...P(L, 0), `L = ${fmt(L, 2)} m`, -54);
   const b = [P(0, -2.6 * u), P(L, 2.6 * u), P(0, 2.6 * u), P(L, -2.6 * u)];
-  v.setBounds(Math.min(...b.map((q) => q[0])) - (vert ? 0 : 0.05 * L), Math.min(...b.map((q) => q[1])) - (vert ? 0.05 * L : 0), Math.max(...b.map((q) => q[0])) + (vert ? 0 : 0.05 * L), Math.max(...b.map((q) => q[1])) + (vert ? 0.16 * L : 0));
+  v.setBounds(Math.min(...b.map((q) => q[0])) - (vert ? 0 : 0.05 * L), Math.min(...b.map((q) => q[1])) - (vert ? 0.05 * L : 0), Math.max(...b.map((q) => q[0])) + (vert ? 0 : 0.36 * L), Math.max(...b.map((q) => q[1])) + (vert ? 0.16 * L : 0));
   v.scaleBar();
 }
 
@@ -314,8 +314,8 @@ export function drawDeflection(v, app) {
     v.line(f.x0, -Math.sign(w[iM]) * wl * sc, f.x1, -Math.sign(w[iM]) * wl * sc, { stroke: ok ? 'var(--ok)' : 'var(--fail)', width: 1.2, dash: '6 4' });
     v.dot(X[iM], -w[iM] * sc, 3.5, { fill: 'var(--c-deform)' });
     if (labels) {
-      v.text(X[iM], -w[iM] * sc, `w = ${fmt(Math.abs(w[iM]), 1)} mm = ${f.cant ? '2·L' : 'L'}/${fmt(Lr * 1000 / Math.abs(w[iM]), 0)}`, { dy: w[iM] > 0 ? 16 : -14, bold: true, size: 11.5 });
-      v.text(f.x1, -Math.sign(w[iM]) * wl * sc, `Grenze ${f.cant ? '2·L' : 'L'}/${lim} = ${fmt(wl, 1)} mm`, { anchor: 'end', dy: w[iM] > 0 ? 12 : -10, color: ok ? 'var(--ok)' : 'var(--fail)', size: 10.5 });
+      v.text(X[iM], -w[iM] * sc, `w_max = ${fmt(Math.abs(w[iM]), 1)} mm = ${f.cant ? '2·L' : 'L'}/${fmt(Lr * 1000 / Math.abs(w[iM]), 0)}`, { dy: w[iM] > 0 ? 16 : -14, bold: true, size: 11.5 });
+      v.text(f.x1, -Math.sign(w[iM]) * wl * sc, `w_lim = ${f.cant ? '2·L' : 'L'}/${lim} = ${fmt(wl, 1)} mm`, { anchor: 'end', dy: w[iM] > 0 ? 12 : -10, color: ok ? 'var(--ok)' : 'var(--fail)', size: 10.5 });
     }
   }
   if (labels) {
@@ -355,8 +355,8 @@ export function drawSection(v, app) {
     v.dimension(yL, H, yR, H, `b = ${fmt(s.b, 0)}`, 28);
     if (s.type === 'I' || s.type === 'WI' || s.type === 'U') {
       const yw = s.type === 'U' ? (s.yMinEdge + s.tw / 2) * k : 0;
-      v.text(yw, -H * 0.42, `tw = ${fmt(s.tw, 1)}`, { anchor: 'start', dx: s.tw * k * v.scale / 2 + 6, size: 10.5, color: 'var(--c-dim)' });
-      v.text(yR, H - s.tf * k / 2, `tf = ${fmt(s.tf, 1)}`, { anchor: 'start', dx: 8, size: 10.5, color: 'var(--c-dim)' });
+      v.text(yw, -H * 0.42, `t_w = ${fmt(s.tw, 1)}`, { anchor: 'start', dx: s.tw * k * v.scale / 2 + 6, size: 10.5, color: 'var(--c-dim)' });
+      v.text(yR, H - s.tf * k / 2, `t_f = ${fmt(s.tf, 1)}`, { anchor: 'start', dx: 8, size: 10.5, color: 'var(--c-dim)' });
       if (s.r) v.text(yR, -H + s.tf * k / 2, s.type === 'U' ? `r = ${fmt(s.r, 1)}` : `r = ${fmt(s.r, 0)}`, { anchor: 'start', dx: 8, size: 10.5, color: 'var(--c-dim)' });
       if (s.type === 'WI' && s.a) v.text(yR, -H + s.tf * k / 2, `a = ${fmt(s.a, 1)}`, { anchor: 'start', dx: 8, size: 10.5, color: 'var(--c-dim)' });
     } else if (s.type === 'RHS' || s.type === 'CHS') {
@@ -395,7 +395,7 @@ export function drawSection(v, app) {
           v.line(yL - ext * 0.6, zpp, x0 + Wd, zpp, { stroke: 'var(--c-highlight)', width: 1.4, dash: '6 3' });
           if (labels) {
             v.text(yL - ext * 0.6, zpp, 'plastische Nulllinie', { anchor: 'end', dx: -4, size: 10.5, color: 'var(--c-highlight)' });
-            v.text(x0, H, `Spannungsblöcke ±fy/γM0 = ${fmt(fyd, 0)} N/mm²`, { anchor: 'start', dy: -10, size: 10.5, color: 'var(--text-2)' });
+            v.text(x0, H, `±f_y/γ_M0 = ${fmt(fyd, 0)} N/mm²`, { anchor: 'middle', dy: -10, size: 10.5, color: 'var(--text-2)' });
             v.text(x0 + Wd, (comp[0] + comp[1]) / 2, 'Druck', { anchor: 'start', dx: 6, size: 10.5, color: 'var(--c-neg)' });
             v.text(x0 - Wd, (tens[0] + tens[1]) / 2, 'Zug', { anchor: 'end', dx: -6, size: 10.5, color: 'var(--c-pos)' });
           }
@@ -406,9 +406,9 @@ export function drawSection(v, app) {
         const sT = N / Aeff + My * s.zMax / Iy, sB = N / Aeff - My * s.zMax / Iy;
         v.polygon([[x0, H], [x0 + sT * scS, H], [x0 + sB * scS, -H], [x0, -H]], { fill: col, fillOpacity: 0.2, stroke: col, width: 1.4 });
         if (labels) {
-          v.text(x0 + sT * scS, H, `σ = ${fmt(sT, 0)} N/mm²`, { anchor: sT >= 0 ? 'start' : 'end', dx: sT >= 0 ? 6 : -6, size: 10.5 });
-          v.text(x0 + sB * scS, -H, `σ = ${fmt(sB, 0)} N/mm²`, { anchor: sB >= 0 ? 'start' : 'end', dx: sB >= 0 ? 6 : -6, size: 10.5 });
-          v.text(x0, H, 'Elastische Spannungen (Druck +)', { anchor: 'start', dy: -22, size: 10.5, color: 'var(--text-2)' });
+          v.text(x0 + sT * scS, H, `σ_o = ${fmt(sT, 0)} N/mm²`, { anchor: sT >= 0 ? 'start' : 'end', dx: sT >= 0 ? 6 : -6, size: 10.5 });
+          v.text(x0 + sB * scS, -H, `σ_u = ${fmt(sB, 0)} N/mm²`, { anchor: sB >= 0 ? 'start' : 'end', dx: sB >= 0 ? 6 : -6, size: 10.5 });
+          v.text(x0, H, 'σ elastisch (Druck +)', { anchor: 'middle', dy: -24, size: 10.5, color: 'var(--text-2)' });
         }
       }
       right = x0 + Wd * 1.15;
@@ -421,6 +421,6 @@ export function drawSection(v, app) {
       v.caption(`Klasse ${u.cls} · ${u.combo.name}`);
     }
   } else if (labels) v.caption(s.name);
-  v.setBounds(yL - ext * 1.8, -H - ext * 1.2, right + ext * 0.4, H + ext * 1.2);
+  v.setBounds(yL - ext * 1.8 - (labels && r && showStress ? 0.8 * (yR - yL) : 0), -H - ext * 1.2, right + ext * 0.4, H + ext * 1.2);
   v.scaleBar();
 }

@@ -226,7 +226,7 @@ export function systemLayout(p, R, li) {
   try {
     const geo = sectionGeometry(p.section);
     const sc = Math.min(3.5, Math.max(1, 0.22 * L / Math.max(geo.b, geo.h)));
-    const cx = right + 0.18 * L + 0.9 + geo.b * sc / 2, cy = L * 0.78;
+    const cx = right + 0.3 * L + 1.0 + geo.b * sc / 2, cy = L * 0.78; // Abstand für Bemassung und l_0-Beschriftung
     inset = { geo, sc, cx, cy, ring: geo.poly.map(([y, z]) => [cx + y * sc, cy + z * sc]), bars: geo.bars.map((b) => [cx + b.y * sc, cy + b.z * sc]) };
     right = cx + geo.b * sc / 2 + 0.3;
   } catch { /* ungültiger Querschnitt */ }
@@ -248,7 +248,7 @@ function viewSystem(v, app, p, R, li) {
     // Imperfektion (überhöht)
     v.polyline(imp, { stroke: 'var(--c-deform)', width: 1.3, dash: '5 4' });
     if (labels && thetaI > 0) {
-      const lab = bc.sway ? `θi = 1/${Math.round(1 / thetaI)} (überhöht)` : `ei = ${beta ? mm(thetaI * beta * L / 2) : '–'} (überhöht)`;
+      const lab = bc.sway ? `θ_i = 1/${Math.round(1 / thetaI)} (überhöht)` : `e_i = ${beta ? mm(thetaI * beta * L / 2) : '–'} (überhöht)`;
       v.text(impLabel[0], impLabel[1], lab, { dx: -10, anchor: 'end', size: 10.5, color: 'var(--c-deform)' });
     }
     drawSupports(v, bc, x0, hw, L);
@@ -273,7 +273,7 @@ function viewSystem(v, app, p, R, li) {
     if (ld.Mb && bc.bot !== 'fixed') v.momentArrow(x0, 0, ld.Mb > 0 ? 1 : -1, { radius: 18, label: labels ? `M = ${kNm(Math.abs(ld.Mb))}` : '' });
     // Bemassung
     v.dimension(x0 + hw, 0, x0 + hw, L, `L = ${fmt(L, 2)} m`, -46);
-    if (labels && beta) v.text(x0 + hw, L * 0.5, `Knicklänge l₀ = ${fmt(beta, 2)}·L = ${fmt(beta * L, 2)} m`, { dx: 66, rotate: 90, size: 10.5, color: 'var(--c-dim)' });
+    if (labels && beta) v.text(x0 + hw, L * 0.5, `Knicklänge l_0 = ${fmt(beta, 2)}·L = ${fmt(beta * L, 2)} m`, { dx: 66, rotate: 90, size: 10.5, color: 'var(--c-dim)' });
     axisTriad(v, x0 - hw - 0.25 * Math.max(0.6, L * 0.1) - 0.15, -0.06 * L, ax);
     xmax = Math.max(xmax, hw);
     xmin = Math.min(xmin, -hw);
@@ -297,7 +297,9 @@ function viewSystem(v, app, p, R, li) {
   // Beim Ziehen des Stützenkopfs nicht neu einpassen (der Kopf bleibt dort, wo er losgelassen wurde)
   const noFit = !!app.stzNoFit;
   app.stzNoFit = false;
-  v.setBounds(Math.min(-0.5, xmin - 0.4 - 0.12 * L), -0.15 * L, lay.right + 0.2, L * (lay.axes.length > 1 ? 1.3 : 1.22) + 0.4, { noFit });
+  // links Platz für die Beschriftung der Imperfektion (Pixeltext, rund 0.25·L bei üblichem Massstab)
+  const impRoom = labels && lay.thetaI > 0 ? 0.25 * L : 0;
+  v.setBounds(Math.min(-0.5, xmin - 0.4 - 0.12 * L) - impRoom, -0.15 * L, lay.right + 0.2, L * (lay.axes.length > 1 ? 1.3 : 1.22) + 0.4, { noFit });
   if (!p.loadCases.length) v.caption('Noch keine Lasten – Werkzeug «Last» (F) wählen und den Stützenkopf anklicken');
   else if (labels) v.caption(`${p.loadCases[li]?.name || ''} · Bemessungswerte · ${p.norm === 'EC' ? 'EN 1992-1-1' : 'SIA 262'} · Elemente anklicken zum Bearbeiten`);
 }
@@ -338,7 +340,7 @@ function viewResults(v, app, p, R, li, mode) {
       if (labels) {
         const right = st.w[k] >= 0;
         v.text(x0 + st.w[k] * s, ys[k], `w = ${mm(st.w[k])}`, { dx: right ? 8 : -8, anchor: right ? 'start' : 'end', bold: true, color: 'var(--c-deform)' });
-        v.text(x0 + st.w[k] * s, ys[k], `= ei ${mm(A.w0[k])} + Δw ${mm(st.u[k])}`, { dx: right ? 8 : -8, dy: 15, anchor: right ? 'start' : 'end', size: 10, color: 'var(--text-2)' });
+        v.text(x0 + st.w[k] * s, ys[k], `= e_i ${mm(A.w0[k])} + Δw ${mm(st.u[k])}`, { dx: right ? 8 : -8, dy: 15, anchor: right ? 'start' : 'end', size: 10, color: 'var(--text-2)' });
         const k1 = extremeIndex(A.w1);
         v.text(x0 + A.w1[k1] * s, ys[k1], `1. Ordnung ${mm(A.w1[k1])}`, { dx: right ? 8 : -8, dy: -16, anchor: right ? 'start' : 'end', size: 10, color: 'var(--c-series-3)' });
       }
@@ -368,12 +370,14 @@ function viewResults(v, app, p, R, li, mode) {
           for (const e of [0, ys.length - 1]) if (e !== k && Math.abs(M2[e]) > 0.05 * mmax) v.text(x0 - M2[e] * s, ys[e], kNm(M2[e]), { dx: M2[e] > 0 ? -6 : 6, anchor: M2[e] > 0 ? 'end' : 'start', size: 10, color: 'var(--c-pos)' });
         }
         const k1 = extremeIndex(M1);
-        const out = M1[k1] > 0;
+        let out = M1[k1] > 0;
+        // liegt das Maximum 1. Ordnung bei dem 2. Ordnung, die Beschriftung auf die Innenseite legen
+        if (M2) { const k2 = extremeIndex(M2); if (Math.abs(ys[k1] - ys[k2]) < 0.15 * L && Math.sign(M1[k1]) === Math.sign(M2[k2])) out = !out; }
         v.text(x0 - M1[k1] * s, ys[k1], `M_I = ${kNm(M1[k1])}`, { dx: out ? -8 : 8, dy: M2 ? -16 : 0, anchor: out ? 'end' : 'start', size: 10.5, color: 'var(--text-2)' });
       }
       xmin = Math.min(xmin, -0.25 * L); xmax = Math.max(xmax, 0.25 * L);
     }
-    if (labels && !A.at1) v.text(x0, L, `kein Gleichgewicht bei λ = 1 – Zustand bei λu = ${fmt(A.lambdaU, 2)}`, { dy: -40, size: 10.5, color: 'var(--fail)', bold: true });
+    if (labels && !A.at1) v.text(x0, L, `kein Gleichgewicht bei λ = 1 – Zustand bei λ_u = ${fmt(A.lambdaU, 2)}`, { dy: -40, size: 10.5, color: 'var(--fail)', bold: true });
   }
   const x1 = pg.x0(pg.axes[pg.axes.length - 1]);
   // unten Platz für die Zeichenerklärung (unten links) lassen
@@ -388,8 +392,8 @@ function viewResults(v, app, p, R, li, mode) {
       v.caption(`${r.name} · Verformung bei Bemessungslast, überhöht dargestellt`);
     } else {
       v.keyLegend([
-        { label: 'M 2. Ordnung (allgemeines Verfahren)', color: 'var(--c-pos)', type: 'fill', fill: 'var(--c-pos-fill)' },
-        { label: 'M 1. Ordnung inkl. Imperfektion', color: 'var(--text-2)', dash: '5 3' },
+        { label: 'M_II (allgemeines Verfahren)', color: 'var(--c-pos)', type: 'fill', fill: 'var(--c-pos-fill)' },
+        { label: 'M_I inkl. Imperfektion', color: 'var(--text-2)', dash: '5 3' },
         rdShown ? { label: 'Querschnittswiderstand ±M_Rd', color: 'var(--fail)', dash: '3 4', width: 1.2 } : null,
       ].filter(Boolean));
       v.caption(`${r.name} · Biegemomente auf der Zugseite aufgetragen`);
@@ -420,7 +424,7 @@ function viewSection(v, app, p, R, li) {
       const un = e0 / a * Math.sign(k); // ε = e0 − κ·u = 0
       const ext = ax === 'y' ? hh / 2 : b / 2;
       if (Math.abs(un) >= ext) {
-        v.caption(`${r.name}: Querschnitt im massgebenden Schnitt (Biegung um ${ax}, x = ${fmt(A.x[st.iM], 2)} m) vollständig überdrückt – keine Nulllinie im Querschnitt`);
+        v.caption(`${r.name}: massgebender Schnitt x = ${fmt(A.x[st.iM], 2)} m vollständig überdrückt (Biegung um ${ax})`);
       } else {
         const side = Math.sign(k); // Druck auf Seite u > un für κ > 0
         const clip = clipHalf(geo.poly, ax, un, side);
@@ -438,7 +442,7 @@ function viewSection(v, app, p, R, li) {
           v.line(un, -Lx, un, Lx, { stroke: 'var(--c-neg)', width: 1.4, dash: '7 4' });
           v.text(un, Lx, 'Nulllinie', { dy: -8, size: 10.5, color: 'var(--c-neg)' });
         }
-        v.caption(`${r.name}: Druckzone im massgebenden Schnitt (Biegung um ${ax}, x = ${fmt(A.x[st.iM], 2)} m, λ = 1, Theorie 2. Ordnung)`);
+        v.caption(`${r.name}: Druckzone im massgebenden Schnitt x = ${fmt(A.x[st.iM], 2)} m (Biegung um ${ax}, 2. Ordnung)`);
       }
     }
   }
@@ -459,7 +463,7 @@ function viewSection(v, app, p, R, li) {
   v.line(0, -ext * 1.1, 0, ext * 1.05, { stroke: 'var(--c-concrete-line)', width: 0.7, dash: '6 3 1.5 3' });
   if (labels) {
     const As = geo.As * 1e6;
-    v.text(0, -ext, `${geo.n} Ø${p.section.dia}  ·  As = ${fmt(As, 0)} mm²  ·  ρ = ${fmt(geo.As / geo.Ac * 100, 2)} %`, { dy: 58, size: 11, color: 'var(--text)' });
+    v.text(0, -ext, `${geo.n} Ø${p.section.dia}  ·  A_s = ${fmt(As, 0)} mm²  ·  ρ = ${fmt(geo.As / geo.Ac * 100, 2)} %`, { dy: 58, size: 11, color: 'var(--text)' });
     v.text(0, -ext, `${p.concrete} · ${p.steel} · Achsabstand a = ${fmt(axisDistance(p.section) * 1000, 0)} mm`, { dy: 74, size: 10.5, color: 'var(--text-2)' });
     if (!R || !R.lcs?.[li]) v.caption('Querschnitt massstäblich · Bewehrung rot, Bügel blau');
   }

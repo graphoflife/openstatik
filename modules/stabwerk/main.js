@@ -1,20 +1,22 @@
 // Modul Stabwerk – ebene Stabtragwerke (Theorie 1. und 2. Ordnung, Stabilität)
 import { createApp, IncompleteInput } from '../../js/core/app.js';
 import {
-  h, clear, group, dataTable, numField, selectField, checkField, textField, button, icon, kvTable, resultTable, stats, note,
+  h, clear, group, dataTable, numField, selectField, checkField, textField, button, icon, kvTable, resultTable, stats, note, listEditor,
   segmented, badge, clone, fmt, emptyState, infoTip, summaryCard, toast,
 } from '../../js/core/ui.js';
 import { chartBox } from '../../js/core/chart.js';
 import { repTable, repKV, repFigure, repP } from '../../js/core/report.js';
 import { niceNum } from '../../js/core/format.js';
 import { analyze, LC_KINDS, COMBO_TYPES, LOAD_DIRS, generateCombinations, pickResult } from './calc.js';
-import { MATERIALS, PROFILES, SECTION_TYPES, sectionProps, sectionLabel, materialById } from './sections.js';
+import { PROFILES, SECTION_TYPES, MATERIAL_TYPES, MATERIAL_COLORS, sectionProps, sectionGeom, sectionLabel, sectionSummary, materialSummary, newMaterial, newSection, gradeValues, migrateMaterials } from './sections.js';
 import { EXAMPLES } from './examples.js';
 import { defaultProject, emptyLC, syncCombos, removeNodeRefs, removeMemberRefs, removeSectionRefs, SUPPORT_KINDS, supportKind } from './model.js';
 import { editorSpec } from './editing.js';
 import { derivation } from './derivation.js';
 
 export { emptyLC };
+
+const HINGE_OPTS = [{ value: '', label: '–' }, { value: 'i', label: 'Anfang' }, { value: 'j', label: 'Ende' }, { value: 'ij', label: 'beide' }];
 
 // ------------------------------------------------------------------ Hilfsfunktionen Darstellung
 
@@ -95,9 +97,9 @@ function drawLoads(v, app) {
   if (!lc) return;
   const ext = modelExtent(p);
   // Massstab für Streckenlasten
-  const secs = p.sections.map((s) => { try { return sectionProps(s); } catch { return null; } });
+  const secs = p.members.map((m) => { try { return sectionProps(p.sections[m.sec - 1], p.materials[(m.mat || 1) - 1]); } catch { return null; } });
   const dl = [...lc.dist.map((l) => Math.max(Math.abs(+l.q1 || 0), Math.abs(+(l.q2 ?? l.q1) || 0)))];
-  if (lc.selfWeight) p.members.forEach((m) => { const sp = secs[m.sec - 1]; if (sp) dl.push(sp.gamma * sp.A); });
+  if (lc.selfWeight) p.members.forEach((m, k) => { const sp = secs[k]; if (sp) dl.push(sp.gamma * sp.A); });
   const qmax = Math.max(1e-9, ...dl);
   const hq = 0.1 * ext.size / qmax;
   const ah = 0.018 * ext.size;
@@ -138,7 +140,7 @@ function drawLoads(v, app) {
   };
   if (lc.selfWeight) {
     p.members.forEach((m) => {
-      const sp = secs[m.sec - 1];
+      const sp = secs[p.members.indexOf(m)];
       if (!sp) return;
       const L = Math.hypot(p.nodes[m.j - 1].x - p.nodes[m.i - 1].x, p.nodes[m.j - 1].y - p.nodes[m.i - 1].y);
       drawDist(m, 0, L, sp.gamma * sp.A, sp.gamma * sp.A, 'g', '', true);
@@ -347,15 +349,21 @@ function renderSystemTab(el, app) {
     }),
   ], { info: 'Knoten sind die Eck- und Verbindungspunkte des Tragwerks. Nummerierung in der Reihenfolge der Tabelle.' }));
 
-  const secOpts = () => p.sections.map((s, i) => ({ value: i + 1, label: `${i + 1}: ${s.name}` }));
+  // Gelenke als eine Auswahlspalte (nicht gespeicherte Hilfseigenschaft)
+  for (const m of p.members) {
+    Object.defineProperty(m, 'gel', { configurable: true, enumerable: false,
+      get: () => (m.hi && m.hj ? 'ij' : m.hi ? 'i' : m.hj ? 'j' : ''), set: (v) => { m.hi = v.includes('i'); m.hj = v.includes('j'); } });
+  }
+  const secOpts = () => p.sections.map((s, i) => ({ value: i + 1, label: s.name }));
+  const matOpts = () => p.materials.map((m, i) => ({ value: i + 1, label: m.name }));
   el.append(group(`Stäbe (${p.members.length})`, [
     p.nodes.length < 2 ? emptyState('Zuerst Knoten erfassen', 'Ein Stab verbindet zwei Knoten.') : null,
     dataTable([
-      { key: 'i', label: 'von', width: '46px', info: 'Anfangsknoten i. Die lokale Stabachse x zeigt von i nach j.' },
-      { key: 'j', label: 'bis', width: '46px', info: 'Endknoten j.' },
+      { key: 'i', label: 'von', width: '42px', info: 'Anfangsknoten i und Endknoten j. Die lokale Stabachse x zeigt von i nach j.' },
+      { key: 'j', label: 'bis', width: '42px' },
       { key: 'sec', label: 'Querschnitt', type: 'select', options: secOpts },
-      { key: 'hi', label: 'Gel. i', type: 'check', info: 'Momentengelenk am Stabanfang (M = 0).' },
-      { key: 'hj', label: 'Gel. j', type: 'check', info: 'Momentengelenk am Stabende (M = 0). Beide Gelenke → Pendelstab / Fachwerkstab.' },
+      { key: 'mat', label: 'Material', type: 'select', options: matOpts },
+      { key: 'gel', label: 'Gelenke', type: 'select', options: HINGE_OPTS, info: 'Momentengelenke an den Stabenden (M = 0). Beide → Pendel- bzw. Fachwerkstab.' },
       { key: 'L', label: 'L', unit: 'm', type: 'calc', calc: (m) => { const a = p.nodes[m.i - 1], b = p.nodes[m.j - 1]; return a && b ? fmt(Math.hypot(b.x - a.x, b.y - a.y), 2) : '–'; } },
     ], p.members, {
       newRow: (rows) => {
@@ -403,46 +411,99 @@ function renderSystemTab(el, app) {
 
 function renderSectionsTab(el, app) {
   const p = app.project;
-  if (app.activeSection === undefined || app.activeSection >= p.sections.length) app.activeSection = 0;
-  const list = h('div', { class: 'list' });
-  p.sections.forEach((s, i) => {
-    let info = '';
-    try { const sp = sectionProps(s); info = `EA = ${fmt(sp.E * sp.A / 1000, 0)} MN · EI = ${fmt(sp.E * sp.I / 1000, 1)} MNm²`; } catch { info = 'unvollständig'; }
-    const used = p.members.filter((m) => m.sec === i + 1).length;
-    list.append(h('div', { class: 'list-item' + (i === app.activeSection ? ' active' : ''), onclick: () => { app.activeSection = i; app.renderInputs(); } },
-      h('b', {}, `${i + 1}`),
-      h('div', { class: 'grow' }, h('div', {}, s.name || '–', ' ', h('span', { class: 'muted small' }, sectionLabel(s))), h('div', { class: 'muted small' }, info)),
-      badge(`${used} Stab${used === 1 ? '' : 'e'}`, used ? 'info' : 'warn')));
-  });
-  el.append(group('Querschnitte', [list,
-    h('div', { class: 'row' },
-      button('Neuer Querschnitt', { icon: 'plus', small: true, onClick: () => { p.sections.push({ ...clone(p.sections[app.activeSection] || defaultProject().sections[0]), name: `Querschnitt ${p.sections.length + 1}` }); app.activeSection = p.sections.length - 1; app.changed({ inputs: true }); } }),
-      button('Löschen', { icon: 'trash', small: true, ghost: true, disabled: p.sections.length < 2, onClick: () => { removeSectionRefs(p, app.activeSection); p.sections.splice(app.activeSection, 1); app.activeSection = 0; app.changed({ inputs: true }); } })),
-  ], { info: 'Jeder Stab verweist auf einen Querschnitt. Werkstoff bestimmt E-Modul und Raumgewicht (Eigengewicht).' }));
+  const ch = (inputs = true) => app.changed({ inputs });
+  const used = (key, i) => p.members.filter((m) => (m[key] || 1) === i + 1).length;
+  const usedBadge = (key) => (it, i) => { const n = used(key, i); return n ? badge(`${n} Stab${n === 1 ? '' : 'e'}`, 'info') : null; };
+  // Verweise der Stäbe nach Löschen/Einfügen nachführen
+  const fixRefs = (key) => ({ type, index }) => {
+    if (type === 'remove') for (const m of p.members) { if ((m[key] || 1) === index + 1) m[key] = 1; else if (m[key] > index + 1) m[key] -= 1; }
+    if (type === 'duplicate') for (const m of p.members) if (m[key] > index) m[key] += 1;
+    ch();
+  };
 
-  const s = p.sections[app.activeSection];
-  if (!s) return;
-  const ch = () => app.changed({ inputs: true });
-  const fields = [
-    textField('Bezeichnung', s, 'name', { onChange: ch }),
-    selectField('Werkstoff', s, 'mat', MATERIALS.map((m) => ({ value: m.id, label: m.label })), { wide: true, onChange: ch, info: 'E-Modul: Beton nach SIA 262 (E_cm), Stahl 210 GPa, Holz E_0,mean.' }),
-    selectField('Querschnittsform', s, 'type', SECTION_TYPES, { wide: true, onChange: ch }),
-  ];
-  if (s.type === 'rect') fields.push(numField('Breite b', s, 'b', { unit: 'mm', min: 1, onChange: ch }), numField('Höhe h', s, 'h', { unit: 'mm', min: 1, onChange: ch, info: 'Höhe in der Tragwerksebene (Biegung um die starke Achse).' }));
-  if (s.type === 'circle') fields.push(numField('Durchmesser', s, 'd', { unit: 'mm', min: 1, onChange: ch }));
-  if (s.type === 'profile') fields.push(selectField('Profil', s, 'profile', Object.keys(PROFILES), { wide: true, onChange: ch, info: 'Biegung um die starke Achse (y-y). Werte nach Profiltabellen.' }));
-  if (s.type === 'values') fields.push(numField('Fläche A', s, 'A', { unit: 'cm²', min: 0, onChange: ch }), numField('Trägheitsmoment I', s, 'I', { unit: 'cm⁴', min: 0, onChange: ch }), numField('Höhe h', s, 'h', { unit: 'mm', min: 0, onChange: ch, info: 'Nur für Temperaturgradient und Widerstandsmoment.' }));
-  if (s.mat === 'custom') fields.push(numField('E-Modul', s, 'E', { unit: 'MPa', min: 1, onChange: ch }), numField('Raumgewicht γ', s, 'gamma', { unit: 'kN/m³', min: 0, onChange: ch }));
-  el.append(group(`Querschnitt ${app.activeSection + 1} bearbeiten`, fields));
+  // Materialien
+  el.append(group(`Materialien (${p.materials.length})`, [
+    listEditor(p.materials, {
+      active: app.openMat ?? null, onActive: (i) => { app.openMat = i; },
+      label: (m) => m.name,
+      sub: (m) => `${MATERIAL_TYPES.find((t) => t.value === m.type)?.value || m.type} · ${materialSummary(m)}`,
+      swatch: (m) => MATERIAL_COLORS[m.type] || 'var(--accent)',
+      badge: usedBadge('mat'),
+      canRemove: () => p.materials.length > 1,
+      onChange: fixRefs('mat'),
+      detail: (d, m) => materialDetail(d, m, app),
+      add: [
+        { label: 'Beton', create: () => newMaterial('Beton', 'C30/37') },
+        { label: 'Baustahl', create: () => newMaterial('Baustahl', 'S355') },
+        { label: 'Holz', create: () => newMaterial('Holz', 'GL24h') },
+        { label: 'Weitere …', icon: 'plus', create: () => newMaterial('Benutzer') },
+      ],
+    }),
+  ], { info: 'Liste der verwendeten Materialien. «Nach Norm» übernimmt die Kennwerte der gewählten Klasse; alle Werte lassen sich anpassen. Jeder Stab wählt sein Material separat.' }));
+
+  // Querschnitte
+  el.append(group(`Querschnitte (${p.sections.length})`, [
+    listEditor(p.sections, {
+      active: app.openSec ?? null, onActive: (i) => { app.openSec = i; },
+      label: (s) => s.name,
+      sub: (s) => sectionSummary(s),
+      swatch: () => 'var(--c-struct)',
+      badge: usedBadge('sec'),
+      canRemove: () => p.sections.length > 1,
+      onChange: fixRefs('sec'),
+      detail: (d, s) => sectionDetail(d, s, app),
+      add: [
+        { label: 'Rechteck', create: () => newSection('rect') },
+        { label: 'Walzprofil', create: () => newSection('profile') },
+        { label: 'Kreis/Rohr', create: () => newSection('circle') },
+        { label: 'Werte A, I', create: () => newSection('values') },
+      ],
+    }),
+  ], { info: 'Reine Geometrie: Querschnittsform und Abmessungen. Das Material wählen Sie je Stab separat.' }));
+}
+
+function materialDetail(d, m, app) {
+  const ch = () => app.changed({ inputs: false });
+  const chAll = () => app.changed({ inputs: true });
+  const t = MATERIAL_TYPES.find((x) => x.value === m.type) || MATERIAL_TYPES[MATERIAL_TYPES.length - 1];
+  d.append(textField('Bezeichnung', m, 'name', { onChange: chAll }));
+  d.append(selectField('Art', m, 'type', MATERIAL_TYPES.map((x) => ({ value: x.value, label: x.label })), {
+    wide: true, onChange: (v) => { const tt = MATERIAL_TYPES.find((x) => x.value === v); if (tt?.def) { m.grade = tt.def; Object.assign(m, gradeValues(v, tt.def)); m.name = tt.def; } chAll(); },
+  }));
+  if (t.grades.length) {
+    d.append(selectField('Normklasse', m, 'grade', t.grades, {
+      wide: true, info: 'Übernimmt E-Modul, Querdehnzahl, Raumgewicht, Wärmedehnzahl und Festigkeit der Klasse.',
+      onChange: (g) => { Object.assign(m, gradeValues(m.type, g)); if (!m.name || t.grades.includes(m.name)) m.name = g; chAll(); },
+    }));
+  }
+  d.append(h('div', { class: 'grid2' },
+    numField('E-Modul E', m, 'E', { unit: 'MPa', min: 1, onChange: ch, info: 'Elastizitätsmodul (Beton: E_cm nach SIA 262, 3.1.2.3).' }),
+    numField('Schubmodul G', m, 'G', { unit: 'MPa', min: 0, onChange: ch }),
+    numField('Raumgewicht γ', m, 'gamma', { unit: 'kN/m³', min: 0, onChange: ch, info: 'Für das automatische Eigengewicht g_0 = γ·A.' }),
+    numField('Querdehnzahl ν', m, 'nu', { min: 0, max: 0.5, onChange: ch }),
+    numField('Wärmedehnzahl α_T', m, 'alphaT', { unit: '1/K', onChange: ch }),
+    numField('Festigkeit f_k', m, 'fk', { unit: 'MPa', min: 0, onChange: ch, info: 'Charakteristische Festigkeit (Beton f_ck, Stahl f_y, Holz f_m,k) – zur Information.' })));
+  const dflt = t.grades.length && m.grade ? gradeValues(m.type, m.grade) : null;
+  if (dflt && ['E', 'G', 'gamma', 'nu', 'alphaT', 'fk'].some((k) => Math.abs((+m[k] || 0) - (dflt[k] || 0)) > 1e-9)) {
+    d.append(h('div', { class: 'row', style: { justifyContent: 'space-between', marginTop: '6px' } },
+      h('span', { class: 'muted small' }, 'Werte von der Norm abweichend'),
+      button('Normwerte', { small: true, ghost: true, icon: 'undo', onClick: () => { Object.assign(m, dflt); chAll(); } })));
+  }
+}
+
+function sectionDetail(d, s, app) {
+  const ch = () => app.changed({ inputs: false });
+  const chAll = () => app.changed({ inputs: true });
+  d.append(textField('Bezeichnung', s, 'name', { onChange: chAll }));
+  d.append(selectField('Form', s, 'type', SECTION_TYPES, { wide: true, onChange: chAll }));
+  if (s.type === 'rect') d.append(h('div', { class: 'grid2' }, numField('Breite b', s, 'b', { unit: 'mm', min: 1, onChange: chAll }), numField('Höhe h', s, 'h', { unit: 'mm', min: 1, onChange: chAll, info: 'Höhe in der Tragwerksebene (Biegung um die starke Achse).' })));
+  if (s.type === 'circle') d.append(numField('Durchmesser d', s, 'd', { unit: 'mm', min: 1, onChange: chAll }));
+  if (s.type === 'tube') d.append(h('div', { class: 'grid2' }, numField('Durchmesser d', s, 'd', { unit: 'mm', min: 1, onChange: chAll }), numField('Wandstärke t', s, 't', { unit: 'mm', min: 0.5, onChange: chAll })));
+  if (s.type === 'profile') d.append(selectField('Profil', s, 'profile', Object.keys(PROFILES), { wide: true, onChange: (v) => { if (!s.name || PROFILES[s.name]) s.name = v; chAll(); }, info: 'Biegung um die starke Achse (y-y). Werte nach Profiltabellen.' }));
+  if (s.type === 'values') d.append(h('div', { class: 'grid2' }, numField('Fläche A', s, 'A', { unit: 'cm²', min: 0, onChange: chAll }), numField('Trägheitsmoment I', s, 'I', { unit: 'cm⁴', min: 0, onChange: chAll }), numField('Höhe h', s, 'h', { unit: 'mm', min: 0, onChange: ch, info: 'Nur für Temperaturgradient und Widerstandsmoment.' })));
   try {
-    const sp = sectionProps(s);
-    el.append(group('Querschnittswerte', [kvTable([
-      ['Fläche A', sp.A * 1e4, 'cm²', 1],
-      ['Trägheitsmoment I', sp.I * 1e8, 'cm⁴', 0],
-      ['Widerstandsmoment W', sp.W * 1e6, 'cm³', 0],
-      ['E-Modul', sp.E / 1000, 'MPa', 0],
-      ['Eigengewicht g₀ = γ·A', sp.gamma * sp.A, 'kN/m', 3],
-    ])]));
+    const g = sectionGeom(s);
+    d.append(kvTable([['Fläche A', g.A * 1e4, 'cm²', 1], ['Trägheitsmoment I', g.I * 1e8, 'cm⁴', 0], ['Widerstandsmoment W', g.W * 1e6, 'cm³', 0]]));
   } catch { /* unvollständig */ }
 }
 
@@ -451,39 +512,49 @@ function renderSectionsTab(el, app) {
 function renderLoadsTab(el, app) {
   const p = app.project;
   if (!(p.activeLC >= 0 && p.activeLC < p.loadCases.length)) p.activeLC = 0;
-  const list = h('div', { class: 'list' });
-  p.loadCases.forEach((lc, i) => {
-    const n = lc.nodal.length + lc.dist.length + lc.point.length + lc.temp.length + lc.settle.length + (lc.selfWeight ? 1 : 0);
-    list.append(h('div', { class: 'list-item' + (i === p.activeLC ? ' active' : ''), onclick: () => { p.activeLC = i; app.setViewMode('sys'); app.renderInputs(); } },
-      badge(LC_KINDS[lc.kind]?.short || lc.kind, lc.kind === 'G' ? 'info' : 'warn'),
-      h('div', { class: 'grow' }, `LF ${i + 1}: ${lc.name}`),
-      h('span', { class: 'muted small' }, `${n} Last${n === 1 ? '' : 'en'}`)));
-  });
   const syncAndChange = () => { syncCombos(p); app.changed({ inputs: true }); };
-  el.append(group('Lastfälle', [list,
-    h('div', { class: 'row' },
-      button('Neuer Lastfall', { icon: 'plus', small: true, onClick: () => { p.loadCases.push(emptyLC(`Nutzlast ${p.loadCases.length}`, 'Q')); p.activeLC = p.loadCases.length - 1; syncAndChange(); } }),
-      button('Duplizieren', { icon: 'copy', small: true, ghost: true, onClick: () => { const c = clone(p.loadCases[p.activeLC]); c.name += ' (Kopie)'; p.loadCases.splice(p.activeLC + 1, 0, c); for (const co of p.combinations) co.factors.splice(p.activeLC + 1, 0, 0); p.activeLC += 1; syncAndChange(); } }),
-      button('Löschen', { icon: 'trash', small: true, ghost: true, disabled: p.loadCases.length < 2, onClick: () => { p.loadCases.splice(p.activeLC, 1); for (const co of p.combinations) co.factors.splice(p.activeLC, 1); p.activeLC = Math.max(0, p.activeLC - 1); syncAndChange(); } })),
-  ], { info: 'Ein Lastfall fasst Lasten gleicher Ursache zusammen (z.B. Eigengewicht, Nutzlast, Schnee, Wind). Kombinationen bildet das Programm automatisch nach SIA 260.' }));
+  const loadCount = (lc) => lc.nodal.length + lc.dist.length + lc.point.length + lc.temp.length + lc.settle.length;
+  // Lastfälle als Liste: der geöffnete Lastfall ist der aktive (Lasten unten, neue Lasten aus der Grafik)
+  el.append(group(`Lastfälle (${p.loadCases.length})`, [
+    listEditor(p.loadCases, {
+      active: p.activeLC,
+      onActive: (i) => { if (i !== null) { p.activeLC = i; app.setViewMode('sys'); } app.changed({ inputs: true }); },
+      label: (lc, i) => `LF ${i + 1}: ${lc.name}`,
+      sub: (lc) => `${LC_KINDS[lc.kind]?.label || lc.kind} · ${loadCount(lc)} Last${loadCount(lc) === 1 ? '' : 'en'}${lc.selfWeight ? ' + Eigengewicht' : ''}`,
+      swatch: (lc) => (lc.kind === 'G' ? 'var(--c-struct)' : lc.kind === 'W' ? 'var(--c-series-6)' : lc.kind === 'S' ? 'var(--c-series-1)' : 'var(--c-load)'),
+      canRemove: () => p.loadCases.length > 1,
+      onRemove: (i) => { for (const co of p.combinations) co.factors.splice(i, 1); if (p.activeLC >= i) p.activeLC = Math.max(0, p.activeLC - 1); },
+      duplicate: (lc) => { const c = clone(lc); c.name += ' (Kopie)'; return c; },
+      onChange: ({ type, index }) => {
+        if (type === 'duplicate') for (const co of p.combinations) co.factors.splice(index, 0, 0);
+        if (type === 'add' || type === 'duplicate') p.activeLC = index;
+        syncAndChange();
+      },
+      detail: (d, lc) => {
+        const kind = LC_KINDS[lc.kind];
+        d.append(textField('Bezeichnung', lc, 'name', { onChange: () => app.changed({ inputs: true }) }));
+        d.append(selectField('Einwirkungsart', lc, 'kind', Object.entries(LC_KINDS).map(([k, v]) => ({ value: k, label: `${k} – ${v.label}` })), {
+          wide: true, info: 'Bestimmt Teilsicherheitsbeiwerte (γ_G = 1.35, γ_Q = 1.5) und Kombinationsbeiwerte ψ nach SIA 260.',
+          onChange: () => { lc.psi = [...LC_KINDS[lc.kind].psi]; syncAndChange(); },
+        }));
+        d.append(checkField('Eigengewicht der Stäbe automatisch (γ·A)', lc, 'selfWeight', { onChange: () => app.changed({ inputs: true }) }));
+        if (kind?.variable) {
+          d.append(h('div', { class: 'grid2' },
+            numField('ψ_0', lc.psi, 0, { min: 0, max: 1, onChange: syncAndChange, info: 'Kombinationsbeiwert für Begleiteinwirkungen (GZT).' }),
+            numField('ψ_2', lc.psi, 2, { min: 0, max: 1, onChange: syncAndChange, info: 'Quasi-ständiger Beiwert (Langzeitverformungen).' })));
+        }
+      },
+      add: [
+        { label: 'Nutzlast', create: () => emptyLC(`Nutzlast ${p.loadCases.length}`, 'Q') },
+        { label: 'Schnee', create: () => emptyLC('Schnee', 'S') },
+        { label: 'Wind', create: () => emptyLC('Wind', 'W') },
+        { label: 'Weitere …', create: () => emptyLC(`Lastfall ${p.loadCases.length + 1}`, 'G') },
+      ],
+    }),
+  ], { info: 'Ein Lastfall fasst Lasten gleicher Ursache zusammen. Der geöffnete Lastfall ist aktiv: seine Lasten stehen unten und erscheinen in der Grafik; neue Lasten aus der Grafik kommen hinzu. Kombinationen nach SIA 260 entstehen automatisch.' }));
 
   const lc = p.loadCases[p.activeLC];
-  const kind = LC_KINDS[lc.kind];
-  const head = [
-    textField('Bezeichnung', lc, 'name', { onChange: () => app.changed() }),
-    selectField('Einwirkungsart', lc, 'kind', Object.entries(LC_KINDS).map(([k, v]) => ({ value: k, label: `${k} – ${v.label}` })), {
-      wide: true, info: 'Bestimmt Teilsicherheitsbeiwerte (γ_G = 1.35, γ_Q = 1.5) und Kombinationsbeiwerte ψ nach SIA 260.',
-      onChange: () => { lc.psi = [...LC_KINDS[lc.kind].psi]; syncAndChange(); },
-    }),
-    checkField('Eigengewicht der Stäbe (γ·A) automatisch', lc, 'selfWeight', { onChange: () => app.changed({ inputs: true }) }),
-  ];
-  if (kind?.variable) {
-    head.push(h('div', { class: 'grid2' },
-      numField('ψ₀', lc.psi, 0, { min: 0, max: 1, onChange: syncAndChange, info: 'Kombinationsbeiwert für Begleiteinwirkungen (GZT).' }),
-      numField('ψ₂', lc.psi, 2, { min: 0, max: 1, onChange: syncAndChange, info: 'Quasi-ständiger Beiwert (Langzeitverformungen).' })));
-  }
-  el.append(group(`Lastfall ${p.activeLC + 1} bearbeiten`, head));
-
+  el.append(h('div', { class: 'section-label' }, `Lasten in LF ${p.activeLC + 1}: ${lc.name}`));
   const ch = (e) => app.changed({ inputs: e?.type !== 'edit' });
   const memberCol = { key: 'member', label: 'Stab', width: '46px' };
   const dirCol = { key: 'dir', label: 'Richtung', type: 'select', options: LOAD_DIRS, info: '↓ vertikal: Schwerkraftrichtung (positiv nach unten). Projiziert: Last je m Grundriss (z.B. Schnee auf geneigtem Dach). ⊥: senkrecht zur Stabachse.' };
@@ -639,17 +710,19 @@ function renderStability(el, app) {
 
 function report(app) {
   const p = app.project, r = app.results;
-  const secs = p.sections.map((s) => sectionProps(s));
+
   const out = [];
   out.push({ title: '1 System', content: [
     repFigure(app.snapshot('sys'), 'Statisches System mit Lasten des aktiven Lastfalls'),
     repTable(['Knoten', { label: 'x [m]', num: true, digits: 3 }, { label: 'y [m]', num: true, digits: 3 }], p.nodes.map((n, i) => [String(i + 1), +n.x, +n.y])),
-    repTable(['Stab', 'i', 'j', 'Querschnitt', { label: 'L [m]', num: true, digits: 3 }, 'Gelenke'], p.members.map((m, k) => {
+    repTable(['Stab', 'i', 'j', 'Querschnitt', 'Material', { label: 'L [m]', num: true, digits: 3 }, 'Gelenke'], p.members.map((m, k) => {
       const a = p.nodes[m.i - 1], b = p.nodes[m.j - 1];
-      return [String(k + 1), String(m.i), String(m.j), p.sections[m.sec - 1]?.name ?? '', Math.hypot(b.x - a.x, b.y - a.y), [m.hi ? 'i' : '', m.hj ? 'j' : ''].filter(Boolean).join(', ') || '–'];
+      return [String(k + 1), String(m.i), String(m.j), p.sections[m.sec - 1]?.name ?? '', p.materials[(m.mat || 1) - 1]?.name ?? '', Math.hypot(b.x - a.x, b.y - a.y), [m.hi ? 'i' : '', m.hj ? 'j' : ''].filter(Boolean).join(', ') || '–'];
     })),
-    repTable(['Querschnitt', 'Werkstoff', 'Form', { label: 'A [cm²]', num: true, digits: 1 }, { label: 'I [cm⁴]', num: true, digits: 0 }, { label: 'E [MPa]', num: true, digits: 0 }, { label: 'g₀ [kN/m]', num: true, digits: 3 }],
-      p.sections.map((s, i) => [`${i + 1}: ${s.name}`, materialById(s.mat).label, sectionLabel(s), secs[i].A * 1e4, secs[i].I * 1e8, secs[i].E / 1000, secs[i].gamma * secs[i].A])),
+    repTable(['Material', 'Art', { label: 'E [MPa]', num: true, digits: 0 }, { label: 'G [MPa]', num: true, digits: 0 }, { label: 'γ [kN/m³]', num: true, digits: 1 }, { label: 'α_T [1/K]', num: true, digits: 6 }, { label: 'f_k [MPa]', num: true, digits: 0 }],
+      p.materials.map((m) => [m.name, m.type, +m.E, +m.G, +m.gamma, +m.alphaT, +m.fk || 0])),
+    repTable(['Querschnitt', 'Form', { label: 'A [cm²]', num: true, digits: 1 }, { label: 'I [cm⁴]', num: true, digits: 0 }, { label: 'W [cm³]', num: true, digits: 0 }],
+      p.sections.map((s) => { const g = sectionGeom(s); return [s.name, sectionLabel(s), g.A * 1e4, g.I * 1e8, g.W * 1e6]; })),
     repTable(['Lager', 'Knoten', 'x', 'y', 'φ', 'Federn'], p.supports.map((s, i) => [String(i + 1), String(s.node), s.ux ? 'fest' : '–', s.uy ? 'fest' : '–', s.rz ? 'fest' : '–', [s.kx ? `kx=${s.kx}` : '', s.ky ? `ky=${s.ky}` : '', s.kr ? `kφ=${s.kr}` : ''].filter(Boolean).join(' ') || '–'])),
   ] });
   const lcContent = [];
@@ -713,11 +786,13 @@ createApp({
   id: 'stabwerk',
   title: 'Stabwerk',
   subtitle: 'Ebene Stabtragwerke · Theorie 1. und 2. Ordnung',
+  instance: { label: 'System', plural: 'Systeme' },
   version: 1,
   autoCompute: true,
   defaultProject,
   examples: EXAMPLES,
   migrate(p) {
+    migrateMaterials(p);
     p.analysis = { secondOrder: false, imperfection: 200, buckling: true, nSub: 4, ...(p.analysis || {}) };
     for (const lc of p.loadCases || []) for (const k of ['nodal', 'dist', 'point', 'temp', 'settle']) lc[k] ||= [];
     if (p.autoCombos === undefined) p.autoCombos = !p.combinations?.length;
@@ -728,11 +803,11 @@ createApp({
   intro: `<h4>So funktioniert's</h4><ol>
     <li><b>Zeichnen</b>: oben <b>Stab</b> (L) wählen und Punkte in die Grafik klicken – Knoten entstehen automatisch.</li>
     <li><b>Lager und Lasten</b> mit den Werkzeugen <b>Lager</b> (A), <b>Streckenlast</b> (Q), <b>Einzellast</b> (F) anbringen.</li>
-    <li><b>Anklicken</b> eines Stabes oder Knotens öffnet das Eigenschaftsfenster: Querschnitt, Material, Gelenke, Lasten.</li>
+    <li><b>Anklicken</b> eines Stabes oder Knotens öffnet das Eigenschaftsfenster: Querschnitt und Material (getrennt wählbar, Listen im Register «Material & Querschnitt»), Gelenke, Lasten.</li>
     <li>Ergebnisse erscheinen sofort; unter <b>Herleitung</b> rechts steht der Rechenweg. Die Tabellen links bleiben als Alternative.</li></ol>`,
   inputTabs: [
     { id: 'sys', label: 'System', render: renderSystemTab },
-    { id: 'sec', label: 'Querschnitte', render: renderSectionsTab },
+    { id: 'sec', label: 'Material & Querschnitt', render: renderSectionsTab },
     { id: 'loads', label: 'Lasten', render: renderLoadsTab },
     { id: 'calc', label: 'Berechnung', render: renderAnalysisTab },
   ],

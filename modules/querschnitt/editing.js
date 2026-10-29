@@ -2,7 +2,7 @@
 //
 // Die Grafik arbeitet in mm (y nach rechts, z nach oben), genau wie die Eingabe. IDs und Bearbeitungs-
 // operationen siehe model.js; hier nur die Anbindung an den Editor (js/core/editor.js) und die Oberfläche.
-import { h, numField, selectField, selectInput, textField, button, kvTable, note, toast } from '../../js/core/ui.js';
+import { h, rich, numField, selectField, selectInput, textField, button, kvTable, note, toast } from '../../js/core/ui.js';
 import { TOOL_ICONS } from '../../js/core/editor.js';
 import { fmt } from '../../js/core/format.js';
 import { CONCRETE_CLASSES, NORMS } from '../../js/core/materials.js';
@@ -24,6 +24,8 @@ const ICONS = {
 };
 
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+/** Gedämpfte Kurzinfo mit Formelzeichen. */
+const hint = (text) => h('div', { class: 'muted small' }, rich(text));
 const f0 = (v) => fmt(v, 0);
 
 /** Achsabstand vom Rand für Fangpunkte: a = c + Øw + Ø/2 (Werte des Bewehrungsgenerators). */
@@ -272,23 +274,23 @@ function barResults(app, idx) {
   const c = R.cases[caseIndex(app)];
   if (!c) return [];
   const vs = viewState(app, c);
-  const out = [h('div', { class: 'ed-sub' }, 'Ergebnis', h('span', { class: 'muted small', style: { textTransform: 'none', fontWeight: 400, letterSpacing: 0 } }, ` · ${vs.label}`)), caseSelect(app)];
+  const out = [h('div', { class: 'ed-sub' }, 'Ergebnis'), caseSelect(app), hint(vs.label)];
   if (!vs.st?.ok) { out.push(note(vs.st?.msg || 'Kein Zustand verfügbar.', 'warn')); return out; }
   const bars = vs.st.bars.filter((b) => idx.includes(b.i));
   if (!bars.length) { out.push(h('div', { class: 'muted small' }, 'Stab nicht im Fasermodell (ausserhalb des Betons oder ungültig).')); return out; }
   if (bars.length === 1) {
     const b = bars[0];
     out.push(kvTable([
-      ['Dehnung εs', b.eps * 1000, '‰', 3],
-      ['Spannung σs', b.sigma, 'MPa', 1],
-      ['Kraft Fs = σs·As', b.sigma * b.A * 1000, 'kN', 1],
+      ['Dehnung ε_s', b.eps * 1000, '‰', 3],
+      ['Spannung σ_s', b.sigma, 'MPa', 1],
+      ['Kraft F_s = σ_s·A_s', b.sigma * b.A * 1000, 'kN', 1],
     ]));
   } else {
     const e = bars.map((b) => b.eps), s = bars.map((b) => b.sigma);
     out.push(kvTable([
-      ['Dehnung εs min / max', `${fmt(Math.min(...e) * 1000, 3)} / ${fmt(Math.max(...e) * 1000, 3)}`, '‰'],
-      ['Spannung σs min / max', `${fmt(Math.min(...s), 1)} / ${fmt(Math.max(...s), 1)}`, 'MPa'],
-      ['Summe Fs = Σ σs·As', bars.reduce((t, b) => t + b.sigma * b.A * 1000, 0), 'kN', 1],
+      ['ε_s min / max', `${fmt(Math.min(...e) * 1000, 3)} / ${fmt(Math.max(...e) * 1000, 3)}`, '‰'],
+      ['σ_s min / max', `${fmt(Math.min(...s), 1)} / ${fmt(Math.max(...s), 1)}`, 'MPa'],
+      ['Summe F_s = Σ σ_s·A_s', bars.reduce((t, b) => t + b.sigma * b.A * 1000, 0), 'kN', 1],
     ]));
   }
   return out;
@@ -300,7 +302,7 @@ function inspectBar(app, ctx, i) {
   const out = [
     h('div', { class: 'grid2' }, numField('y', b, 'y', { unit: 'mm', onChange: () => changed(app) }), numField('z', b, 'z', { unit: 'mm', onChange: () => changed(app) })),
     diaField('Ø', b, 'd', (v) => { ctx.ui.barD = v; changed(app); }, 'Stabdurchmesser. Gilt auch für die nächsten Stäbe, die mit «Stab», «Stabreihe» oder «Stabkreis» gesetzt werden.'),
-    h('div', { class: 'muted small' }, `As = π·Ø²/4 = ${fmt(barAreaMm2(b.d), 0)} mm²`),
+    hint(`A_s = π·Ø²/4 = ${fmt(barAreaMm2(b.d), 0)} mm²`),
     ok ? null : note('Der Stab liegt ausserhalb des Betons bzw. in einer Aussparung.', 'warn'),
     ...barResults(app, [i]),
   ];
@@ -324,27 +326,27 @@ function inspectConcrete(app, ctx) {
   }));
   if (t !== 'poly') {
     p.shape[t] ||= defaultShapes()[t];
-    out.push(...SHAPE_PARAMS[t].map(([k, label]) => numField(label, p.shape[t], k, { unit: 'mm', min: 1, onChange: () => changed(app) })));
-    out.push(h('div', { class: 'muted small' }, t === 'circle' || t === 'ring' ? 'Mittelpunkt im Ursprung (0/0).' : t === 'L' ? 'Äussere Ecke im Ursprung (0/0).' : 'Unterkante auf z = 0, symmetrisch zur z-Achse. Ziehen eines Eckpunkts wandelt in «Polygon frei» um.'));
+    out.push(h('div', { class: 'grid2' }, SHAPE_PARAMS[t].map(([k, label]) => numField(label, p.shape[t], k, { unit: 'mm', min: 1, onChange: () => changed(app) }))));
+    out.push(hint(t === 'circle' || t === 'ring' ? 'Mittelpunkt im Ursprung (0/0).' : t === 'L' ? 'Äussere Ecke im Ursprung (0/0).' : 'Ziehen eines Eckpunkts wandelt in «Polygon frei» um.'));
   } else {
     const n = (p.shape.poly || []).length;
-    out.push(h('div', { class: 'muted small' }, `${n} Eckpunkte – Eckpunkte ziehen; Kante anklicken, um einen Punkt einzufügen.`));
+    out.push(hint(`${n} Eckpunkte – ziehen; Kante anklicken fügt einen Punkt ein.`));
     out.push(h('div', { class: 'ed-actions' }, button('Schwerpunkt → (0/0)', { small: true, title: 'Beton, Aussparungen und Stäbe so verschieben, dass der Schwerpunkt im Ursprung liegt', onClick: () => centerSection(app) })));
   }
   out.push(h('div', { class: 'grid2' },
     selectField('Beton', m, 'concrete', CONCRETE_CLASSES, { onChange: () => changed(app) }),
-    selectField('Norm', m, 'norm', NORMS, { onChange: () => changed(app) })));
+    selectField('Norm', m, 'norm', NORMS.map((x) => ({ value: x.value, label: x.value === 'SIA' ? 'SIA 262' : 'EN 1992-1-1' })), { onChange: () => changed(app) })));
   const sp = sectionProps(p);
   if (sp.error) out.push(note(sp.error, 'fail'));
   else {
     const { g, gp } = sp;
     const rot = !gp.isotropic && Math.abs(Math.sin(2 * gp.alpha)) > 1e-6;
-    out.push(h('div', { class: 'ed-sub' }, 'Querschnittswerte (Beton brutto)'));
+    out.push(h('div', { class: 'ed-sub' }, 'Beton brutto'));
     out.push(kvTable([
-      ['Fläche A', gp.A, 'mm²', 0],
-      ['Schwerpunkt yS / zS', `${fmt(gp.cy, 1)} / ${fmt(gp.cz, 1)}`, 'mm'],
-      ['Iy / Iz', `${fmt(gp.Iy / 1e6, 1)} / ${fmt(gp.Iz / 1e6, 1)}`, '10⁶ mm⁴'],
-      rot ? ['I1 / I2, α', `${fmt(gp.I1 / 1e6, 1)} / ${fmt(gp.I2 / 1e6, 1)}, ${fmt(gp.alpha * 180 / Math.PI, 1)}°`, '10⁶ mm⁴'] : null,
+      ['Fläche A_c', gp.A, 'mm²', 0],
+      ['y_S / z_S', `${fmt(gp.cy, 1)} / ${fmt(gp.cz, 1)}`, 'mm'],
+      ['I_y / I_z', `${fmt(gp.Iy / 1e6, 1)} / ${fmt(gp.Iz / 1e6, 1)}`, '10⁶ mm⁴'],
+      rot ? ['I_1 / I_2, α', `${fmt(gp.I1 / 1e6, 1)} / ${fmt(gp.I2 / 1e6, 1)}, ${fmt(gp.alpha * 180 / Math.PI, 1)}°`, '10⁶ mm⁴'] : null,
       ['Breite × Höhe', `${f0(gp.b)} × ${f0(gp.h)}`, 'mm'],
       g.holes.length ? ['Aussparungen', g.holes.length, '', 0] : null,
     ]));
@@ -432,10 +434,11 @@ function inspectOpening(app, ctx, k) {
     if (src.circle) {
       const tmp = { ...src.circle };
       const set = () => { try { setDuct(p, k, tmp); ctx.ui.ductD = tmp.D; changed(app); } catch (e) { toast(e.message, 'warn'); } };
-      out.push(numField('Ø', tmp, 'D', { unit: 'mm', min: 1, onChange: set, info: 'Durchmesser, als flächengleiches 32-Eck modelliert. Gilt auch für das nächste Hüllrohr.' }));
-      out.push(h('div', { class: 'grid2' }, numField('Mitte y', tmp, 'y', { unit: 'mm', onChange: set }), numField('Mitte z', tmp, 'z', { unit: 'mm', onChange: set })));
+      out.push(h('div', { class: 'grid3' },
+        numField('Ø', tmp, 'D', { unit: 'mm', min: 1, onChange: set, info: 'Als flächengleiches 32-Eck modelliert; gilt auch für das nächste Hüllrohr.' }),
+        numField('Mitte y', tmp, 'y', { unit: 'mm', onChange: set }), numField('Mitte z', tmp, 'z', { unit: 'mm', onChange: set })));
     } else {
-      out.push(h('div', { class: 'muted small' }, `${o.pts.length} Eckpunkte – Eckpunkte ziehen; Kante anklicken, um einen Punkt einzufügen.`));
+      out.push(hint(`${o.pts.length} Eckpunkte – ziehen; Kante anklicken fügt einen Punkt ein.`));
     }
   }
   out.push(kvTable([
@@ -478,7 +481,7 @@ function inspectMulti(app, ctx, ids) {
   if (barIdx.length) {
     const As = barIdx.reduce((s, i) => s + barAreaMm2(p.bars[i].d), 0);
     const ds = [...new Set(barIdx.map((i) => p.bars[i].d))];
-    out.push(h('div', { class: 'muted small' }, `${barIdx.length} Stäbe${other ? ` und ${other} weitere Elemente` : ''} · As = ${fmt(As, 0)} mm²${ds.length > 1 ? ` (Ø ${ds.join(', ')})` : ''}`));
+    out.push(hint(`${barIdx.length} Stäbe${other ? ` und ${other} weitere Elemente` : ''} · A_s = ${fmt(As, 0)} mm²${ds.length > 1 ? ` (Ø ${ds.join(', ')})` : ''}`));
     const G = groupOf(app, ctx, barIdx);
     const tmp = { d: ds.length === 1 ? ds[0] : ctx.ui.barD, n: G?.n };
     out.push(diaField(ds.length === 1 ? 'Ø' : 'Ø für alle', tmp, 'd', (v) => {
@@ -494,13 +497,13 @@ function inspectMulti(app, ctx, ids) {
       }));
       const L = dist(G.a, G.b);
       const s = G.kind === 'row' ? (G.n > 1 ? L / (G.n - 1) : 0) : 2 * Math.PI * L / G.n;
-      out.push(h('div', { class: 'muted small' }, `Achsabstand s = ${fmt(s, 0)} mm${G.kind === 'circle' ? ` (Radius ${fmt(L, 0)} mm)` : ''}`));
+      out.push(hint(`Achsabstand s = ${fmt(s, 0)} mm${G.kind === 'circle' ? ` (Radius ${fmt(L, 0)} mm)` : ''}`));
     }
     out.push(...barResults(app, barIdx));
   } else {
-    out.push(h('div', { class: 'muted small' }, `${ids.length} Elemente ausgewählt.`));
+    out.push(hint(`${ids.length} Elemente ausgewählt.`));
   }
-  out.push(note('Ziehen verschiebt die Auswahl, Entf löscht sie, C kopiert Stäbe und Aussparungen.', ''));
+  out.push(hint('Ziehen verschiebt · Entf löscht · C kopiert Stäbe und Aussparungen'));
   return { title: barIdx.length && !other ? `${barIdx.length} Stäbe` : `${ids.length} Elemente`, content: out };
 }
 
@@ -514,37 +517,38 @@ function idlePanel(app, ctx) {
     if (!Number.isFinite(g.c)) g.c = 30;
     if (!Number.isFinite(g.dw)) g.dw = 8;
     const upd = () => { app.editor?.invalidate(); app.editor?.drawOverlay(); };
-    return h('div', { class: 'ed-details' },
+    return h('div', {},
+      h('div', { class: 'ed-sub' }, 'Neue Elemente'),
       h('div', { class: 'grid2' },
-        diaField('Ø neue Stäbe', ctx.ui, 'barD', upd, 'Durchmesser für «Stab», «Stabreihe» und «Stabkreis».'),
+        diaField('Ø Stäbe', ctx.ui, 'barD', upd, 'Durchmesser für «Stab», «Stabreihe» und «Stabkreis».'),
         numField('Ø Hüllrohr', ctx.ui, 'ductD', { unit: 'mm', min: 1 })),
       h('div', { class: 'grid2' },
-        numField('Überdeckung c', g, 'c', { unit: 'mm', min: 0, onChange: upd, info: 'Für die Fangpunkte ○ im Achsabstand a = c + Øw + Ø/2 vom Rand.' }),
-        numField('Bügel Øw', g, 'dw', { unit: 'mm', min: 0, onChange: upd })),
-      h('div', { class: 'muted small' }, `Fangpunkte ○ im Achsabstand a = ${fmt(coverAxis(ctx), 0)} mm vom Rand.`));
+        numField('Überdeckung c', g, 'c', { unit: 'mm', min: 0, onChange: upd, info: 'Für die Fangpunkte ○ im Achsabstand a = c + Ø<sub>w</sub> + Ø/2 vom Rand.' }),
+        numField('Bügel Ø_w', g, 'dw', { unit: 'mm', min: 0, onChange: upd })),
+      hint(`Fangpunkte ○: Achsabstand a = ${fmt(coverAxis(ctx), 0)} mm vom Rand`));
   };
   if (!hasOutline(p)) {
     return h('div', {},
-      h('b', {}, 'Schritt 1 · Betonquerschnitt'),
-      h('div', {}, 'Oben «Rechteck» (Taste Q) wählen und zwei gegenüberliegende Ecken anklicken – oder «Polygon» (U) für beliebige Formen, Enter schliesst. Masse in mm; Koordinaten lassen sich auch tippen.'),
-      h('div', { class: 'muted small', style: { marginTop: '4px' } }, 'Vorlagen (Plattenbalken, Kreis, Hohlkasten …) im Register «Querschnitt», fertige Projekte unter «Beispiele».'));
+      h('b', {}, 'Schritt 1 · Beton'),
+      h('div', {}, '«Rechteck» (Q): zwei Ecken anklicken · «Polygon» (U): Eckpunkte, Enter schliesst. Masse in mm.'),
+      hint('Vorlagen im Register «Querschnitt», fertige Querschnitte unter «Beispiele».'));
   }
   if (!(p.bars || []).length) {
     return h('div', {},
       h('b', {}, 'Schritt 2 · Bewehrung'),
-      h('div', {}, '«Stab» (B) setzt Einzelstäbe, «Stabreihe» (L) verteilt Stäbe zwischen zwei Punkten, «Stabkreis» (K) auf einem Kreis. Die Fangpunkte ○ liegen im Achsabstand vom Rand.'),
+      h('div', {}, '«Stab» (B), «Stabreihe» (L) oder «Stabkreis» (K); Fangpunkte ○ im Achsabstand vom Rand.'),
       settings());
   }
   if (!(p.loads || []).length) {
     return h('div', {},
       h('b', {}, 'Schritt 3 · Lastfall'),
-      h('div', {}, 'Schnittgrössen N, My, Mz im Register «Lasten» erfassen.'),
+      h('div', {}, rich('Schnittgrössen N, M_y, M_z im Register «Lasten» erfassen.')),
       h('div', { class: 'ed-actions' }, button('Lastfall anlegen', {
         small: true, primary: true, icon: 'plus',
-        onClick: () => { p.loads.push({ name: 'LF 1', type: 'GZT', N: 0, My: 0, Mz: 0, V: 0 }); changed(app); app.selectTab('lasten'); app.status('Lastfall «LF 1» angelegt – N, My und Mz in der Tabelle eintragen.', 'ok'); },
+        onClick: () => { p.loads.push({ name: 'LF 1', type: 'GZT', N: 0, My: 0, Mz: 0, V: 0 }); ctx.ui.lcOpen = p.loads.length - 1; changed(app); app.selectTab('lasten'); app.status('Lastfall «LF 1» angelegt – N und die Momente im geöffneten Lastfall eintragen.', 'ok'); },
       })));
   }
   return h('div', {},
-    h('div', {}, 'Beton, Eckpunkt, Kante, Aussparung oder Stab anklicken, um Eigenschaften und Ergebnisse zu sehen. Ziehen verschiebt; Eckpunkte von Vorlagen wandeln diese in ein Polygon um.'),
+    h('div', {}, 'Beton, Eckpunkt, Kante, Aussparung oder Stab anklicken zeigt Eigenschaften und Ergebnisse; Ziehen verschiebt.'),
     settings());
 }

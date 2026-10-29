@@ -1,10 +1,10 @@
 // Grafische Bearbeitung des Stabwerks: Werkzeuge, Geometrie für den Editor, Eigenschaftsfenster
-import { h, numField, selectField, checkField, textField, button, kvTable, badge, fmt, note } from '../../js/core/ui.js';
+import { h, numField, selectField, checkField, textField, button, kvTable, badge, fmt, note, rich } from '../../js/core/ui.js';
 import { TOOL_ICONS } from '../../js/core/editor.js';
 import { chartBox } from '../../js/core/chart.js';
 import { LOAD_DIRS, LC_KINDS, pickResult } from './calc.js';
-import { MATERIALS, PROFILES, SECTION_TYPES, sectionProps, sectionLabel } from './sections.js';
-import { SUPPORT_KINDS, supportKind, ensureNode, mergeNodes, removeNodeRefs, removeMemberRefs, DEFAULT_SECTION, connectNode, splitAtInnerNodes } from './model.js';
+import { sectionLabel, sectionSummary, materialSummary, newMaterial, newSection } from './sections.js';
+import { SUPPORT_KINDS, supportKind, ensureNode, mergeNodes, removeNodeRefs, removeMemberRefs, connectNode, splitAtInnerNodes } from './model.js';
 
 const nid = (i) => `n:${i}`;
 const mid = (k) => `m:${k}`;
@@ -65,7 +65,8 @@ export const editorSpec = {
       // Endpunkte auf bestehenden Stäben verbinden diese (T-Stoss)
       connectNode(p, i); connectNode(p, j);
       const sec = Math.min(p.sections.length, Math.max(1, p.activeSec || 1));
-      p.members.push({ i: i + 1, j: j + 1, sec, hi: false, hj: false });
+      const mat = Math.min(p.materials.length, Math.max(1, p.activeMat || 1));
+      p.members.push({ i: i + 1, j: j + 1, sec, mat, hi: false, hj: false });
       // vorhandene Knoten im Inneren des neuen Stabes teilen ihn
       const parts = splitAtInnerNodes(p, p.members.length - 1);
       app.status(`Stab ${p.members.length}: Knoten ${i + 1} → ${j + 1}, L = ${fmt(Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]), 3)} m${parts.length > 1 ? ` (in ${parts.length} Stäbe geteilt)` : ''}`, 'ok');
@@ -246,25 +247,36 @@ function inspectNode(app, i) {
   return { title: `Knoten ${i + 1}`, content: out };
 }
 
-function sectionEditor(app, s, idx) {
+/** Auswahl von Material bzw. Querschnitt eines Stabes mit Kurzinfo und Sprung zur Liste. */
+function pickRef(app, m, key) {
   const p = app.project;
-  const ch = () => { app.changed({ inputs: true }); app.editor.refreshPanel(true); };
-  const users = p.members.filter((m) => m.sec === idx + 1).length;
-  const f = [
-    selectField('Material', s, 'mat', MATERIALS.map((m) => ({ value: m.id, label: m.label })), { wide: true, onChange: ch, info: 'Bestimmt E-Modul und Raumgewicht (Eigengewicht).' }),
-    selectField('Form', s, 'type', SECTION_TYPES, { wide: true, onChange: ch }),
-  ];
-  if (s.type === 'rect') f.push(h('div', { class: 'grid2' }, numField('b', s, 'b', { unit: 'mm', min: 1, onChange: ch }), numField('h', s, 'h', { unit: 'mm', min: 1, onChange: ch, info: 'Höhe in der Tragwerksebene.' })));
-  if (s.type === 'circle') f.push(numField('Durchmesser', s, 'd', { unit: 'mm', min: 1, onChange: ch }));
-  if (s.type === 'profile') f.push(selectField('Profil', s, 'profile', Object.keys(PROFILES), { wide: true, onChange: ch }));
-  if (s.type === 'values') f.push(h('div', { class: 'grid2' }, numField('A', s, 'A', { unit: 'cm²', min: 0, onChange: ch }), numField('I', s, 'I', { unit: 'cm⁴', min: 0, onChange: ch })));
-  if (s.mat === 'custom') f.push(h('div', { class: 'grid2' }, numField('E', s, 'E', { unit: 'MPa', min: 1, onChange: ch }), numField('γ', s, 'gamma', { unit: 'kN/m³', min: 0, onChange: ch })));
-  try {
-    const sp = sectionProps(s);
-    f.push(h('div', { class: 'muted small' }, `A = ${fmt(sp.A * 1e4, 1)} cm² · I = ${fmt(sp.I * 1e8, 0)} cm⁴ · E = ${fmt(sp.E / 1000, 0)} MPa · g₀ = ${fmt(sp.gamma * sp.A, 2)} kN/m`));
-  } catch { /* unvollständig */ }
-  if (users > 1) f.push(h('div', { class: 'muted small' }, `Gilt für ${users} Stäbe mit Querschnitt «${s.name}».`));
-  return f;
+  const isMat = key === 'mat';
+  const list = isMat ? p.materials : p.sections;
+  const opts = [...list.map((x, i) => ({ value: i + 1, label: x.name })), { value: 0, label: isMat ? '+ Neues Material …' : '+ Neuer Querschnitt …' }];
+  if (!(m[key] >= 1)) m[key] = 1;
+  const f = selectField(isMat ? 'Material' : 'Querschnitt', m, key, opts, {
+    wide: true,
+    info: isMat ? 'Material dieses Stabes (E-Modul, Raumgewicht). Die Liste der Materialien bearbeiten Sie im Register «Material & Querschnitt».'
+      : 'Querschnitt dieses Stabes (Form und Abmessungen). Die Liste bearbeiten Sie im Register «Material & Querschnitt».',
+    onChange: (v) => {
+      if (v === 0) {
+        list.push(isMat ? newMaterial('Beton', 'C30/37') : newSection('rect'));
+        m[key] = list.length;
+        openInList(app, key, list.length - 1);
+      }
+      if (isMat) p.activeMat = m[key]; else p.activeSec = m[key];
+      app.changed({ inputs: true }); app.editor.refreshPanel(true);
+    },
+  });
+  const it = list[m[key] - 1];
+  const info = it ? (isMat ? materialSummary(it) : sectionSummary(it)) : '';
+  return [f, h('div', { class: 'ed-ref' }, h('span', { class: 'muted small' }, rich(info)),
+    h('button', { type: 'button', class: 'chk-link', title: 'In der Liste bearbeiten', onclick: () => openInList(app, key, m[key] - 1) }, 'bearbeiten ›'))];
+}
+
+function openInList(app, key, i) {
+  if (key === 'mat') app.openMat = i; else app.openSec = i;
+  app.selectTab?.('sec');
 }
 
 function inspectMember(app, k) {
@@ -272,26 +284,11 @@ function inspectMember(app, k) {
   const m = p.members[k];
   const ch = () => app.changed({ inputs: true });
   const L = memberLen(p, m);
-  const secOpts = [...p.sections.map((s, i) => ({ value: i + 1, label: `${s.name} (${sectionLabel(s)})` })), { value: 0, label: '+ Neuer Querschnitt …' }];
   const out = [
     h('div', { class: 'muted small' }, `Knoten ${m.i} → ${m.j} · L = ${fmt(L, 3)} m`),
-    selectField('Querschnitt', m, 'sec', secOpts, {
-      wide: true, info: 'Querschnitt dieses Stabes. Änderungen an Material und Abmessungen gelten für alle Stäbe mit diesem Querschnitt.',
-      onChange: (v) => {
-        if (v === 0) {
-          const base = p.sections[(p.activeSec || 1) - 1] || DEFAULT_SECTION;
-          p.sections.push({ ...base, name: `Querschnitt ${p.sections.length + 1}` });
-          m.sec = p.sections.length;
-        }
-        p.activeSec = m.sec;
-        ch(); app.editor.refreshPanel(true);
-      },
-    }),
+    ...pickRef(app, m, 'sec'),
+    ...pickRef(app, m, 'mat'),
   ];
-  const s = p.sections[m.sec - 1];
-  if (s) {
-    out.push(h('details', { class: 'ed-details', open: true }, h('summary', {}, `Querschnitt «${s.name}» bearbeiten`), textField('Name', s, 'name', { onChange: () => { ch(); app.editor.refreshPanel(true); } }), ...sectionEditor(app, s, m.sec - 1)));
-  }
   out.push(h('div', { class: 'grid2' },
     checkField('Gelenk Anfang', m, 'hi', { onChange: ch, info: 'Momentengelenk am Knoten i.' }),
     checkField('Gelenk Ende', m, 'hj', { onChange: ch, info: 'Momentengelenk am Knoten j.' })));
@@ -340,9 +337,12 @@ function inspectMulti(app, ids) {
   const nodes = ids.map(parse).filter((x) => x.t === 'n').length;
   const out = [h('div', { class: 'muted small' }, `${mems.length} Stäbe, ${nodes} Knoten ausgewählt`)];
   if (mems.length) {
-    const tmp = { sec: p.members[mems[0]].sec };
+    const tmp = { sec: p.members[mems[0]].sec, mat: p.members[mems[0]].mat || 1 };
     out.push(selectField('Querschnitt für alle', tmp, 'sec', p.sections.map((s, i) => ({ value: i + 1, label: `${s.name} (${sectionLabel(s)})` })), {
       wide: true, onChange: (v) => { for (const k of mems) p.members[k].sec = v; app.changed({ inputs: true }); },
+    }));
+    out.push(selectField('Material für alle', tmp, 'mat', p.materials.map((m, i) => ({ value: i + 1, label: m.name })), {
+      wide: true, onChange: (v) => { for (const k of mems) p.members[k].mat = v; app.changed({ inputs: true }); },
     }));
     const lc = p.loadCases[p.activeLC];
     if (lc) out.push(lcSelect(app), button('Streckenlast auf alle', { icon: 'plus', small: true, onClick: () => { for (const k of mems) lc.dist.push({ member: k + 1, dir: 'g', q1: 10, q2: null, a: null, b: null }); app.changed({ inputs: true }); app.editor.refreshPanel(true); } }));

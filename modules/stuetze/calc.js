@@ -508,22 +508,22 @@ export function analyzeLoadCase(ctx, lc, index = 0) {
   for (const A of [Y, Z]) {
     const axl = A.ax === 'y' ? 'Biegung um y' : 'Biegung um z';
     checks.push({
-      key: `lu${A.ax}`, deriv: `allg-${A.ax}`, label: `Traglast ${axl} (allgemeines Verfahren)`, ref: `${ref}: λu ≥ 1`,
+      key: `lu${A.ax}`, deriv: `allg-${A.ax}`, label: `Traglast ${axl} (allgemeines Verfahren)`, ref: `${ref}: λ_u ≥ 1`,
       Ed: 1, Rd: A.lambdaU, unit: '', digits: 2, eta: A.etaU,
-      detail: A.capped ? 'λu ≥ 20 (Suche begrenzt)' : A.reason === 'section' ? 'Versagen durch Erreichen einer Grenzdehnung im Querschnitt' : A.reason === 'axial' ? 'Normalkraft übersteigt den Querschnittswiderstand' : 'Stabilitätsversagen (kein stabiles Gleichgewicht mehr)',
+      detail: A.capped ? 'λ_u ≥ 20 (Suche begrenzt)' : A.reason === 'section' ? 'Versagen durch Erreichen einer Grenzdehnung im Querschnitt' : A.reason === 'axial' ? 'Normalkraft übersteigt den Querschnittswiderstand' : 'Stabilitätsversagen (kein stabiles Gleichgewicht mehr)',
     });
   }
   for (const A of [Y, Z]) {
     const axl = A.ax === 'y' ? 'M_y' : 'M_z';
     if (A.M2max === null) {
-      checks.push({ key: `sec${A.ax}`, deriv: `qs-${A.ax}`, label: `Querschnitt ${axl},Ed,II ≤ ${axl},Rd`, ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: undefined, Rd: A.MRd, unit: 'kNm', eta: A.etaSec, detail: 'Kein Gleichgewicht unter Bemessungslast (Ausnutzung als 1/λu angegeben)' });
+      checks.push({ key: `sec${A.ax}`, deriv: `qs-${A.ax}`, label: `Querschnitt ${axl},Ed,II ≤ ${axl},Rd`, ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: undefined, Rd: A.MRd, unit: 'kNm', eta: A.etaSec, detail: 'Kein Gleichgewicht unter Bemessungslast (Ausnutzung als 1/λ_u angegeben)' });
     } else {
       checks.push({ key: `sec${A.ax}`, deriv: `qs-${A.ax}`, label: `Querschnitt ${axl},Ed,II ≤ ${axl},Rd`, ref: p.norm === 'EC' ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2', Ed: A.M2max, Rd: A.MRd, unit: 'kNm', eta: A.etaSec, detail: `bei x = ${A.x[A.at1.iM].toFixed(2)} m, inkl. Imperfektion` });
     }
   }
   {
     checks.push({
-      key: 'biax', deriv: 'zweiachsig', label: geo.shape === 'circle' ? 'Resultierendes Moment √(My² + Mz²) ≤ M_Rd' : 'Zweiachsige Biegung (Interaktion My–Mz)', ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7',
+      key: 'biax', deriv: 'zweiachsig', label: geo.shape === 'circle' ? 'Resultierendes Moment √(M_y² + M_z²) ≤ M_Rd' : 'Zweiachsige Biegung (Interaktion M_y–M_z)', ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7',
       Ed: Number.isFinite(gov.eta) ? Math.hypot(gov.My, gov.Mz) : undefined, Rd: Number.isFinite(gov.eta) && gov.eta > 0 ? Math.hypot(gov.My, gov.Mz) / gov.eta : undefined,
       unit: 'kNm', eta: gov.eta, detail: gov.missing ? 'Kein Gleichgewicht unter Bemessungslast' : `${gov.label}; massgebend bei x = ${gov.x.toFixed(2)} m`,
     });
@@ -537,7 +537,7 @@ export function analyzeLoadCase(ctx, lc, index = 0) {
   const simpChecks = [Y, Z].filter((A) => A.ax === 'y' || p.biaxial || geo.shape === 'rect').map((A) => ({
     key: `simp${A.ax}`, deriv: `vereinf-${A.ax}`, label: `${p.norm === 'EC' ? 'Nennkrümmung' : 'Modellstütze'} – Biegung um ${A.ax}`,
     ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.8' : 'SIA 262 4.3.7', Ed: A.simp.MEd, Rd: A.simp.MRd, unit: 'kNm', eta: A.simp.eta,
-    detail: `e2 = ${(A.simp.e2 * 1000).toFixed(1)} mm, M2 = ${A.simp.M2.toFixed(1)} kNm`,
+    detail: `e_2 = ${(A.simp.e2 * 1000).toFixed(1)} mm, M_2 = ${A.simp.M2.toFixed(1)} kNm`,
   }));
   let etaSimp = Math.max(...simpChecks.map((c) => c.eta));
   if (p.biaxial && Number.isFinite(etaSimp)) {
@@ -552,7 +552,7 @@ export function analyzeLoadCase(ctx, lc, index = 0) {
     }
     const MEdR = Math.hypot(gp[0], gp[1]);
     simpChecks.push({
-      key: 'simpbiax', deriv: 'zweiachsig', label: geo.shape === 'circle' ? 'Resultierendes Moment (vereinfachtes Verfahren)' : 'Interaktion My–Mz (vereinfachtes Verfahren)',
+      key: 'simpbiax', deriv: 'zweiachsig', label: geo.shape === 'circle' ? 'Resultierendes Moment (vereinfachtes Verfahren)' : 'Interaktion M_y–M_z (vereinfachtes Verfahren)',
       ref: p.norm === 'EC' ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7', Ed: MEdR, Rd: e > 0 ? MEdR / e : undefined, unit: 'kNm', eta: e,
       detail: p.norm === 'EC' ? `Formel (5.39) mit a = ${a.toFixed(2)}: ${e539.toFixed(2)} ≤ 1` : 'Imperfektion jeweils nur in einer Richtung',
     });

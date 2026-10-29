@@ -2,7 +2,8 @@
 // Gleitkreise mit Suchraster, Winkelstützmauer mit Kräften und Sohldruck.
 import { svgEl, fmt } from '../../js/core/ui.js';
 import { sequential } from '../../js/core/colormap.js';
-import { makeSoil, layerStyle, rad } from './soil.js';
+import { makeSoil, layerStyle, soilColor, rad } from './soil.js';
+import { clipRingToBox, clipSegToRing, ringArea } from './ground.js';
 import { prandtlMechanism } from './bearing.js';
 import { stressFactor } from './settlement.js';
 import { polyY } from './slope.js';
@@ -47,7 +48,9 @@ const res = (app) => (app.results && app.results.type === app.project.analysis ?
  */
 export const scene = { key: '', items: [], zOfY: null, empty: false, info: {} };
 const add = (it) => scene.items.push(it);
-let editUntil = 0, lastKey = '', fitOpts = {};
+let editUntil = 0, lastKey = '', fitOpts = {}, printMode = false;
+/** Für Berichtsgrafiken: keine Bearbeitungsgriffe zeichnen. */
+export function setPrintMode(on) { printMode = !!on; }
 /** Nach einer Bearbeitung in der Grafik aufrufen: die Ansicht wird dann (auch nach der Neuberechnung) nicht neu eingepasst. */
 export function markEdit() { editUntil = Date.now() + 1500; }
 function setB(v, x0, y0, x1, y1) { v.setBounds(x0, y0, x1, y1, fitOpts); }
@@ -74,7 +77,7 @@ export function renderView(v, app, mode) {
   else if (a === 'boeschung') drawSlope(ctx);
   else if (a === 'stuetzmauer') drawWall(ctx);
   // Griffe (ziehbare Punkte) sichtbar machen
-  for (const it of scene.items) {
+  if (!printMode) for (const it of scene.items) {
     if (it.type === 'point' && it.movable !== false) v.dot(it.p[0], it.p[1], 3.6, { fill: 'var(--surface)', stroke: 'var(--accent)', width: 1.6, title: it.label });
   }
 }
@@ -84,24 +87,6 @@ export function renderView(v, app, mode) {
 let clipSeq = 0;
 function resetClips(v) { v.defs.querySelectorAll('.geo-clip').forEach((n) => n.remove()); }
 
-function clipY(poly, y0, above) {
-  const out = [];
-  const inside = (p) => (above ? p[1] >= y0 - 1e-12 : p[1] <= y0 + 1e-12);
-  for (let i = 0; i < poly.length; i++) {
-    const A = poly[i], B = poly[(i + 1) % poly.length];
-    const ia = inside(A), ib = inside(B);
-    if (ia) out.push(A);
-    if (ia !== ib) { const t = (y0 - A[1]) / (B[1] - A[1]); out.push([A[0] + t * (B[0] - A[0]), y0]); }
-  }
-  return out;
-}
-/** Polygon auf ein horizontales Band ya ≤ y ≤ yb beschneiden (Sutherland–Hodgman). */
-function clipBand(poly, ya, yb) {
-  let p = clipY(poly, ya, true);
-  if (p.length >= 3 && Number.isFinite(yb)) p = clipY(p, yb, false);
-  return p.length >= 3 ? p : null;
-}
-
 function bbox(pts) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
@@ -109,14 +94,9 @@ function bbox(pts) {
 }
 
 /** Schraffur (Linien in Weltkoordinaten, auf das Polygon beschnitten). */
-function hatch(v, poly, st, gap) {
+function hatch(v, poly, st, gap, parent, color = 'var(--c-soil)') {
   if (st.hatch === null || st.hatch === undefined) return;
-  const id = `geoclip${++clipSeq}`;
-  const cp = svgEl('clipPath', { id, class: 'geo-clip', clipPathUnits: 'userSpaceOnUse' });
-  cp.append(svgEl('polygon', { points: poly.map((p) => `${p[0]},${p[1]}`).join(' ') }));
-  v.defs.append(cp);
-  const g = v.group('geo-hatch');
-  g.setAttribute('clip-path', `url(#${id})`);
+  const g = clipGroup(v, poly, parent);
   const b = bbox(poly);
   const diag = Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
   const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
@@ -127,64 +107,107 @@ function hatch(v, poly, st, gap) {
     const k = Math.ceil(diag / 2 / sp);
     for (let i = -k; i <= k; i++) {
       const ox = cx + n[0] * i * sp, oy = cy + n[1] * i * sp;
-      v.line(ox - d[0] * diag / 2, oy - d[1] * diag / 2, ox + d[0] * diag / 2, oy + d[1] * diag / 2, { parent: g, stroke: 'var(--c-soil)', width: 0.7, opacity: 0.55 });
+      v.line(ox - d[0] * diag / 2, oy - d[1] * diag / 2, ox + d[0] * diag / 2, oy + d[1] * diag / 2, { parent: g, stroke: color, width: 0.7, opacity: 0.6 });
     }
   }
+}
+
+/** Gruppe in der Weltebene, auf ein Polygon beschnitten (SVG-clipPath). */
+function clipGroup(v, ring, parent) {
+  const id = `geoclip${++clipSeq}`;
+  const cp = svgEl('clipPath', { id, class: 'geo-clip', clipPathUnits: 'userSpaceOnUse' });
+  cp.append(svgEl('polygon', { points: ring.map((p) => `${p[0]},${p[1]}`).join(' ') }));
+  v.defs.append(cp);
+  const g = svgEl('g', { 'clip-path': `url(#${id})` });
+  (parent || v.gWorld).append(g);
+  return g;
+}
+
+function centroid(ring) {
+  let A = 0, cx = 0, cy = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i], [x2, y2] = ring[(i + 1) % ring.length];
+    const c = x1 * y2 - x2 * y1;
+    A += c; cx += (x1 + x2) * c; cy += (y1 + y2) * c;
+  }
+  return Math.abs(A) < 1e-12 ? ring[0] : [cx / (3 * A), cy / (3 * A)];
 }
 
 /**
- * Bodenschichten in einem Gebietspolygon zeichnen. elev(z) → Höhenkote der Tiefe z.
- * opts: {labelX, labelAnchor, yMin, gap, labels, hatch}
+ * Bodenmodell (Untergrund + Zonen) im Gebietspolygon zeichnen; ref = Höhenkote des Bezugsniveaus (y_rel = 0).
+ * Trägt Flächen, Grenzen und Ecken als anklickbare Elemente in die Szene ein.
+ * opts: {labelX, labelAnchor, gap, labels, hatch, yTopLabel}
  */
-function drawLayers(v, soil, region, elev, opts) {
-  const { layers } = soil;
+function drawGround(v, soil, region, ref, opts) {
+  const G = soil.ground;
   const rb = bbox(region);
-  for (let i = 0; i < layers.length; i++) {
-    const L = layers[i];
-    const yTop = i === 0 ? Infinity : elev(L.z);
-    const yBot = Number.isFinite(L.zBot) ? elev(L.zBot) : -Infinity;
-    const poly = clipBand(region, Math.max(yBot, rb.y0 - 1), Math.min(yTop, rb.y1 + 1));
-    if (!poly) continue;
-    const st = layerStyle(L.col);
-    v.polygon(poly, { fill: 'var(--c-soil)', fillOpacity: st.op, stroke: 'none' });
-    if (opts.hatch) hatch(v, poly, st, opts.gap);
-    add({ type: 'region', id: `L:${L.idx}`, ring: poly, label: `Schicht «${L.name}»`, movable: false });
-  }
-  // Schichtgrenzen
-  for (let i = 1; i < layers.length; i++) {
-    const y = elev(layers[i].z);
-    if (y <= rb.y0 || y >= rb.y1) continue;
-    const segs = hLineInPoly(region, y);
-    segs.forEach(([xa, xb], k) => {
-      v.line(xa, y, xb, y, { stroke: 'var(--c-soil)', width: 1.1, dash: '5 3' });
-      add({ type: 'segment', id: `B:${layers[i].idx}:${k}`, a: [xa, y], b: [xb, y], label: `Oberkante «${layers[i].name}»` });
+  scene.ref = ref; scene.box = rb; scene.region = region;
+  const W = (r) => r.map(([x, y]) => [x, ref + y]);
+  const gr = clipGroup(v, region);
+  const paint = (poly, S) => {
+    const st = layerStyle(S.col), col = soilColor(S.col);
+    v.polygon(poly, { parent: gr, fill: col, fillOpacity: st.op, stroke: 'none' });
+    if (opts.hatch) hatch(v, poly, st, opts.gap, gr, col);
+  };
+  paint(region, G.soils[G.base]);
+  add({ type: 'region', id: 'Z:b', ring: region, label: `Untergrund «${G.soils[G.base].name}»`, movable: false });
+  const keyOf = (p) => `${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+  const seenP = new Set(), seenE = new Set();
+  const inBox = (p) => p[0] >= rb.x0 - 1e-9 && p[0] <= rb.x1 + 1e-9 && p[1] >= rb.y0 - 1e-9 && p[1] <= rb.y1 + 1e-9;
+  for (const z of G.zones) {
+    const w = W(z.ring);
+    paint(w, G.soils[z.soil]);
+    v.polygon(w, { parent: gr, fill: 'none', stroke: soilColor(G.soils[z.soil].col), width: 1.2, dash: '6 3' });
+    const vis = clipRingToBox(w, rb);
+    if (!vis) continue;
+    add({ type: 'region', id: `Z:${z.k}`, ring: vis, label: `Fläche ${z.k + 1}: ${G.soils[z.soil].name}` });
+    for (let i = 0; i < w.length; i++) {
+      const a = w[i], b = w[(i + 1) % w.length];
+      const parts = clipSegToRing(a, b, region);
+      if (!parts.length) continue;
+      const longest = parts.reduce((m, c) => (c[3] - c[2] > m[3] - m[2] ? c : m), parts[0]);
+      const ek = [keyOf(longest[0]), keyOf(longest[1])].sort().join('|');
+      if (!seenE.has(ek)) { seenE.add(ek); add({ type: 'segment', id: `E:${z.k}:${i}`, a: longest[0], b: longest[1], label: 'Schichtgrenze (ziehen: verschieben)' }); }
+      // Griffe, wo eine Grenze das Bodengebiet verlässt (zum Neigen einer Grenze)
+      const first = parts[0], last = parts[parts.length - 1];
+      for (const [end, p, t] of [[0, first[0], first[2]], [1, last[1], last[3]]]) {
+        if (end === 0 ? t <= 1e-9 : t >= 1 - 1e-9) continue;
+        const pk = keyOf(p);
+        if (!seenP.has(pk)) { seenP.add(pk); add({ type: 'point', id: `X:${z.k}:${i}:${end}`, p, label: 'Ende der Schichtgrenze (ziehen: neigen)' }); }
+      }
+    }
+    w.forEach((p, i) => {
+      if (!inBox(p)) return;
+      const pk = keyOf(p);
+      if (seenP.has(pk)) return;
+      seenP.add(pk);
+      add({ type: 'point', id: `V:${z.k}:${i}`, p, label: 'Ecke der Fläche' });
     });
   }
   if (opts.labels) {
-    for (let i = 0; i < layers.length; i++) {
-      const L = layers[i];
-      const yTop = Math.min(i === 0 ? rb.y1 : elev(L.z), opts.yTopLabel ?? rb.y1);
-      const yBot = Math.max(Number.isFinite(L.zBot) ? elev(L.zBot) : rb.y0, rb.y0);
-      if (yTop - yBot <= 0) continue;
-      const y = (yTop + yBot) / 2;
-      const txt = `${L.name}  ·  φ'=${fmt(L.phi, 1)}°${L.c ? `  c'=${fmt(L.c, 0)}` : ''}${L.cu ? `  cᵤ=${fmt(L.cu, 0)}` : ''}  γ=${fmt(L.gamma, 1)}`;
-      v.text(opts.labelX, y, txt, { anchor: opts.labelAnchor || 'end', size: 10.5, color: 'var(--text-2)', dx: opts.labelAnchor === 'start' ? 6 : -6 });
+    const lx = opts.labelX ?? rb.x1;
+    const yTopL = opts.yTopLabel ?? rb.y1;
+    const x0 = lx + (opts.labelAnchor === 'start' ? 1e-3 : -1e-3);
+    const labelled = new Set();
+    for (const iv of G.profileAt(x0)) {
+      const top = Math.min(ref + iv.yTop, yTopL), bot = Math.max(ref + iv.yBot, rb.y0);
+      if (top - bot < 0.18 * (rb.y1 - rb.y0) * 0.15) continue;
+      const S = G.soils[iv.soil];
+      labelled.add(iv.soil);
+      v.text(lx, (top + bot) / 2, soilLabel(S), { anchor: opts.labelAnchor || 'end', size: 10.5, color: 'var(--text-2)', dx: opts.labelAnchor === 'start' ? 6 : -6 });
+    }
+    for (const z of G.zones) {
+      if (labelled.has(z.soil)) continue;
+      const vis = clipRingToBox(W(z.ring), rb);
+      if (!vis || Math.abs(ringArea(vis)) < 0.02 * (rb.x1 - rb.x0) * (rb.y1 - rb.y0)) continue;
+      const c = centroid(vis);
+      labelled.add(z.soil);
+      v.text(c[0], c[1], G.soils[z.soil].name, { size: 10.5, color: 'var(--text-2)' });
     }
   }
 }
 
-/** x-Abschnitte einer horizontalen Linie y innerhalb eines (einfachen) Polygons. */
-function hLineInPoly(poly, y) {
-  const xs = [];
-  for (let i = 0; i < poly.length; i++) {
-    const A = poly[i], B = poly[(i + 1) % poly.length];
-    if ((A[1] - y) * (B[1] - y) < 0) xs.push(A[0] + (y - A[1]) / (B[1] - A[1]) * (B[0] - A[0]));
-  }
-  xs.sort((a, b) => a - b);
-  const out = [];
-  for (let i = 0; i + 1 < xs.length; i += 2) out.push([xs[i], xs[i + 1]]);
-  return out;
-}
+const soilLabel = (S) => `${S.name}  ·  φ'_k = ${fmt(S.phi, 1)}°${S.c ? `  c'_k = ${fmt(S.c, 0)}` : ''}${S.cu ? `  c_u = ${fmt(S.cu, 0)}` : ''}  γ = ${fmt(S.gamma, 1)}`;
 
 function waterLine(v, x0, x1, y, opts = {}) {
   v.line(x0, y, x1, y, { stroke: 'var(--c-water)', width: 1.6 });
@@ -261,7 +284,7 @@ function drawEarthPressure({ v, p, r, soil, mode, o }) {
   if (empty) {
     scene.empty = true;
     const reg = [[X0, yB], [X1, yB], [X1, H], [X0, H]];
-    drawLayers(v, soil, reg, (z) => H - z, { labels: o.labels, labelX: X1, gap: size / 70, hatch: o.hatch, yTopLabel: H });
+    drawGround(v, soil, reg, H, { labels: o.labels, labelX: X1, gap: size / 70, hatch: o.hatch, yTopLabel: H });
     v.line(X0, H, X1, H, { stroke: 'var(--c-soil)', width: 1.6 });
     if (Number.isFinite(soil.zw) && soil.zw < H + 0.22 * H) waterLine(v, X0, X1, H - soil.zw, { label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
     emptyHint(v, (X0 + X1) / 2, H + 0.5, ['Noch keine Wand', 'Werkzeug «Wand» wählen und Wandkopf und Wandfuss anklicken', '(oder Wandhöhe im Register «Analyse» eingeben)']);
@@ -271,7 +294,7 @@ function drawEarthPressure({ v, p, r, soil, mode, o }) {
   }
   // Bodengebiet: hinter der Wand + unter der Sohle + vor der Wand bis Sohlniveau
   const region = [[X0, yB], [X1, yB], [X1, yS(X1)], [xTop, H], [0, 0], [-tw, 0], [X0, 0]];
-  drawLayers(v, soil, region, (z) => H - z, { labels: o.labels && mode === 'wedge', labelX: X1, gap: size / 70, hatch: o.hatch, yTopLabel: H });
+  drawGround(v, soil, region, H, { labels: o.labels && mode === 'wedge', labelX: X1, gap: size / 70, hatch: o.hatch, yTopLabel: H });
   // Grundwasser
   const zw = soil.zw;
   if (Number.isFinite(zw) && zw < H + 0.22 * H) waterLine(v, 0, X1, H - zw, { label: o.labels ? `GW ${fmt(zw, 2)} m` : null });
@@ -417,7 +440,7 @@ function drawFooting({ v, p, r, soil, mode, o }) {
   }
   const size = Math.max(2 * X, depth);
   const region = [[-X, -depth], [X, -depth], [X, 0], [-X, 0]];
-  drawLayers(v, soil, region, (z) => -z, { labels: o.labels, labelX: X, gap: size / 70, hatch: o.hatch, yTopLabel: 0 });
+  drawGround(v, soil, region, 0, { labels: o.labels, labelX: X, gap: size / 70, hatch: o.hatch, yTopLabel: 0 });
   v.line(-X, 0, X, 0, { stroke: 'var(--c-soil)', width: 1.6 });
   if (Number.isFinite(soil.zw) && soil.zw < depth) waterLine(v, -X, X, -soil.zw, { xs: -X + 0.15 * X, label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
   // Fundament und Stütze
@@ -485,7 +508,7 @@ function drawEmptyFooting(v, soil, o, what) {
   scene.empty = true;
   const X = 5, depth = 6;
   const region = [[-X, -depth], [X, -depth], [X, 0], [-X, 0]];
-  drawLayers(v, soil, region, (z) => -z, { labels: o.labels, labelX: X, gap: 0.15, hatch: o.hatch, yTopLabel: 0 });
+  drawGround(v, soil, region, 0, { labels: o.labels, labelX: X, gap: 0.15, hatch: o.hatch, yTopLabel: 0 });
   v.line(-X, 0, X, 0, { stroke: 'var(--c-soil)', width: 1.6 });
   add({ type: 'segment', id: 'g:surf', a: [-X, 0], b: [X, 0], label: 'Geländeoberkante' });
   if (Number.isFinite(soil.zw) && soil.zw < depth) waterLine(v, -X, X, -soil.zw, { xs: -X + 1, label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
@@ -559,7 +582,7 @@ function drawSettlement({ v, p, r, soil, mode, o }) {
   const X = B / 2 + Math.max(1.6 * B, 0.6 * (depth - D));
   const size = Math.max(2 * X, depth);
   const region = [[-X, -depth], [X, -depth], [X, 0], [-X, 0]];
-  drawLayers(v, soil, region, (z) => -z, { labels: o.labels && mode === 'bulb', labelX: X, gap: size / 70, hatch: o.hatch && mode !== 'bulb', yTopLabel: 0 });
+  drawGround(v, soil, region, 0, { labels: o.labels && mode === 'bulb', labelX: X, gap: size / 70, hatch: o.hatch && mode !== 'bulb', yTopLabel: 0 });
   v.line(-X, 0, X, 0, { stroke: 'var(--c-soil)', width: 1.6 });
   if (Number.isFinite(soil.zw) && soil.zw < depth) waterLine(v, -X, X, -soil.zw, { xs: -X + 0.12 * X, label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
   const t = Math.min(0.5, 0.25 * B, Math.max(D, 0.1));
@@ -675,7 +698,7 @@ function drawSlope({ v, p, r, soil, mode, o }) {
   scene.zOfY = (y) => yMax - y;
   scene.info = { yMax, yBot, xmin, xmax };
   const leftHigh = raw[0][1] >= raw[raw.length - 1][1];
-  drawLayers(v, soil, region, (z) => yMax - z, { labels: o.labels, labelX: leftHigh ? xmin : xmax, labelAnchor: leftHigh ? 'start' : 'end', gap: size / 80, hatch: o.hatch, yTopLabel: yMax });
+  drawGround(v, soil, region, yMax, { labels: o.labels, labelX: leftHigh ? xmin : xmax, labelAnchor: leftHigh ? 'start' : 'end', gap: size / 80, hatch: o.hatch, yTopLabel: yMax });
   v.polyline(raw.map((q) => [q[0], q[1]]), { stroke: 'var(--c-soil)', width: 1.8 });
   v.line(xmin, yBot, xmax, yBot, { stroke: 'var(--c-soil)', width: 1, dash: '2 3' });
   // Wasser
@@ -787,7 +810,7 @@ function drawWall({ v, app, p, r, soil, mode, o }) {
     const H = 4, X0 = -2, X1 = 8, yB = -2.5;
     scene.zOfY = (y) => H - y;
     const reg = [[X0, yB], [X1, yB], [X1, H], [X0, H]];
-    drawLayers(v, soil, reg, (z) => H - z, { labels: o.labels, labelX: X1, gap: 0.12, hatch: o.hatch, yTopLabel: H });
+    drawGround(v, soil, reg, H, { labels: o.labels, labelX: X1, gap: 0.12, hatch: o.hatch, yTopLabel: H });
     if (Number.isFinite(soil.zw) && soil.zw < H - yB) waterLine(v, X0, X1, H - soil.zw, { label: o.labels ? `GW ${fmt(soil.zw, 2)} m` : null });
     emptyHint(v, 3, H + 0.9, ['Noch keine Stützmauer', 'Werkzeug «Mauer» wählen: Vorderkante Fundament unten, dann Mauerkrone anklicken', '(Masse danach mit den Griffen oder im Eigenschaftsfenster anpassen)']);
     setB(v, X0, yB, X1, H + 1.8);
@@ -804,7 +827,7 @@ function drawWall({ v, app, p, r, soil, mode, o }) {
   const yS = (x) => g.H + (x - g.xb) * tb;
   const size = Math.max(X1 - X0, g.H - yB);
   const region = [[X0, yB], [X1, yB], [X1, yS(X1)], [g.xb, g.H], [g.xb, g.Df], [X0, g.Df]];
-  drawLayers(v, soil, region, (z) => g.H - z, { labels: o.labels && mode === 'wall', labelX: X1, gap: size / 75, hatch: o.hatch, yTopLabel: g.H });
+  drawGround(v, soil, region, g.H, { labels: o.labels && mode === 'wall', labelX: X1, gap: size / 75, hatch: o.hatch, yTopLabel: g.H });
   v.line(X0, g.Df, g.Df > g.d ? g.toe + (g.tBot - g.tTop) * (g.Df - g.d) / g.hs : 0, g.Df, { stroke: 'var(--c-soil)', width: 1.6 });
   v.line(g.xb, g.H, X1, yS(X1), { stroke: 'var(--c-soil)', width: 1.6 });
   if (Number.isFinite(soil.zw) && soil.zw < g.H - yB) waterLine(v, g.xb, X1, g.H - soil.zw, { label: o.labels ? `GW ${fmt(soil.zw, 2)} m${p.rw.water ? '' : ' (nicht angesetzt)'}` : null });

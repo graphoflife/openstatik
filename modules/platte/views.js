@@ -6,7 +6,7 @@ import { contourLevels, isoBands, isoLines, sparseNodes } from './contour.js';
 import { allEdges, boundaryEdges } from './mesh.js';
 import { principalMoments } from './design.js';
 import { geometryOf, layerLabel, comboTypeLabel } from './calc.js';
-import { polygonCentroid, bboxOf, triMinAngle } from './geom.js';
+import { polygonCentroid, bboxOf, triMinAngle, freeEdges, pointInPolygon } from './geom.js';
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
 
@@ -17,11 +17,11 @@ export function worldPath(view, d, style) {
   return el;
 }
 
-/** Modellgrenzen (Plattenrand mit Rand für Bemassung und Beschriftung). */
+/** Modellgrenzen (alle Platten mit Rand für Bemassung und Beschriftung). */
 export function slabBounds(project) {
-  const { outline } = geometryOf(project);
-  if (outline.length < 2) return null;
-  const b = bboxOf(outline);
+  const pts = (project.slabs || []).flatMap((s) => (s.outline || []).map((q) => [num(q.x), num(q.y)])).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
+  if (pts.length < 2) return null;
+  const b = bboxOf(pts);
   const m = 0.08 * Math.max(b.w, b.h, 1);
   return { x0: b.x0 - m, y0: b.y0 - m, x1: b.x1 + m, y1: b.y1 + m, bb: b };
 }
@@ -40,6 +40,48 @@ function ringPath(r) {
 }
 
 const lcName = (p, id) => p.loadCases.find((l) => l.id === id)?.name || id || '?';
+
+/** Beschriftungspunkt im Innern eines (auch nicht konvexen) Polygons. */
+export function labelPoint(ring) {
+  const c = polygonCentroid(ring);
+  if (pointInPolygon(c[0], c[1], ring)) return c;
+  // breitester innerer Abschnitt auf der Horizontalen durch den Schwerpunkt
+  const xs = [];
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    if ((a[1] > c[1]) !== (b[1] > c[1])) xs.push(a[0] + (c[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+  }
+  xs.sort((u, v) => u - v);
+  let best = null;
+  for (let k = 0; k + 1 < xs.length; k += 2) if (!best || xs[k + 1] - xs[k] > best[1] - best[0]) best = [xs[k], xs[k + 1]];
+  return best ? [(best[0] + best[1]) / 2, c[1]] : ring[0];
+}
+
+/**
+ * Plattenränder: freie Ränder kräftig, innere Plattengrenzen (gemeinsame Ränder, Verstärkungen) fein
+ * gestrichelt, Öffnungen kräftig.
+ */
+export function drawSlabEdges(view, rings, holes, free = null) {
+  const fe = free || freeEdges(rings, holes);
+  if (rings.length > 1) {
+    let d = '';
+    for (const r of rings) d += `M${r.map((q) => `${q[0]} ${q[1]}`).join('L')}Z`;
+    worldPath(view, d, { fill: 'none', stroke: 'var(--c-struct)', strokeWidth: '1', strokeDasharray: '6 4', opacity: '0.65' });
+  }
+  let d = '';
+  for (const [a, b] of fe) d += `M${a[0]} ${a[1]}L${b[0]} ${b[1]}`;
+  worldPath(view, d, { fill: 'none', stroke: 'var(--c-struct)', strokeWidth: '2', strokeLinecap: 'round' });
+  for (const hh of holes) view.polygon(hh, { fill: 'none', stroke: 'var(--c-struct)', width: 2 });
+}
+
+/** Plattenflächen (innen liegende Platten werden überlagert und erscheinen dadurch kräftiger). */
+function drawSlabFills(view, slabs, holes, fill = 'var(--c-struct-fill)') {
+  const sorted = slabs.slice().sort((a, b) => b.area - a.area);
+  for (const sl of sorted) {
+    const inner = holes.filter((hh) => pointInPolygon(hh[0][0], hh[0][1], sl.ring));
+    view.rings([sl.ring, ...inner], { fill, stroke: 'none' });
+  }
+}
 
 // ------------------------------------------------------------------ Ergebnisauswahl
 
@@ -61,50 +103,55 @@ export function currentSet(app) {
 
 export function drawSystem(view, app) {
   const p = app.project;
-  const { outline, holes } = geometryOf(p);
-  const sel = app.selection || {};
+  const geo = geometryOf(p);
   const labels = app.viewOpts.labels !== false;
-  if (outline.length >= 3) {
-    view.rings([outline, ...holes], { fill: 'var(--c-struct-fill)', stroke: 'var(--c-struct)', width: 2 });
-  } else if (outline.length) {
-    view.polyline(outline, { stroke: 'var(--c-struct)', width: 2, dash: '4 3' });
+  drawSlabFills(view, geo.slabs, geo.holes);
+  // unvollständige Platten (weniger als 3 Punkte) gestrichelt
+  for (const sl of p.slabs) {
+    const pts = sl.outline.map((q) => [num(q.x), num(q.y)]).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
+    if (pts.length && pts.length < 3) view.polyline(pts, { stroke: 'var(--c-struct)', width: 2, dash: '4 3' });
   }
-  const bb = outline.length ? bboxOf(outline) : { x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1 };
+  if (geo.slabs.length) drawSlabEdges(view, geo.outlines, geo.holes);
+  const bb = geo.bb || { x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1 };
   const L = Math.max(bb.w, bb.h, 1);
 
   // Lastflächen
   p.loadAreas.forEach((a, i) => {
     const pts = a.pts.map((q) => [num(q.x), num(q.y)]).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
     if (pts.length < 3) return;
-    const hl = sel.kind === 'area' && sel.i === i;
-    view.polygon(pts, { fill: 'var(--c-load-fill)', stroke: hl ? 'var(--c-highlight)' : 'var(--c-load)', width: hl ? 3 : 1.2, dash: hl ? null : '6 4' });
+    view.polygon(pts, { fill: 'var(--c-load-fill)', stroke: 'var(--c-load)', width: 1.2, dash: '6 4' });
     if (labels) {
-      const c = polygonCentroid(pts);
+      const c = labelPoint(pts);
       const loads = p.areaLoads.filter((l) => l.region === a.id).map((l) => `${fmt(num(l.q), 2)} kN/m² (${lcName(p, l.lc)})`);
       view.text(c[0], c[1], a.name || `Fläche ${i + 1}`, { color: 'var(--c-load)', bold: true, dy: loads.length ? -7 * loads.length : 0 });
       loads.forEach((t, k) => view.text(c[0], c[1], t, { color: 'var(--c-load)', size: 10, dy: 7 + 13 * k - 7 * (loads.length - 1) }));
     }
   });
 
-  // Hervorhebung Öffnung / Randpunkt
-  if (sel.kind === 'opening' && p.openings[sel.i]) {
-    const pts = p.openings[sel.i].pts.map((q) => [num(q.x), num(q.y)]);
-    view.polygon(pts, { fill: 'none', stroke: 'var(--c-highlight)', width: 3 });
-    if (Number.isInteger(sel.j) && pts[sel.j]) view.dot(pts[sel.j][0], pts[sel.j][1], 6, { fill: 'var(--c-highlight)' });
+  // Plattenbeschriftung: Name, Dicke, Lasten auf der ganzen Platte
+  if (labels) {
+    const Amax = Math.max(...geo.slabs.map((s) => s.area));
+    for (const sl of geo.slabs) {
+      const loads = p.areaLoads.filter((l) => l.region === sl.id).map((l) => `${fmt(num(l.q), 2)} kN/m² (${lcName(p, l.lc)})`);
+      const small = sl.area < 0.12 * Amax;
+      if (small) {
+        // kleine (meist innen liegende) Platten: knapp in der oberen linken Ecke, nicht über der Stütze
+        const b = bboxOf(sl.ring);
+        view.text(b.x0, b.y1, `h ${fmt(sl.h, 2)}`, { color: 'var(--text-2)', bold: true, size: 9.5, dx: 4, dy: 9, anchor: 'start' });
+        continue;
+      }
+      const c = labelPoint(sl.ring);
+      const head = geo.slabs.length > 1 || sl.name !== 'Platte 1' ? `${sl.name} · h = ${fmt(sl.h, 2)} m` : `h = ${fmt(sl.h, 2)} m`;
+      view.text(c[0], c[1], head, { color: 'var(--text-2)', bold: true, size: 11, dy: loads.length ? -7 * loads.length : 0 });
+      loads.forEach((t, k) => view.text(c[0], c[1], t, { color: 'var(--c-load)', size: 10, dy: 7 + 13 * k - 7 * (loads.length - 1) }));
+    }
   }
-  if (sel.kind === 'outline' && p.outline[sel.i]) view.dot(num(p.outline[sel.i].x), num(p.outline[sel.i].y), 6, { fill: 'var(--c-highlight)' });
-  if (sel.kind === 'area' && Number.isInteger(sel.j) && p.loadAreas[sel.i]?.pts[sel.j]) {
-    const q = p.loadAreas[sel.i].pts[sel.j];
-    view.dot(num(q.x), num(q.y), 6, { fill: 'var(--c-highlight)' });
-  }
-  if (labels) outline.forEach((q, i) => view.text(q[0], q[1], String(i + 1), { size: 9.5, color: 'var(--text-3)', dx: 8, dy: -8 }));
 
   // Wände
   p.lineSupports.forEach((w, i) => {
     const x1 = num(w.x1), y1 = num(w.y1), x2 = num(w.x2), y2 = num(w.y2);
     if (![x1, y1, x2, y2].every(Number.isFinite)) return;
-    const hl = sel.kind === 'ls' && sel.i === i;
-    view.line(x1, y1, x2, y2, { stroke: hl ? 'var(--c-highlight)' : 'var(--c-support)', width: hl ? 7 : 5, opacity: 0.85 });
+    view.line(x1, y1, x2, y2, { stroke: 'var(--c-support)', width: 5, opacity: 0.85 });
     const Lw = Math.hypot(x2 - x1, y2 - y1);
     if (w.clamped && Lw > 0) {
       const ang = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
@@ -127,8 +174,8 @@ export function drawSystem(view, app) {
     const x = num(s.x), y = num(s.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const b = Math.max(0, num(s.b) || 0), hc = Math.max(0, num(s.hc) || 0);
-    const hl = sel.kind === 'ps' && sel.i === i;
-    const col = hl ? 'var(--c-highlight)' : 'var(--c-support)';
+    const hl = false;
+    const col = 'var(--c-support)';
     if (b > 0 && hc > 0) {
       view.rect(x - b / 2, y - hc / 2, b, hc, { fill: col, stroke: col, width: 1.5, fillOpacity: 0.45 });
     }
@@ -144,9 +191,8 @@ export function drawSystem(view, app) {
   p.lineLoads.forEach((l, i) => {
     const x1 = num(l.x1), y1 = num(l.y1), x2 = num(l.x2), y2 = num(l.y2);
     if (![x1, y1, x2, y2].every(Number.isFinite)) return;
-    const hl = sel.kind === 'll' && sel.i === i;
-    const col = hl ? 'var(--c-highlight)' : 'var(--c-load)';
-    view.line(x1, y1, x2, y2, { stroke: col, width: hl ? 4 : 2.5, dash: '7 4' });
+    const col = 'var(--c-load)';
+    view.line(x1, y1, x2, y2, { stroke: col, width: 2.5, dash: '7 4' });
     const Lw = Math.hypot(x2 - x1, y2 - y1);
     const n = Math.max(1, Math.min(8, Math.round(Lw / (L / 10))));
     for (let k = 0; k <= n; k++) {
@@ -164,8 +210,7 @@ export function drawSystem(view, app) {
   p.pointLoads.forEach((l, i) => {
     const x = num(l.x), y = num(l.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    const hl = sel.kind === 'pl' && sel.i === i;
-    const col = hl ? 'var(--c-highlight)' : 'var(--c-load)';
+    const col = 'var(--c-load)';
     view.arrow(x, y, 0.6, -1, { length: 34, head: 8, color: col, width: 1.8, label: labels ? `${fmt(num(l.P), 1)} kN` : null });
     view.dot(x, y, 3, { fill: col });
   });
@@ -174,20 +219,20 @@ export function drawSystem(view, app) {
   const whole = p.areaLoads.filter((l) => !l.region || l.region === 'all');
   const sw = p.loadCases.filter((l) => l.sw);
   const parts = [];
-  if (sw.length) parts.push(`${sw.map((l) => l.name).join(', ')} ${fmt(25 * p.h, 2)}`);
-  for (const l of whole) parts.push(`${lcName(p, l.lc)} ${fmt(num(l.q), 2)}`);
-  if (parts.length) parts[parts.length - 1] += ' kN/m²';
-  if (parts.length) view.caption(`Flächenlasten auf der ganzen Platte: ${parts.join(' · ')}`);
+  if (sw.length) parts.push(`${sw.map((l) => l.name).join(', ')} 25·h`);
+  for (const l of whole) parts.push(`${lcName(p, l.lc)} ${fmt(num(l.q), 2)} kN/m²`);
+  if (parts.length && geo.slabs.length) view.caption(`${geo.slabs.length > 1 ? 'Auf allen Platten' : 'Flächenlasten'}: ${parts.join(' · ')}`);
   const keys = [];
   if (p.lineSupports.length) keys.push({ label: 'Wand (Linienlager)', color: 'var(--c-support)', type: 'line', width: 5 });
   if (p.lineSupports.some((w) => w.clamped)) keys.push({ label: 'eingespannt: Schraffur', color: 'var(--c-support)', type: 'line', dash: '2 3' });
   if (p.pointSupports.length) keys.push({ label: 'Stütze b × h', color: 'var(--c-support)', type: 'fill' });
   if (p.loadAreas.length) keys.push({ label: 'Lastfläche', color: 'var(--c-load)', type: 'fill' });
+  if (geo.slabs.length > 1) keys.push({ label: 'Plattengrenze', color: 'var(--c-struct)', type: 'line', dash: '6 4' });
   if (p.lineLoads.length) keys.push({ label: 'Linienlast', color: 'var(--c-load)', type: 'line', dash: '7 4' });
   if (keys.length && labels) view.keyLegend(keys);
 
   // Bemassung
-  if (outline.length >= 3 && labels) {
+  if (geo.slabs.length && labels) {
     // Achsmasse der Stützen innen, Gesamtmasse aussen
     const xs = [...new Set(p.pointSupports.map((s) => num(s.x)).filter(Number.isFinite).map((v) => +v.toFixed(3)))].sort((a, b) => a - b);
     const chainX = xs.length >= 2 && xs.length <= 14;
@@ -211,8 +256,20 @@ export function drawMesh(view, app, mesh, info = {}) {
   for (let t = 0; t < nt; t++) {
     const a = tri[3 * t], b = tri[3 * t + 1], c = tri[3 * t + 2];
     const tri3 = `M${x[a].toFixed(4)} ${y[a].toFixed(4)}L${x[b].toFixed(4)} ${y[b].toFixed(4)}L${x[c].toFixed(4)} ${y[c].toFixed(4)}Z`;
-    if (info.elemFactor && info.elemFactor[t] > 1) heads += tri3;
+    if (info.headMask && info.headMask[t] === 1) heads += tri3;
     else if (triMinAngle(x[a], y[a], x[b], y[b], x[c], y[c]) < 20) poor += tri3;
+  }
+  // Elemente dickerer Platten leicht hinterlegt
+  if (info.slabs?.length > 1 && info.eSlab) {
+    const hmin = Math.min(...info.slabs.map((sl) => sl.h)), hmax = Math.max(...info.slabs.map((sl) => sl.h));
+    if (hmax > hmin) {
+      const byS = info.slabs.map(() => '');
+      for (let t = 0; t < nt; t++) {
+        const a = tri[3 * t], b = tri[3 * t + 1], c = tri[3 * t + 2];
+        byS[info.eSlab[t]] += `M${x[a].toFixed(4)} ${y[a].toFixed(4)}L${x[b].toFixed(4)} ${y[b].toFixed(4)}L${x[c].toFixed(4)} ${y[c].toFixed(4)}Z`;
+      }
+      info.slabs.forEach((sl, k) => { if (byS[k]) worldPath(view, byS[k], { fill: 'var(--c-struct)', fillOpacity: String(0.04 + 0.16 * (sl.h - hmin) / (hmax - hmin)), stroke: 'none' }); });
+    }
   }
   if (heads) worldPath(view, heads, { fill: 'var(--c-support)', fillOpacity: '0.35', stroke: 'none' });
   if (poor) worldPath(view, poor, { fill: 'var(--c-highlight)', fillOpacity: '0.35', stroke: 'none' });
@@ -220,6 +277,7 @@ export function drawMesh(view, app, mesh, info = {}) {
   worldPath(view, edgesPath(x, y, boundaryEdges(mesh)), { fill: 'none', stroke: 'var(--c-struct)', strokeWidth: '1.8' });
   drawSupportsLight(view, app.project);
   const q = mesh.quality || {};
+  if (info.slabs?.length > 1) drawSlabEdges(view, info.slabs.map((sl) => sl.ring), [], info.free);
   view.caption(`${info.preview ? 'Vorschau · ' : ''}${fmt(mesh.nNodes, 0)} Knoten · ${fmt(mesh.nTri, 0)} Elemente (DKT) · Netzweite ${fmt(mesh.size, 2)} m · kleinster Winkel ${fmt(q.minAngle, 1)}°${q.poor ? ` · ${q.poor} Elemente < 20° (markiert)` : ''}`);
 }
 
@@ -268,7 +326,7 @@ export function drawContour(view, app, values, o) {
     worldPath(view, isoLines(x, y, tri, values, [0]), { fill: 'none', stroke: 'var(--c-struct)', strokeWidth: '1.3', opacity: '0.75', strokeDasharray: '5 3' });
   }
   if (app.viewOpts.meshOv) worldPath(view, edgesPath(x, y, allEdges(mesh)), { fill: 'none', stroke: 'var(--c-struct)', strokeWidth: '0.4', opacity: '0.35' });
-  view.rings([r.outline, ...r.holes], { fill: 'none', stroke: 'var(--c-struct)', width: 1.6 });
+  drawSlabEdges(view, r.outlines, r.holes, r.free);
   drawSupportsLight(view, app.project);
   const digits = o.digits ?? Math.min(3, decimalsFor(lv.step) + 1);
   // Werte an ausgewählten Knoten
@@ -341,7 +399,7 @@ export function drawPrincipalCrosses(view, app, set) {
   }
   worldPath(view, pos, { fill: 'none', stroke: 'var(--c-pos)', strokeWidth: '2', strokeLinecap: 'round' });
   worldPath(view, neg, { fill: 'none', stroke: 'var(--c-neg)', strokeWidth: '2', strokeLinecap: 'round' });
-  view.rings([r.outline, ...r.holes], { fill: 'none', stroke: 'var(--c-struct)', width: 1.6 });
+  drawSlabEdges(view, r.outlines, r.holes, r.free);
   drawSupportsLight(view, app.project);
   view.keyLegend([
     { label: 'm > 0 (Zug unten)', color: 'var(--c-pos)', type: 'line' },
@@ -355,7 +413,8 @@ export function drawPrincipalCrosses(view, app, set) {
 export function drawReactions(view, app, set) {
   const r = app.results;
   const p = app.project;
-  view.rings([r.outline, ...r.holes], { fill: 'var(--c-struct-fill)', stroke: 'var(--c-struct)', width: 1.4 });
+  drawSlabFills(view, r.slabs, r.holes);
+  drawSlabEdges(view, r.outlines, r.holes, r.free);
   const L = Math.max(r.bbox.w, r.bbox.h);
   // Linienlager: Diagramm senkrecht zur Wand
   let rmax = 0;

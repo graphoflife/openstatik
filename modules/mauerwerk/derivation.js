@@ -88,7 +88,7 @@ export function derivation(app) {
     steps.push({ label: 'Exzentrizität der Resultierenden am Wandkopf', f: 'e_o = n_{d,D}·e_D/(n_{d,W} + n_{d,D})', v: `= ${num(ce.nD, 1)}·${mm(eDm)}/${num(ce.nTop, 1)}`, r: `= ${mm(ce.eTop)} mm` });
     if (R.method === 'EN') {
       const en = ce.en;
-      steps.push({ label: 'Wandkopf: Ausmitte inkl. e_0, mindestens 0.05·t', f: 'e_{i,o} = |e_o| + e_0 >= 0.05·t', v: `= ${mm(Math.abs(ce.eTop))} + ${mm(R.eImp, 2)}`, r: `= ${mm(en.top.e)} mm`, ref: 'EN 1996-1-1 (6.5)' });
+      steps.push({ label: 'Ausmitte am Wandkopf inkl. Vorverformung', f: 'e_{i,o} = |e_o| + e_0 >= 0.05·t', v: `= ${mm(Math.abs(ce.eTop))} + ${mm(R.eImp, 2)}`, r: `= ${mm(en.top.e)} mm`, ref: 'EN 1996-1-1 (6.5)' });
       steps.push({ label: 'Abminderungsfaktor Wandkopf', f: 'Φ_o = 1 − 2·e_{i,o}/t', v: `= 1 − 2·${mm(en.top.e)}/${num(t * 1000, 0)}`, r: `= ${num(en.top.phi, 3)}`, ref: 'EN 1996-1-1 (6.4)' });
       steps.push({ label: 'Widerstand Wandkopf', f: 'n_{Rd,o} = Φ_o·t·f_{xd}', v: `= ${num(en.top.phi, 3)}·${num(t, 3)}·${num(R.fxd, 0)}`, r: `= ${num(en.top.nRd, 1)} kN/m` });
       steps.push({ label: 'Wandfuss', f: 'n_{d,u} = n_{d,o} + γ_G·g_w·h', v: `= ${num(ce.nTop, 1)} + ${num(F.g, 2)}·${num(md.gamma * t, 2)}·${num(h, 2)}`, r: `= ${num(ce.nBot, 1)} kN/m` });
@@ -115,7 +115,7 @@ export function derivation(app) {
       steps.push({ label: 'Ausmitte aus den Endmomenten in Wandmitte', f: 'e_{1,m} = M_{md}/N_{md}', v: `= ${num(cb.model.M1[mid], 2)}/${num(cb.nMid, 1)}`, r: `= ${mm(m.e0)} mm` });
       if (Math.abs(m.ehm) > 1e-9) steps.push({ label: 'Ausmitte aus Querlast', f: 'e_{hm} = M_{q,m}/N_{md}', r: `= ${mm(m.ehm)} mm`, note: cb.enNoEarth ? 'Erddruckmoment nicht enthalten (Nachweis nach EN 1996-3, 4.5).' : '' });
       steps.push({ label: 'Ausmitte in Wandmitte', f: 'e_m = |e_{1,m} + e_{hm}| + e_0', v: `= |${mm(m.e0)} + ${mm(m.ehm)}| + ${mm(R.eImp, 2)}`, r: `= ${mm(m.em)} mm`, ref: 'EN 1996-1-1 (6.7)' });
-      steps.push({ label: 'Kriechausmitte', f: 'e_k = 0.002·φ_∞·h_{ef}/t·sqrt(t·e_m)', v: R.slender > 15 ? `= 0.002·${num(md.phi, 2)}·${num(R.slender, 1)}·sqrt(${num(t * 1000, 0)}·${mm(m.em)})` : '(h_{ef}/t ≤ 15 → e_k = 0)', r: `= ${mm(m.ek)} mm`, ref: 'EN 1996-1-1 (6.8)' });
+      steps.push({ label: 'Kriechausmitte', f: 'e_k = 0.002·φ_{∞}·h_{ef}/t·sqrt(t·e_m)', v: R.slender > 15 ? `= 0.002·${num(md.phi, 2)}·${num(R.slender, 1)}·sqrt(${num(t * 1000, 0)}·${mm(m.em)})` : '(h_{ef}/t ≤ 15 → e_k = 0)', r: `= ${mm(m.ek)} mm`, ref: 'EN 1996-1-1 (6.8)' });
       steps.push({ label: 'massgebende Ausmitte', f: 'e_{mk} = e_m + e_k >= 0.05·t', r: `= ${mm(m.emk)} mm` });
       steps.push({ label: 'Schlankheitsparameter', f: 'λ = h_{ef}/t·sqrt(f_k/E)', v: `= ${num(R.slender, 1)}·sqrt(${num(md.fxk, 2)}/${num(md.Exk, 0)})`, r: `= ${num(m.lam, 3)}`, ref: 'EN 1996-1-1 (G.2)' });
       steps.push({ label: 'Hilfswerte', f: 'A_1 = 1 − 2·e_{mk}/t; u = (λ − 0.063)/(0.73 − 1.17·e_{mk}/t)', r: `A_1 = ${num(m.A1, 3)}, u = ${num(m.u, 3)}`, ref: 'EN 1996-1-1 (G.3)' });
@@ -126,9 +126,9 @@ export function derivation(app) {
       out.push({ id: 'buck', title: 'Normalkraft in Wandmitte (Knicken)', ref: 'EN 1996-1-1, 6.1.2.2, Anhang G', steps, result: { eta, text: `η = ${num(eta, 2)} → ${verdict(eta)}` } });
     } else {
       const b = cb.buck;
-      steps.push({ label: 'wirksame Kriechzahl (Anteil ständiger Last)', f: 'φ_{eff} = φ_∞·n_{G,d}/n_{d,m}', v: p.settings.creep !== false ? `= ${num(md.phi, 2)}·${num(cb.rPerm, 3)}` : '(Kriechen nicht berücksichtigt)', r: `= ${num(cb.phiEff, 3)}` });
+      steps.push({ label: 'wirksame Kriechzahl (Anteil ständiger Last)', f: 'φ_{eff} = φ_{∞}·n_{G,d}/n_{d,m}', v: p.settings.creep !== false ? `= ${num(md.phi, 2)}·${num(cb.rPerm, 3)}` : '(Kriechen nicht berücksichtigt)', r: `= ${num(cb.phiEff, 3)}` });
       steps.push({ label: 'wirksamer E-Modul', f: 'E_{eff} = E_{xd}/(1 + φ_{eff})', v: `= ${num(md.Exd, 0)}/(1 + ${num(cb.phiEff, 3)})`, r: `= ${num(cb.Eeff / 1000, 0)} MPa` });
-      steps.push({ label: 'Krümmung ungerissen (|e| ≤ t/6, σ ≤ f_{xd})', f: 'κ = 12·N·e/(E_{eff}·t^3)', note: 'Rechteckquerschnitt 1 m breit ohne Zugfestigkeit.' });
+      steps.push({ label: 'Krümmung ungerissen (|e| ≤ t/6, elastisch)', f: 'κ = 12·N·e/(E_{eff}·t^3)', note: 'Rechteckquerschnitt 1 m breit ohne Zugfestigkeit.' });
       steps.push({ label: 'Krümmung gerissen (|e| > t/6)', f: 'κ = 2·N/(E_{eff}·c^2), c = 3·(t/2 − |e|)', note: 'Bei Erreichen von f_{xd} plastischer Randbereich; κ → ∞ für N → f_{xd}·(t − 2|e|).' });
       steps.push({ label: 'Ausmitte über die Höhe', f: 'e(z) = M_1(z)/N(z) + M_q(z)/N(z) + e_0·sin(π·z/h) + w(z)', note: 'M₁ linear zwischen n_{d,o}·e_o und n_{d,u}·e_u; e₀ in Richtung der Biegelinie Th. 1. O.' });
       steps.push({ label: 'Biegelinie (Theorie 2. Ordnung)', f: 'w″ = −κ(N, e),  w(0) = w(h_{ef}) = 0', note: 'Fixpunktiteration mit 32 Abschnitten über die Knicklänge h_ef.' });
@@ -159,7 +159,7 @@ export function derivation(app) {
       steps.push({ label: 'Widerstand Druckfeld', f: 'V_{Rd,c} = −t·h_0·f_{yd} + sqrt((t·h_0·f_{yd})^2 + f_{yd}·N·(t·l − N/f_{xd}))', v: `= −${num(t * s.h0 * R.fyd, 1)} + sqrt(${num(t * s.h0 * R.fyd, 1)}^2 + ${num(R.fyd, 0)}·${num(s.N, 1)}·(${num(t * l, 3)} − ${num(s.N / R.fxd, 4)}))`, r: `= ${num(s.Vstrut, 1)} kN` });
       steps.push({ label: 'Gleiten in der Lagerfuge', f: 'V_{Rd,f} = μ·N', v: `= ${num(md.mu, 2)}·${num(s.N, 1)}`, r: `= ${num(s.Vfric, 1)} kN` });
       steps.push({ label: 'Querkraftwiderstand', f: 'V_{Rd} = min(V_{Rd,c}; V_{Rd,f})', r: `= ${num(s.VRd, 1)} kN (${s.mode})` });
-      if (s.lc > 0) steps.push({ label: 'Spannungen bei V_d', f: 'σ_x = N/(t·l_c), τ = V/(t·l_c)', v: `l_c = ${num(s.lc, 3)} m`, r: `σ_x = ${num(s.sx / 1000, 3)} MPa, τ = ${num(s.tau / 1000, 3)} MPa, σ_y = ${num(s.sy / 1000, 3)} MPa`, note: `Kontrolle: σ_x/f_xd + σ_y/f_yd = ${num(s.sx / R.fxd + s.sy / R.fyd, 3)}` });
+      if (s.lc > 0) steps.push({ label: 'Spannungen unter Bemessungslast', f: 'σ_x = N/(t·l_c), τ = V/(t·l_c)', v: `l_c = ${num(s.lc, 3)} m`, r: `σ_x = ${num(s.sx / 1000, 3)} MPa, τ = ${num(s.tau / 1000, 3)} MPa, σ_y = ${num(s.sy / 1000, 3)} MPa`, note: `Kontrolle: σ_x/f_xd + σ_y/f_yd = ${num(s.sx / R.fxd + s.sy / R.fyd, 3)}` });
       eta = cs.checks.shear.eta;
       steps.push({ label: 'Ausnutzung', f: 'η = V_d/V_{Rd}', v: `= ${num(s.V, 1)}/${num(s.VRd, 1)}`, r: `= ${num(eta, 2)}` });
     } else {

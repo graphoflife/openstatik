@@ -19,6 +19,10 @@ function wallsAround(outline, skip = []) {
   return out;
 }
 
+function slab(id, name, outline, h, concrete = '') {
+  return { id, name, outline, h, concrete };
+}
+
 function finish(p) {
   if (!p.combos) p.combos = defaultCombos(p.loadCases);
   p.design = { ...defaultDesign(), ...(p.design || {}) };
@@ -32,7 +36,7 @@ function finish(p) {
 export function defaultProject() {
   return finish({
     norm: 'SIA',
-    outline: [],
+    slabs: [],
     openings: [],
     h: 0.25, concrete: 'C30/37', nu: 0.2, meshSize: 0.4,
     pointSupports: [],
@@ -53,7 +57,7 @@ function example1() {
   const outline = rect(0, 0, 6, 4);
   return finish({
     norm: 'SIA',
-    outline,
+    slabs: [slab('P1', 'Decke', outline, 0.20)],
     openings: [],
     h: 0.20, concrete: 'C25/30', nu: 0.2, meshSize: 0.25,
     pointSupports: [],
@@ -81,9 +85,15 @@ function example2() {
       cols.push({ x: i * L, y: j * L, b: inner ? 0.45 : 0.40, hc: inner ? 0.45 : 0.40, kz: null, kr: null });
     }
   }
+  // Stützenkopfverstärkungen (h = 0.40 m) über den beiden Innenstützen: Platten innerhalb der Decke
+  const drop = (cx, cy, a) => rect(cx - a / 2, cy - a / 2, cx + a / 2, cy + a / 2);
   return finish({
     norm: 'SIA',
-    outline,
+    slabs: [
+      slab('P1', 'Flachdecke', outline, 0.30),
+      slab('P2', 'Verstärkung S6', drop(L, L, 2.6), 0.40),
+      slab('P3', 'Verstärkung S7', drop(2 * L, L, 2.6), 0.40),
+    ],
     openings: [],
     h: 0.30, concrete: 'C30/37', nu: 0.2, meshSize: 0.45,
     pointSupports: cols,
@@ -108,10 +118,13 @@ function example2() {
 }
 
 function example3() {
-  const outline = [P(0, 0), P(2, 0), P(2, -1.8), P(8, -1.8), P(8, 0), P(12, 0), P(12, 5), P(6, 5), P(6, 9), P(0, 9)];
+  const main = [P(0, 0), P(12, 0), P(12, 5), P(6, 5), P(6, 9), P(0, 9)];
   return finish({
     norm: 'SIA',
-    outline,
+    slabs: [
+      slab('P1', 'Wohnungsdecke', main, 0.24),
+      slab('P2', 'Balkon', rect(2, -1.8, 8, 0), 0.20),
+    ],
     openings: [{ name: 'Treppenauge', pts: rect(1.0, 6.2, 3.6, 7.6) }],
     h: 0.24, concrete: 'C30/37', nu: 0.2, meshSize: 0.35,
     pointSupports: [
@@ -132,10 +145,10 @@ function example3() {
     ],
     areaLoads: [
       { lc: 'LF2', q: 1.5, region: 'all' },
-      { lc: 'LF3', q: 2.0, region: 'all' },
-      { lc: 'LF4', q: 2.0, region: 'A1' },
+      { lc: 'LF3', q: 2.0, region: 'P1' },
+      { lc: 'LF4', q: 3.0, region: 'P2' },
     ],
-    loadAreas: [{ id: 'A1', name: 'Balkon', pts: rect(2, -1.8, 8, 0) }],
+    loadAreas: [],
     lineLoads: [
       { lc: 'LF2', x1: 2, y1: -1.8, x2: 8, y2: -1.8, p1: 1.5, p2: 1.5 },
       { lc: 'LF2', x1: 6.6, y1: 5, x2: 6.6, y2: 0.5, p1: 6.0, p2: 6.0 },
@@ -147,6 +160,6 @@ function example3() {
 
 export const EXAMPLES = [
   { name: 'Rechteckplatte 6 × 4 m', desc: 'Allseitig gelenkig gelagerte Decke, Wohnnutzung', project: example1 },
-  { name: 'Flachdecke 3 × 2 Felder', desc: 'Spannweiten 6.5 m auf 12 Stützen – zeigt, wo Durchstanzbewehrung erforderlich wird', project: example2 },
-  { name: 'L-Platte mit Balkon', desc: 'Öffnung, Wände, Kragbalkon mit Geländerlast, Trennwand- und Einzellast', project: example3 },
+  { name: 'Flachdecke 3 × 2 Felder', desc: 'Spannweiten 6.5 m auf 12 Stützen, verstärkte Stützenköpfe – zeigt, wo Durchstanzbewehrung nötig wird', project: example2 },
+  { name: 'L-Platte mit Balkon', desc: 'Zwei Platten (Decke 24 cm, Balkon 20 cm), Öffnung, Wände, Lasten je Platte', project: example3 },
 ];

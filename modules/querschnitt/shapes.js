@@ -24,12 +24,12 @@ export const SHAPE_TYPES = [
 /** Parameter der Vorlagen: [Schlüssel, Bezeichnung, Hilfetext]. */
 export const SHAPE_PARAMS = {
   rect: [['b', 'Breite b'], ['h', 'Höhe h']],
-  T: [['b', 'Plattenbreite b'], ['hf', 'Plattenstärke hf'], ['bw', 'Stegbreite bw'], ['h', 'Gesamthöhe h']],
-  I: [['bo', 'Breite Obergurt bo'], ['to', 'Dicke Obergurt to'], ['bu', 'Breite Untergurt bu'], ['tu', 'Dicke Untergurt tu'], ['bw', 'Stegbreite bw'], ['h', 'Gesamthöhe h']],
-  box: [['bo', 'Breite Platte oben bo'], ['bu', 'Breite unten bu'], ['h', 'Gesamthöhe h'], ['to', 'Dicke Platte oben to'], ['tu', 'Dicke Platte unten tu'], ['tw', 'Stegdicke tw']],
+  T: [['b', 'Plattenbreite b'], ['hf', 'Plattenstärke h_f'], ['bw', 'Stegbreite b_w'], ['h', 'Gesamthöhe h']],
+  I: [['bo', 'Breite oben b_o'], ['to', 'Gurt oben t_o'], ['bu', 'Breite unten b_u'], ['tu', 'Gurt unten t_u'], ['bw', 'Stegbreite b_w'], ['h', 'Gesamthöhe h']],
+  box: [['bo', 'Platte oben b_o'], ['bu', 'Kasten unten b_u'], ['h', 'Gesamthöhe h'], ['to', 'Dicke oben t_o'], ['tu', 'Dicke unten t_u'], ['tw', 'Stegdicke t_w']],
   circle: [['D', 'Durchmesser D']],
-  ring: [['D', 'Aussendurchmesser D'], ['t', 'Wandstärke t']],
-  L: [['b', 'Schenkelbreite b'], ['h', 'Schenkelhöhe h'], ['tb', 'Dicke unten tb'], ['th', 'Dicke links th']],
+  ring: [['D', 'Aussen-Ø D'], ['t', 'Wandstärke t']],
+  L: [['b', 'Schenkel unten b'], ['h', 'Schenkel links h'], ['tb', 'Dicke unten t_b'], ['th', 'Dicke links t_h']],
 };
 
 /** Standardparameter aller Vorlagen (mm). */

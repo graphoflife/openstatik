@@ -1,5 +1,15 @@
 // Bemessung von Platten: Wood–Armer, Biegebewehrung, Mindestbewehrung, Durchstanzen (DOM-frei)
-import { inDomain, segIntersect } from './geom.js';
+import { inUnion, segIntersect, freeEdges } from './geom.js';
+
+/** Gebiet für Nachweisschnitte: {outlines, holes, free} aus einem Ring (Kompatibilität) oder Gebietsobjekt. */
+export function domainOf(outlineOrDomain, holes = []) {
+  if (outlineOrDomain && !Array.isArray(outlineOrDomain) && outlineOrDomain.outlines) {
+    const d = outlineOrDomain;
+    return { outlines: d.outlines, holes: d.holes || [], free: d.free || freeEdges(d.outlines, d.holes || []) };
+  }
+  const outlines = [outlineOrDomain];
+  return { outlines, holes, free: freeEdges(outlines, holes) };
+}
 
 // ------------------------------------------------------------------ Bemessungsmomente
 
@@ -100,6 +110,8 @@ export function effectiveDepths(hMeters, cBot, cTop, dBot, dTop, outerBot = 'x',
  * Rückgabe {u (wirksam) [m], uFull [m], pieces:[[x1,y1,x2,y2,wirksam]], edges (Anzahl angeschnittener Ränder), type}
  */
 export function controlPerimeter(col, r, outline, holes = [], shadowDist = 0) {
+  const dom = domainOf(outline, holes);
+  holes = dom.holes;
   const bx = Math.max(0, col.b) / 2, hy = Math.max(0, col.h) / 2;
   const path = [];
   const N_ARC = 16;
@@ -119,7 +131,7 @@ export function controlPerimeter(col, r, outline, holes = [], shadowDist = 0) {
     const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
     const mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2;
     uFull += len;
-    let eff = inDomain(mx, my, outline, holes);
+    let eff = inUnion(mx, my, dom.outlines, holes);
     if (eff && shadowDist > 0 && holes.length) {
       const dx = mx - col.x, dy = my - col.y, dl = Math.hypot(dx, dy) || 1;
       const far = [col.x + dx / dl * (dl + shadowDist), col.y + dy / dl * (dl + shadowDist)];
@@ -132,25 +144,24 @@ export function controlPerimeter(col, r, outline, holes = [], shadowDist = 0) {
     if (eff) u += len;
     pieces.push([p[0], p[1], q[0], q[1], eff]);
   }
-  // Anzahl angeschnittener Plattenränder (für Rand-/Eckstütze)
+  // Anzahl angeschnittener freier Plattenränder (für Rand-/Eckstütze)
   let edges = 0;
-  for (let i = 0; i < outline.length; i++) {
-    const a = outline[i], b = outline[(i + 1) % outline.length];
+  for (const [a, b] of dom.free) {
     let hit = false;
     for (let k = 0; k < path.length && !hit; k++) {
       if (segIntersect(path[k], path[(k + 1) % path.length], a, b)) hit = true;
     }
     if (hit) edges++;
   }
-  const outside = pieces.some((pc) => !pc[4] && !inDomainLoose(pc, outline));
+  const outside = pieces.some((pc) => !pc[4] && !inDomainLoose(pc, dom.outlines));
   const type = !outside || edges === 0 ? 'innen' : edges === 1 ? 'rand' : 'ecke';
   return { u, uFull, pieces, edges, type };
 }
 
-function inDomainLoose(pc, outline) {
-  // Stück liegt innerhalb des Randes (nur durch Öffnung unwirksam)
+function inDomainLoose(pc, outlines) {
+  // Stück liegt innerhalb der Platten (nur durch Öffnung unwirksam)
   const mx = (pc[0] + pc[2]) / 2, my = (pc[1] + pc[3]) / 2;
-  return inDomain(mx, my, outline, []);
+  return inUnion(mx, my, outlines, []);
 }
 
 export const KE_SIA = { innen: 0.9, rand: 0.7, ecke: 0.65 };

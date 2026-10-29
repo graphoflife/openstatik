@@ -9,7 +9,8 @@
 //   q:i       Linienlast (Fläche)       → ziehen verschiebt den Bereich; qa:i / qb:i Anfang / Ende
 //   N         Normalkraft (Fläche)      sw  Eigengewicht (Fläche)
 // Schnittgrössen direkt: member (Stab), fend (Stabende), R:i.  Querschnittsansicht: section.
-import { h, numField, selectField, checkField, button, kvTable, note, fmt, emptyState } from '../../js/core/ui.js';
+import { h, numField, selectField, checkField, button, kvTable, note, fmt, emptyState, rich, badge } from '../../js/core/ui.js';
+import { STEEL_GRADES } from '../../js/core/materials.js';
 import { TOOL_ICONS } from '../../js/core/editor.js';
 import { SYSTEMS, CATEGORIES, beamModel, setBeamModel, normLoad } from './beam.js';
 import { sectionProps } from './profiles.js';
@@ -19,13 +20,12 @@ import { profileFields, materialFields, systemFields, stabilityFields, caseField
 const parse = (id) => { const k = String(id).indexOf(':'); return k < 0 ? { t: id, i: -1 } : { t: id.slice(0, k), i: +id.slice(k + 1) }; };
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const OPEN = { profil: true, system: false, stab: false, mat: true };
-
-/** Ausklappbarer Abschnitt im Eigenschaftsfenster (Zustand bleibt beim Neuaufbau erhalten). */
-function details(key, title, kids) {
-  const d = h('details', { class: 'ed-details', open: !!OPEN[key] }, h('summary', {}, title), ...kids.filter(Boolean));
-  d.addEventListener('toggle', () => { OPEN[key] = d.open; });
-  return d;
+/** Zwischentitel im Eigenschaftsfenster (eine Gliederungsebene, keine Kästen in Kästen). */
+const sub = (t) => h('div', { class: 'ed-sub' }, t);
+/** Verweis auf ein Register mit allen Angaben. */
+function tabLink(app, tab, text) {
+  return h('div', { class: 'ed-ref' }, h('span', { class: 'muted small' }, rich(text)),
+    h('button', { type: 'button', class: 'chk-link', onclick: () => app.selectTab?.(tab) }, 'öffnen ›'));
 }
 
 function secOf(p) { try { return sectionProps(p.section); } catch { return null; } }
@@ -303,7 +303,7 @@ export const editorSpec = {
     if (!(b.loads || []).length) {
       return h('div', {},
         h('div', {}, 'Lasten setzen: Werkzeug ', h('b', {}, 'Streckenlast'), ' (Q) oder ', h('b', {}, 'Einzellast'), ' (F) wählen und auf den Träger klicken. ', h('b', {}, 'Lager'), ' (A) und ', h('b', {}, 'Halterung'), ' (H) setzen Sie genauso.'),
-        h('div', { class: 'muted small', style: { marginTop: '4px' } }, 'Klick auf den Träger öffnet Profil, Stahlsorte, System und Stabilität.'),
+        h('div', { class: 'muted small' }, 'Klick auf den Träger öffnet Profil, Stahlsorte, System und Stabilität.'),
         lcSel);
     }
     return h('div', {},
@@ -332,13 +332,12 @@ const chP = (app) => () => app.changed({ inputs: true });
 function resultLines(app) {
   const r = app.results;
   if (!r) return null;
+  const ok = r.etaMax <= 1.0001;
   return [
-    h('div', { class: 'ed-sub' }, 'Ergebnis'),
-    kvTable([
-      ['max. Ausnutzung η', r.etaMax, '', 2],
-      ['massgebend', r.gov?.label || ''],
-    ]),
-    button('Herleitung ›', { small: true, onClick: () => app.showDerivation?.(DERIV_OF(r.gov?.id)) }),
+    sub('Ergebnis'),
+    h('div', { class: 'ed-ref' },
+      h('span', { class: 'small' }, badge(`η = ${fmt(r.etaMax, 2)}`, ok ? 'ok' : 'fail'), ' ', rich(r.gov?.label || '')),
+      h('button', { type: 'button', class: 'chk-link', onclick: () => app.showDerivation?.(DERIV_OF(r.gov?.id)) }, 'Herleitung ›')),
   ];
 }
 
@@ -351,20 +350,25 @@ export function DERIV_OF(id) {
   return id;
 }
 
+function steelField(app) {
+  const p = app.project;
+  return selectField('Stahlsorte', p, 'steel', STEEL_GRADES, { wide: true, onChange: chP(app), info: INFO.steel });
+}
+
 function beamInspector(app) {
   const p = app.project;
   const opts = { ch: chP(app), chI: chP(app), compact: true };
-  let m = null;
-  try { m = beamModel(p.beam); } catch { /* */ }
   const sec = secOf(p);
   return {
     title: `Träger${sec ? ` ${sec.name}` : ''}`,
     content: [
-      m ? h('div', { class: 'muted small' }, `L = ${fmt(m.L, 2)} m · ${SYSTEMS.find((s) => s.value === p.beam.system)?.label || ''}`) : null,
-      details('profil', 'Profil', profileFields(app, opts)),
-      details('mat', 'Stahl und Norm', materialFields(app, opts)),
-      details('system', 'System', systemFields(app, opts)),
-      details('stab', 'Stabilität', stabilityFields(app, opts)),
+      ...profileFields(app, opts),
+      steelField(app),
+      sub('System'),
+      ...systemFields(app, opts),
+      sub('Stabilität'),
+      ...stabilityFields(app, opts),
+      tabLink(app, 'stab', 'k, k_w, χ_LT, Halterungen …'),
       ...(resultLines(app) || []),
     ],
   };
@@ -372,7 +376,7 @@ function beamInspector(app) {
 
 function sectionInspector(app) {
   const opts = { ch: chP(app), chI: chP(app), compact: true };
-  return { title: 'Querschnitt', content: [...profileFields(app, opts), ...materialFields(app, opts)] };
+  return { title: 'Querschnitt', content: [...profileFields(app, opts), steelField(app), tabLink(app, 'profil', 'Norm, Beiwerte, Profilsuche')] };
 }
 
 function memberInspector(app) {
@@ -384,17 +388,18 @@ function memberInspector(app) {
     h('div', { class: 'grid2' },
       numField('Länge L', F, 'L', { unit: 'm', min: 0.01, onChange: chP(app) }),
       selectField('Lage', F, 'orient', [{ value: 'h', label: 'Träger' }, { value: 'v', label: 'Stütze' }], { onChange: chP(app) })),
-    details('profil', 'Profil, Stahl', [...profileFields(app, opts), ...materialFields(app, opts)]),
-    h('div', { class: 'ed-sub' }, 'Bemessungsschnittgrössen'),
+    ...profileFields(app, opts),
+    steelField(app),
+    sub('Bemessungssituation'),
   ];
-  if (!cases.length) out.push(emptyState('Noch keine Situation', 'Mit «Situation hinzufügen» Bemessungswerte N, My, Mz … erfassen.'));
+  if (!cases.length) out.push(emptyState('Noch keine Situation', 'Mit «Situation» Bemessungswerte (Normalkraft, Momente, Querkräfte) erfassen.'));
   else {
     const sel = { i: app.selCase };
-    out.push(selectField('Situation', sel, 'i', cases.map((c, k) => ({ value: k, label: c.name || `Situation ${k + 1}` })), { wide: true, onChange: (v) => { app.selCase = v; app.renderInputs?.(); app.editor.refreshPanel(true); } }));
-    out.push(...caseFields(cases[app.selCase], { ch: chP(app), chI: chP(app) }));
+    out.push(selectField('Situation', sel, 'i', cases.map((c, k) => ({ value: k, label: c.name || `Situation ${k + 1}` })), { wide: true, onChange: (v) => { app.selCase = v; app.openCase = v; app.renderInputs?.(); app.editor.refreshPanel(true); } }));
+    out.push(...caseFields(cases[app.selCase], { ch: chP(app), chI: chP(app), name: false }));
   }
   out.push(h('div', { class: 'row' },
-    button('Situation hinzufügen', { icon: 'plus', small: true, onClick: () => { cases.push(newCase(cases.length + 1)); app.selCase = cases.length - 1; app.changed({ inputs: true }); } }),
+    button('Situation', { icon: 'plus', small: true, onClick: () => { cases.push(newCase(cases.length + 1)); app.selCase = cases.length - 1; app.changed({ inputs: true }); } }),
     cases.length ? button('', { icon: 'trash', small: true, ghost: true, title: 'Situation löschen', onClick: () => { cases.splice(app.selCase, 1); app.selCase = Math.max(0, app.selCase - 1); app.changed({ inputs: true }); } }) : null));
   out.push(...(resultLines(app) || []));
   return { title: 'Stab', content: out };
@@ -407,8 +412,8 @@ function endInspector(app) {
   return {
     title: 'Trägerende',
     content: [
-      numField('Trägerlänge L', obj, 'L', { unit: 'm', min: 0.1, onChange: (v) => { resizeBeam(p, v); app.changed({ inputs: true }); } }),
-      note('Ziehen ändert die Länge. Ein Lager am Trägerende wandert mit; Lasten und Halterungen ausserhalb werden angepasst.', ''),
+      numField('Länge L', obj, 'L', { unit: 'm', min: 0.1, onChange: (v) => { resizeBeam(p, v); app.changed({ inputs: true }); } }),
+      h('div', { class: 'muted small' }, 'Ziehen ändert die Länge; ein Lager am Ende wandert mit.'),
     ],
   };
 }
@@ -434,7 +439,7 @@ function supportInspector(app, i) {
       selectField('Lagerart', obj, 'type', [{ value: 'pin', label: 'gelenkig' }, { value: 'fix', label: 'eingespannt' }], { wide: true, onChange: apply, info: 'Alle Lager halten den Träger vertikal und seitlich (Gabellager). Eingespannt verhindert zusätzlich die Verdrehung in der Ebene.' }),
       numField('Lage x', obj, 'x', { unit: 'm', min: 0, max: m.L, onChange: apply }),
       h('div', { class: 'muted small' }, `System: ${SYSTEMS.find((q) => q.value === p.beam.system)?.label || ''}`),
-      note('Ziehen verschiebt das Lager; die Spannweite ändern Sie am Trägerende.', ''),
+      h('div', { class: 'muted small' }, 'Ziehen verschiebt das Lager entlang des Trägers.'),
     ],
   };
 }
@@ -448,8 +453,8 @@ function restraintInspector(app, i) {
     title: 'Seitliche Halterung',
     content: [
       numField('Lage x', r, 'x', { unit: 'm', min: 0, max: L, onChange: chP(app) }),
-      note('Gabellager: seitliche Verschiebung und Verdrehung verhindert. Bestimmt die Kipplänge und die Knicklänge um z.', ''),
-      checkField('Druckgurt durchgehend gehalten', p.stab, 'contRestraint', { onChange: chP(app), info: INFO.cont }),
+      h('div', { class: 'muted small' }, 'Gabellager: seitlich und gegen Verdrehen gehalten; bestimmt Kipp- und Knicklänge um z-z.'),
+      checkField('Druckgurt durchgehend', p.stab, 'contRestraint', { onChange: chP(app), info: INFO.cont }),
     ],
   };
 }
@@ -472,7 +477,7 @@ function lcFields(app, ld) {
         app.changed({ inputs: true });
       },
     }),
-    lc ? selectField('Kategorie', lc, 'cat', CATEGORIES, { wide: true, onChange: chP(app), info: `Gilt für alle Lasten im Lastfall «${lc.name}». Name und Kategorie auch im Register «Belastung».` }) : null,
+    lc ? selectField('Kategorie', lc, 'cat', CATEGORIES, { wide: true, onChange: chP(app), info: `Gilt für alle Lasten im Lastfall «${lc.name}». Name und Kategorie auch im Register «Lasten».` }) : null,
   ].filter(Boolean);
 }
 
@@ -504,14 +509,14 @@ function lineLoadInspector(app, i) {
       ...lcFields(app, ld),
       selectField('Richtung', ld, 'kind', [{ value: 'qz', label: 'vertikal ↓ (z)' }, { value: 'qy', label: 'horizontal (y)' }], { wide: true, onChange: chP(app), info: INFO.loads }),
       h('div', { class: 'grid2' },
-        numField('q', ld, 'v1', { unit: 'kN/m', onChange: chP(app), info: 'Wert am Anfang x₁ (positiv nach unten).' }),
-        numField('q Ende', ld, 'v2', { unit: 'kN/m', allowEmpty: true, onChange: chP(app), info: 'Nur für Trapez- und Dreieckslasten. Leer = konstant.' }),
-        numField('von x₁', ld, 'x1', { unit: 'm', min: 0, max: m.L, allowEmpty: true, onChange: chP(app), info: 'Leer = Trägeranfang.' }),
-        numField('bis x₂', ld, 'x2', { unit: 'm', min: 0, max: m.L, allowEmpty: true, onChange: chP(app), info: 'Leer = Trägerende.' })),
+        numField('q', ld, 'v1', { unit: 'kN/m', onChange: chP(app), info: 'Wert am Anfang x<sub>1</sub> (positiv nach unten).' }),
+        numField('q_2 (Ende)', ld, 'v2', { unit: 'kN/m', allowEmpty: true, onChange: chP(app), info: 'Nur für Trapez- und Dreieckslasten; leer = konstant.' }),
+        numField('von x_1', ld, 'x1', { unit: 'm', min: 0, max: m.L, allowEmpty: true, onChange: chP(app), info: 'Leer = Trägeranfang.' }),
+        numField('bis x_2', ld, 'x2', { unit: 'm', min: 0, max: m.L, allowEmpty: true, onChange: chP(app), info: 'Leer = Trägerende.' })),
       h('div', { class: 'row' },
         button('ganze Länge', { small: true, onClick: () => { ld.x1 = null; ld.x2 = null; app.changed({ inputs: true }); } }),
         ...(m.fields.length > 1 ? m.fields.map((f, k) => button(`Feld ${k + 1}`, { small: true, title: `${fmt(f.x0, 2)} … ${fmt(f.x1, 2)} m`, onClick: () => { ld.x1 = f.x0 > 1e-9 ? r4(f.x0) : null; ld.x2 = f.x1 < m.L - 1e-9 ? r4(f.x1) : null; app.changed({ inputs: true }); } })) : [])),
-      h('div', { class: 'muted small' }, 'Die Enden der Last lassen sich in der Grafik ziehen.'),
+      h('div', { class: 'muted small' }, 'Die Enden lassen sich in der Grafik ziehen.'),
     ],
   };
 }
@@ -535,7 +540,7 @@ function selfWeightInspector(app) {
     title: 'Eigengewicht',
     content: [
       sec ? kvTable([['g = A · 78.5 kN/m³', sec.A * 1e-6 * 78.5, 'kN/m', 3]]) : null,
-      checkField('Eigengewicht automatisch ansetzen', p.beam, 'selfWeight', { onChange: chP(app), info: INFO.selfWeight }),
+      checkField('Eigengewicht automatisch', p.beam, 'selfWeight', { onChange: chP(app), info: INFO.selfWeight }),
     ].filter(Boolean),
   };
 }

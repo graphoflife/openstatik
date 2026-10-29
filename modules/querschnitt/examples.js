@@ -100,7 +100,8 @@ function polygonWithDuct() {
   const p = baseProject();
   p.shape.type = 'poly';
   p.shape.poly = [{ y: -200, z: 0 }, { y: 200, z: 0 }, { y: 125, z: 700 }, { y: -125, z: 700 }];
-  p.openings = [{ name: 'Hüllrohr Ø150', pts: ptsToRows(circlePts(0, 420, 75, 24, false), 1) }];
+  const duct = { y: 0, z: 420, D: 150 };
+  p.openings = [{ name: 'Hüllrohr Ø150', pts: ptsToRows(circlePts(duct.y, duct.z, duct.D / 2, 32, true), 1), circle: duct }];
   p.bars = layers(p, { nBot: 4, dBot: 22, nTop: 2, dTop: 12, c: 30, dw: 8 });
   p.loads = [
     { name: 'Feld GZT', type: 'GZT', N: 0, My: 380, Mz: 0, V: 0 },

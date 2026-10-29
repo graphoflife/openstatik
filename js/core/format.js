@@ -125,3 +125,54 @@ export function decimalsFor(step) {
   if (!Number.isFinite(step) || step <= 0) return 2;
   return Math.max(0, Math.min(6, -Math.floor(Math.log10(step) + 1e-9)));
 }
+
+// ------------------------------------------------------------------ Tief- und Hochstellung
+
+const SUB_CHARS = '[\\wäöüÄÖÜαβγδεζηθκλμνξρστφχψωΔΣ∞\'′.+−-]';
+const SUB_RE = new RegExp(`_\\{([^}]*)\\}|_(${SUB_CHARS.replace('.+−-', '')}+(?:,${SUB_CHARS.replace('.+−-', '')}+)*)|\\^\\{([^}]*)\\}|\\^([-−]?[\\w.]+)`, 'g');
+
+/**
+ * Zerlegt eine Bezeichnung in normale, tief- und hochgestellte Teile:
+ * "M_Ed,II" → [{t:'n',s:'M'},{t:'sub',s:'Ed,II'}], "h^3" → […,{t:'sup',s:'3'}], "f_{c,d}" → Klammerform.
+ */
+export function subTokens(str) {
+  const s = String(str ?? '');
+  const out = [];
+  let last = 0;
+  SUB_RE.lastIndex = 0;
+  for (let m; (m = SUB_RE.exec(s));) {
+    if (m.index > last) out.push({ t: 'n', s: s.slice(last, m.index) });
+    if (m[1] !== undefined || m[2] !== undefined) out.push({ t: 'sub', s: m[1] ?? m[2] });
+    else out.push({ t: 'sup', s: m[3] ?? m[4] });
+    last = m.index + m[0].length;
+  }
+  if (last < s.length) out.push({ t: 'n', s: s.slice(last) });
+  return out;
+}
+
+/** true, wenn die Bezeichnung Tief- oder Hochstellungen enthält. */
+export const hasSub = (str) => typeof str === 'string' && /[_^]/.test(str) && subTokens(str).some((x) => x.t !== 'n');
+
+const escHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/** Bezeichnung → HTML mit <sub>/<sup>. */
+export function subHtml(str) {
+  return subTokens(str).map((x) => (x.t === 'n' ? escHtml(x.s) : `<${x.t}>${escHtml(x.s)}</${x.t}>`)).join('');
+}
+
+const UNI_SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉', a: 'ₐ', e: 'ₑ', h: 'ₕ', i: 'ᵢ', j: 'ⱼ', k: 'ₖ', l: 'ₗ', m: 'ₘ', n: 'ₙ', o: 'ₒ', p: 'ₚ', r: 'ᵣ', s: 'ₛ', t: 'ₜ', u: 'ᵤ', v: 'ᵥ', x: 'ₓ', '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎', ',': ',' };
+const UNI_SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', '-': '⁻', '−': '⁻', '+': '⁺', n: 'ⁿ', i: 'ⁱ' };
+
+/**
+ * Für reinen Text (z.B. <option>): Tief-/Hochstellung mit Unicode-Zeichen, soweit vorhanden;
+ * sonst wird der Index ohne Unterstrich angehängt (f_cd → fcd).
+ */
+export function unicodeSub(str) {
+  if (!hasSub(str)) return str;
+  return subTokens(str).map((x) => {
+    if (x.t === 'n') return x.s;
+    const map = x.t === 'sub' ? UNI_SUB : UNI_SUP;
+    const chars = [...x.s.toLowerCase()];
+    return chars.every((c) => map[c]) ? chars.map((c) => map[c]).join('') : x.s;
+  }).join('');
+}

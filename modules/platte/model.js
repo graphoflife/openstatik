@@ -1,7 +1,7 @@
 // Bearbeitungslogik des Plattenmodells für den grafischen Editor (DOM-frei, testbar)
 //
 // Kennungen (IDs) der Elemente:
-//   slab          Plattenfläche          ov:i      Eckpunkt i des Plattenrandes     oe:i  Randkante i → i+1
+//   s:k           Platte k (Fläche)      sv:k:i    Eckpunkt i der Platte k          se:k:i Randkante i → i+1
 //   h:k           Öffnung k              hv:k:i    Eckpunkt der Öffnung            he:k:i Kante der Öffnung
 //   a:k           Lastfläche k           av:k:i    Eckpunkt der Lastfläche
 //   c:i           Stütze / Punktlager    w:i       Wand / Linienlager              we:i:e Wandende (e = 0, 1)
@@ -9,7 +9,7 @@
 //
 // Verschieben wirkt auf die gewählten Punkte sowie auf alle Punkte, die mit ihnen zusammenfallen
 // (z.B. Wandende auf einer Plattenecke) – so bleiben verbundene Elemente verbunden.
-import { polygonSelfIntersects, pointInPolygon, distPointSeg, signedArea } from './geom.js';
+import { polygonSelfIntersects, pointInPolygon, distPointSeg, signedArea, freeEdges, cleanPolygon } from './geom.js';
 
 const R6 = (v) => Math.round(v * 1e6) / 1e6;
 const keyOf = (x, y) => `${Math.round(x * 1e5)},${Math.round(y * 1e5)}`;
@@ -24,7 +24,7 @@ export function parseId(id) {
 export function vertexRefs(p) {
   const out = [];
   const xy = (id, o, kx = 'x', ky = 'y') => out.push({ id, x: num(o[kx]), y: num(o[ky]), set: (x, y) => { o[kx] = x; o[ky] = y; } });
-  (p.outline || []).forEach((q, i) => xy(`ov:${i}`, q));
+  (p.slabs || []).forEach((sl, k) => (sl.outline || []).forEach((q, i) => xy(`sv:${k}:${i}`, q)));
   (p.openings || []).forEach((o, k) => (o.pts || []).forEach((q, i) => xy(`hv:${k}:${i}`, q)));
   (p.loadAreas || []).forEach((a, k) => (a.pts || []).forEach((q, i) => xy(`av:${k}:${i}`, q)));
   (p.lineSupports || []).forEach((w, i) => { xy(`we:${i}:0`, w, 'x1', 'y1'); xy(`we:${i}:1`, w, 'x2', 'y2'); });
@@ -39,14 +39,14 @@ export function vertexIdsOf(p, ids) {
   const out = new Set();
   for (const id of ids) {
     const { t, a, b } = parseId(id);
-    if (['ov', 'hv', 'av', 'c', 'pl', 'we', 'le'].includes(t)) out.add(id);
-    else if (t === 'oe') { const n = p.outline.length; out.add(`ov:${a}`); out.add(`ov:${(a + 1) % n}`); }
+    if (['sv', 'hv', 'av', 'c', 'pl', 'we', 'le'].includes(t)) out.add(id);
+    else if (t === 'se') { const n = p.slabs[a]?.outline.length || 1; out.add(`sv:${a}:${b}`); out.add(`sv:${a}:${(b + 1) % n}`); }
+    else if (t === 's') (p.slabs[a]?.outline || []).forEach((_, i) => out.add(`sv:${a}:${i}`));
     else if (t === 'he') { const n = p.openings[a]?.pts.length || 1; out.add(`hv:${a}:${b}`); out.add(`hv:${a}:${(b + 1) % n}`); }
     else if (t === 'h') (p.openings[a]?.pts || []).forEach((_, i) => out.add(`hv:${a}:${i}`));
     else if (t === 'a') (p.loadAreas[a]?.pts || []).forEach((_, i) => out.add(`av:${a}:${i}`));
     else if (t === 'w') { out.add(`we:${a}:0`); out.add(`we:${a}:1`); }
     else if (t === 'll') { out.add(`le:${a}:0`); out.add(`le:${a}:1`); }
-    else if (t === 'slab') (p.outline || []).forEach((_, i) => out.add(`ov:${i}`));
   }
   return out;
 }
@@ -57,11 +57,11 @@ export function translateAll(p, d) {
 }
 
 /**
- * Verschiebt die Auswahl um d = [dx, dy]. Zusammenfallende Punkte anderer Elemente werden mitgenommen.
- * «slab» verschiebt das ganze Projekt. Gibt die Anzahl verschobener Koordinaten zurück.
+ * Verschiebt die Auswahl um d = [dx, dy]. Zusammenfallende Punkte anderer Elemente (Wandenden auf
+ * Plattenecken, gemeinsame Ecken benachbarter Platten) werden mitgenommen, damit Verbundenes verbunden
+ * bleibt. Gibt die Anzahl verschobener Koordinaten zurück.
  */
 export function moveSelection(p, ids, d) {
-  if (ids.includes('slab')) { translateAll(p, d); return vertexRefs(p).length; }
   const refs = vertexRefs(p);
   const direct = vertexIdsOf(p, ids);
   const anchors = new Set(refs.filter((r) => direct.has(r.id)).map((r) => keyOf(r.x, r.y)));
@@ -73,6 +73,13 @@ export function moveSelection(p, ids, d) {
 }
 
 const shiftPts = (pts, d) => pts.map((q) => ({ x: R6(num(q.x) + d[0]), y: R6(num(q.y) + d[1]) }));
+
+export function nextSlabId(p) {
+  let k = (p.slabs || []).length + 1;
+  const used = new Set((p.slabs || []).map((a) => a.id));
+  while (used.has(`P${k}`)) k++;
+  return `P${k}`;
+}
 
 export function nextAreaId(p) {
   let k = (p.loadAreas || []).length + 1;
@@ -94,6 +101,13 @@ export function copySelection(p, ids, d) {
     if (t === 'w' && p.lineSupports[a]) { const s = p.lineSupports[a]; p.lineSupports.push({ ...s, x1: R6(s.x1 + d[0]), y1: R6(s.y1 + d[1]), x2: R6(s.x2 + d[0]), y2: R6(s.y2 + d[1]) }); out.push(`w:${p.lineSupports.length - 1}`); }
     if (t === 'll' && p.lineLoads[a]) { const s = p.lineLoads[a]; p.lineLoads.push({ ...s, x1: R6(s.x1 + d[0]), y1: R6(s.y1 + d[1]), x2: R6(s.x2 + d[0]), y2: R6(s.y2 + d[1]) }); out.push(`ll:${p.lineLoads.length - 1}`); }
     if (t === 'h' && p.openings[a]) { const o = p.openings[a]; p.openings.push({ ...o, pts: shiftPts(o.pts, d) }); out.push(`h:${p.openings.length - 1}`); }
+    if (t === 's' && p.slabs[a]) {
+      const sl = p.slabs[a];
+      const nid = nextSlabId(p);
+      p.slabs.push({ ...sl, id: nid, name: `${sl.name || 'Platte'} (Kopie)`, outline: shiftPts(sl.outline, d) });
+      for (const l of p.areaLoads.filter((q) => q.region === sl.id)) p.areaLoads.push({ ...l, region: nid });
+      out.push(`s:${p.slabs.length - 1}`);
+    }
     if (t === 'a' && p.loadAreas[a]) {
       const ar = p.loadAreas[a];
       const nid = nextAreaId(p);
@@ -113,22 +127,23 @@ export function removeSelection(p, ids) {
   const parsed = ids.map(parseId);
   const of = (t) => [...new Set(parsed.filter((x) => x.t === t).map((x) => x.a))].sort((x, y) => y - x);
   let n = 0;
-  if (parsed.some((x) => x.t === 'slab')) { p.outline = []; n++; }
   // ganze Polygone
   const holes = new Set(of('h'));
   const areas = new Set(of('a'));
-  // Eckpunkte von Öffnungen / Lastflächen
-  const vtx = (t, list, whole) => {
+  const slabs = new Set(of('s'));
+  // Eckpunkte von Platten, Öffnungen, Lastflächen (Polygon bleibt mit mindestens drei Punkten erhalten)
+  const vtx = (t, list, whole, key = 'pts') => {
     const by = new Map();
     for (const x of parsed.filter((q) => q.t === t)) { if (!by.has(x.a)) by.set(x.a, new Set()); by.get(x.a).add(x.b); }
     for (const [k, set] of by) {
       if (whole.has(k) || !list[k]) continue;
-      const keep = list[k].pts.filter((_, i) => !set.has(i));
-      if (keep.length >= 3) { n += list[k].pts.length - keep.length; list[k].pts = keep; } else whole.add(k);
+      const keep = list[k][key].filter((_, i) => !set.has(i));
+      if (keep.length >= 3) { n += list[k][key].length - keep.length; list[k][key] = keep; }
     }
   };
   vtx('hv', p.openings, holes);
   vtx('av', p.loadAreas, areas);
+  vtx('sv', p.slabs, slabs, 'outline');
   for (const k of [...holes].sort((x, y) => y - x)) if (p.openings[k]) { p.openings.splice(k, 1); n++; }
   for (const k of [...areas].sort((x, y) => y - x)) {
     const ar = p.loadAreas[k];
@@ -137,11 +152,12 @@ export function removeSelection(p, ids) {
     p.loadAreas.splice(k, 1);
     n++;
   }
-  // Randpunkte
-  const ov = of('ov');
-  if (ov.length && p.outline.length) {
-    const keep = p.outline.filter((_, i) => !ov.includes(i));
-    if (keep.length >= 3) { n += p.outline.length - keep.length; p.outline = keep; }
+  for (const k of [...slabs].sort((x, y) => y - x)) {
+    const sl = p.slabs[k];
+    if (!sl) continue;
+    p.areaLoads = p.areaLoads.filter((l) => l.region !== sl.id);
+    p.slabs.splice(k, 1);
+    n++;
   }
   // Einzelelemente (Wandenden / Lastenden löschen das ganze Element)
   const walls = new Set([...of('w'), ...of('we')]);
@@ -169,16 +185,39 @@ export function polygonProblem(pts, what = 'Der Umriss') {
   return null;
 }
 
-/** Liegt der Punkt auf oder innerhalb des Plattenrandes? */
+const ringOf = (sl) => (sl.outline || []).map((q) => [num(q.x), num(q.y)]);
+
+/** Liegt der Punkt auf oder innerhalb einer Platte? */
 export function onSlab(p, x, y) {
-  const ring = (p.outline || []).map((q) => [num(q.x), num(q.y)]);
-  if (ring.length < 3) return false;
-  if (pointInPolygon(x, y, ring)) return true;
-  for (let i = 0; i < ring.length; i++) {
-    const a = ring[i], b = ring[(i + 1) % ring.length];
-    if (distPointSeg(x, y, a[0], a[1], b[0], b[1]).d < 1e-6) return true;
+  for (const sl of p.slabs || []) {
+    const ring = ringOf(sl);
+    if (ring.length < 3) continue;
+    if (pointInPolygon(x, y, ring)) return true;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i], b = ring[(i + 1) % ring.length];
+      if (distPointSeg(x, y, a[0], a[1], b[0], b[1]).d < 1e-6) return true;
+    }
   }
   return false;
+}
+
+/** Index der Platte an einem Punkt (kleinste umschliessende) oder −1. */
+export function slabAt(p, x, y) {
+  let best = -1, bestA = Infinity;
+  (p.slabs || []).forEach((sl, k) => {
+    const ring = ringOf(sl);
+    if (ring.length < 3 || !pointInPolygon(x, y, ring)) return;
+    const A = Math.abs(signedArea(ring));
+    if (A < bestA) { bestA = A; best = k; }
+  });
+  return best;
+}
+
+/** Flächenlast auf eine ganze Platte (bzw. alle Platten mit slabId = 'all') ergänzen. → neue Last */
+export function addSlabLoad(p, slabId, lc, q = 2.0) {
+  const l = { lc, q, region: slabId || 'all' };
+  p.areaLoads.push(l);
+  return l;
 }
 
 /** Lastfall für neue Lasten: gewählt (falls vorhanden), sonst erste veränderliche, sonst erste Last. */
@@ -197,12 +236,21 @@ export function createElement(p, tool, pts, opts = {}) {
   const lc = activeLoadCase(p, opts.lc);
   const needLc = () => { if (!lc) throw new Error('Zuerst im Register «Lastfälle» einen Lastfall anlegen.'); };
   switch (tool) {
-    case 'outline': {
-      const prob = polygonProblem(P, 'Der Umriss');
+    case 'outline':
+    case 'slab': {
+      const prob = polygonProblem(P, 'Der Plattenrand');
       if (prob) throw new Error(prob);
-      const had = (p.outline || []).length >= 3;
-      p.outline = P;
-      return { ids: ['slab'], msg: had ? 'Plattenrand ersetzt' : `Platte mit ${P.length} Eckpunkten angelegt – als Nächstes Lager setzen (Wand W, Stütze S)`, kind: 'ok' };
+      p.slabs = p.slabs || [];
+      const first = !p.slabs.length;
+      const k = p.slabs.length;
+      p.slabs.push({ id: nextSlabId(p), name: `Platte ${k + 1}`, outline: P, h: opts.h ?? p.h ?? 0.25, concrete: '' });
+      const inner = !first && P.every((q) => slabAt({ slabs: p.slabs.slice(0, k) }, q.x, q.y) >= 0);
+      return {
+        ids: [`s:${k}`],
+        msg: first ? `Platte mit ${P.length} Eckpunkten angelegt – als Nächstes Lager setzen (Wand W, Stütze S)`
+          : inner ? `Platte ${k + 1} liegt innerhalb einer anderen Platte – dort gilt ihre Dicke (Verstärkung bzw. dünnerer Bereich)` : `Platte ${k + 1} angelegt – gemeinsame Ränder verbinden die Platten`,
+        kind: 'ok',
+      };
     }
     case 'opening': {
       const prob = polygonProblem(P, 'Die Öffnung');
@@ -250,17 +298,50 @@ export function createElement(p, tool, pts, opts = {}) {
   }
 }
 
-/** Wände entlang der Randkanten (Indizes) ergänzen, sofern noch nicht vorhanden. → Anzahl */
-export function addWallsOnEdges(p, edges) {
-  const n = p.outline.length;
-  const have = new Set(p.lineSupports.map((w) => `${keyOf(w.x1, w.y1)}|${keyOf(w.x2, w.y2)}`));
-  let k = 0;
+const wallKey = (w) => `${keyOf(w.x1, w.y1)}|${keyOf(w.x2, w.y2)}`;
+const hasWall = (p, a, b) => {
+  const have = new Set(p.lineSupports.map(wallKey));
+  return have.has(`${keyOf(a[0], a[1])}|${keyOf(b[0], b[1])}`) || have.has(`${keyOf(b[0], b[1])}|${keyOf(a[0], a[1])}`);
+};
+
+/** Wände entlang einzelner Randkanten der Platte k (Indizes) ergänzen, sofern noch nicht vorhanden. → Anzahl */
+export function addWallsOnEdges(p, edges, k = 0) {
+  const sl = p.slabs?.[k];
+  if (!sl) return 0;
+  const o = sl.outline, n = o.length;
+  let cnt = 0;
   for (const i of edges) {
-    const a = p.outline[i], b = p.outline[(i + 1) % n];
+    const a = o[i], b = o[(i + 1) % n];
     if (!a || !b) continue;
-    if (have.has(`${keyOf(a.x, a.y)}|${keyOf(b.x, b.y)}`) || have.has(`${keyOf(b.x, b.y)}|${keyOf(a.x, a.y)}`)) continue;
+    if (hasWall(p, [a.x, a.y], [b.x, b.y])) continue;
     p.lineSupports.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, clamped: false });
-    k++;
+    cnt++;
   }
-  return k;
+  return cnt;
+}
+
+/**
+ * Wände auf allen freien Rändern ergänzen (gemeinsame Ränder benachbarter Platten und Ränder innen
+ * liegender Platten ausgenommen). k: nur Ränder der Platte k. → Anzahl
+ */
+export function addWallsOnFreeEdges(p, k = null) {
+  const rings = (p.slabs || []).map(ringOf).filter((r) => r.length >= 3).map((r) => cleanPolygon(r));
+  const own = k === null ? null : cleanPolygon(ringOf(p.slabs[k] || {}));
+  let cnt = 0;
+  for (const [a, b] of freeEdges(rings)) {
+    if (own) {
+      const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+      let on = false;
+      for (let i = 0; i < own.length && !on; i++) {
+        const q = own[i], r = own[(i + 1) % own.length];
+        if (distPointSeg(mx, my, q[0], q[1], r[0], r[1]).d < 1e-6) on = true;
+      }
+      if (!on) continue;
+    }
+    const A = [R6(a[0]), R6(a[1])], B = [R6(b[0]), R6(b[1])];
+    if (hasWall(p, A, B)) continue;
+    p.lineSupports.push({ x1: A[0], y1: A[1], x2: B[0], y2: B[1], clamped: false });
+    cnt++;
+  }
+  return cnt;
 }

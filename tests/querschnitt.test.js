@@ -571,3 +571,36 @@ test('Herleitung: innere Kräfte im Bruchzustand ergeben N und MRd (Rechteck 300
     if (N === 0) near(fr.My, fr.Fst * fr.lever, 1e-6, 'M = Fs·z bei N = 0');
   }
 });
+
+test('Mehrere Querschnitte (Positionen): zwischengespeicherte Resultate bleiben je Querschnitt gültig', () => {
+  // Zwei Positionen mit gemeinsamem Cache: A = Rechteckbalken, B = Rundstütze. Nach der Berechnung von B
+  // müssen die (verzögert berechneten) Interaktionsdaten von A unverändert die von A sein.
+  const cache = createCache();
+  const pA = EXAMPLES[0].project(), pB = EXAMPLES[2].project();
+  const rA = analyze(pA, cache);
+  const nmA = rA.lazy.nm('My');
+  const rB = analyze(pB, cache);
+  const nmB = rB.lazy.nm('My');
+  const nmA2 = rA.lazy.nm('My');
+  assert.deepEqual(nmA2, nmA, 'N-M-Kurve von A nach Berechnung von B unverändert');
+  assert.notDeepEqual(nmB, nmA, 'A und B haben verschiedene Interaktionskurven');
+  near(rA.mrd.MyPos, analyze(pA, cache).mrd.MyPos, 1e-12, 'erneute Berechnung von A aus dem Cache');
+  assert.ok(cache.entries.size >= 2, 'beide Fasermodelle im Cache');
+  // Ausnutzung unabhängig von der Reihenfolge
+  near(analyze(pA, createCache()).etaMax, rA.etaMax, 1e-12);
+});
+
+test('Beispiele: alle rechenbar, Hüllrohr als parametrischer Kreis', () => {
+  for (const ex of EXAMPLES) {
+    const p = ex.project();
+    const r = analyze(p, createCache());
+    assert.ok(Number.isFinite(r.etaMax) && r.etaMax > 0 && r.etaMax < 1.0001, `${ex.name}: η = ${r.etaMax}`);
+  }
+  const p = EXAMPLES.find((e) => /Aussparung/.test(e.name)).project();
+  const duct = p.openings[0];
+  assert.ok(duct.circle && duct.circle.D === 150, 'Hüllrohr mit Kreisparametern');
+  // flächengleiches 32-Eck: Fläche = π·D²/4
+  near(Math.abs(polygonProps(rowsToPtsLocal(duct.pts)).A), Math.PI * 150 ** 2 / 4, 2e-3, 'Fläche des Hüllrohrs');
+});
+
+function rowsToPtsLocal(rows) { return rows.map((r) => [r.y, r.z]); }

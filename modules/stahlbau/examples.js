@@ -53,7 +53,7 @@ export const EXAMPLES = [
     desc: 'Pendelstütze 4.5 m, N = 600 kN, Kopfmoment aus exzentrischem Trägeranschluss (ψ = 0)',
     project: () => {
       const p = base();
-      p.meta = { name: 'Stütze Pos. 12', comment: 'Pendelstütze HEB 200, S355. Trägerauflagerkraft 150 kN mit Exzentrizität 0.20 m am Stützenkopf → My = 30 kNm, am Fuss gelenkig (ψ = 0).' };
+      p.meta = { name: 'Stütze Pos. 12', comment: 'Pendelstütze HEB 200, S355. Trägerauflagerkraft 150 kN mit Exzentrizität 0.20 m am Stützenkopf → Kopfmoment 30 kNm, am Fuss gelenkig (ψ = 0).' };
       p.steel = 'S355';
       p.section = { ...p.section, series: 'HEB', name: 'HEB 200' };
       p.mode = 'forces';
@@ -70,7 +70,7 @@ export const EXAMPLES = [
     },
   },
   {
-    name: 'Dachpfette HEA 200 (S355), N + My + Mz',
+    name: 'Dachpfette HEA 200 (S355), Druck + zweiachsige Biegung',
     desc: 'Pfette als Druckriegel 5 m: Normalkraft aus Verband, Biegung um beide Achsen (Dachneigung), EN 1993-1-1',
     project: () => {
       const p = base();

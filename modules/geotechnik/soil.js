@@ -1,8 +1,9 @@
 // Baugrund: Schichtprofil, Spannungen, Normen und Partialfaktoren (DOM-frei)
 //
 // Schichtprofil: Tiefen z [m] ab einer Bezugsebene (Geländeoberkante der jeweiligen Analyse),
-// positiv nach unten. Schicht i reicht von z_i bis z_{i+1}; die letzte Schicht ist unbegrenzt.
-// Für Tiefen oberhalb der Bezugsebene (z < 0, z.B. ansteigendes Gelände) gilt die oberste Schicht.
+// positiv nach unten. Das Profil entsteht an einer Stelle x aus dem Bodenmodell mit frei geformten
+// Zonen (ground.js); Schicht i reicht von z_i bis z_{i+1}, die erste beginnt oben (z = −∞).
+import { makeGround } from './ground.js';
 
 export const DEG = Math.PI / 180;
 export const rad = (d) => d * DEG;
@@ -83,14 +84,17 @@ export function layerAt(layers, z) {
 }
 
 /**
- * Bodenmodell: {layers, gw: {on, z}, gammaW}. zw = Tiefe des Grundwasserspiegels (Infinity ohne GW).
+ * Bodenprofil an der Stelle x (Standard 0): {layers, zw, gammaW, ground}.
+ * soilInput: {soils, zones, base, gw: {on, z}, gammaW} oder altes Format {layers, …}.
+ * zw = Tiefe des Grundwasserspiegels (Infinity ohne GW). ground: 2D-Modell für Punktabfragen.
  */
 export function makeSoil(soilInput, opts = {}) {
   const gammaW = num(soilInput?.gammaW, 10);
-  const layers = prepareLayers(soilInput?.layers || [], gammaW);
+  const ground = makeGround(soilInput, gammaW);
+  const layers = ground.layersAt(Number(opts.x) || 0);
   const gwOn = opts.ignoreWater ? false : !!soilInput?.gw?.on;
   const zw = gwOn ? num(soilInput.gw.z, Infinity) : Infinity;
-  return { layers, zw, gammaW };
+  return { layers, zw, gammaW, ground };
 }
 
 /**
@@ -169,15 +173,20 @@ export function averageParams(soil, z0, z1, norm = null, applyM = false) {
   };
 }
 
-/** Farbvarianten für Schichten (Deckkraft und Schraffur), Index 1…8. */
+/** Darstellung der Bodenarten (Deckkraft, Schraffur, Farbton), Stil 1…8. */
 export const LAYER_STYLES = [
-  { op: 0.14, hatch: 45, gap: 1.0 },
-  { op: 0.30, hatch: -45, gap: 1.0 },
-  { op: 0.20, hatch: 0, gap: 0.8 },
-  { op: 0.38, hatch: null, gap: 1 },
-  { op: 0.10, hatch: 90, gap: 1.2 },
-  { op: 0.26, hatch: 'x', gap: 1.4 },
-  { op: 0.34, hatch: 30, gap: 0.9 },
-  { op: 0.18, hatch: -60, gap: 1.1 },
+  { op: 0.30, hatch: 45, gap: 1.0, tint: null },
+  { op: 0.34, hatch: -45, gap: 1.0, tint: '--c-series-5' },
+  { op: 0.30, hatch: 0, gap: 0.8, tint: '--c-series-3' },
+  { op: 0.32, hatch: null, gap: 1, tint: '--c-series-1' },
+  { op: 0.28, hatch: 90, gap: 1.2, tint: '--c-series-4' },
+  { op: 0.30, hatch: 'x', gap: 1.4, tint: '--c-series-6' },
+  { op: 0.30, hatch: 30, gap: 0.9, tint: '--c-series-2' },
+  { op: 0.26, hatch: -60, gap: 1.1, tint: '--text-3' },
 ];
 export const layerStyle = (col) => LAYER_STYLES[((Math.round(col) || 1) - 1 + 80) % 8];
+/** Farbe einer Bodenart (CSS, aus den Themenfarben gemischt – hell und dunkel). */
+export function soilColor(col) {
+  const st = layerStyle(col);
+  return st.tint ? `color-mix(in srgb, var(--c-soil) 58%, var(${st.tint}))` : 'var(--c-soil)';
+}

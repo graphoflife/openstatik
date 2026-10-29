@@ -1,5 +1,5 @@
 // Statischer Bericht: druckbares Dokument mit Projektkopf, Abschnitten, Tabellen und Grafiken
-import { h, button, downloadText } from './ui.js';
+import { h, button, downloadText, rich } from './ui.js';
 import { fmt } from './format.js';
 
 /**
@@ -19,7 +19,7 @@ export function openReport(meta, sections) {
   if (p.comment) doc.append(h('p', {}, p.comment));
   for (const s of sections) {
     if (!s) continue;
-    doc.append(h('h2', {}, s.title));
+    doc.append(h('h2', {}, rich(s.title)));
     const items = Array.isArray(s.content) ? s.content : [s.content];
     for (const c of items) {
       if (c === null || c === undefined) continue;
@@ -64,24 +64,24 @@ export function repTable(headers, rows, opts = {}) {
   const hs = headers.map((x) => (typeof x === 'string' ? { label: x } : x));
   return h('table', { class: 'rt', style: { margin: '4px 0 10px' } },
     opts.caption ? h('caption', {}, opts.caption) : null,
-    h('thead', {}, h('tr', {}, hs.map((c) => h('th', { class: c.num ? 'num' : '' }, c.label)))),
-    h('tbody', {}, rows.map((r) => h('tr', {}, r.map((v, j) => h('td', { class: typeof v === 'number' || hs[j]?.num ? 'num' : '' }, typeof v === 'number' ? fmt(v, hs[j]?.digits ?? 2) : v ?? ''))))));
+    h('thead', {}, h('tr', {}, hs.map((c) => h('th', { class: c.num ? 'num' : '' }, rich(c.label))))),
+    h('tbody', {}, rows.map((r) => h('tr', {}, r.map((v, j) => h('td', { class: typeof v === 'number' || hs[j]?.num ? 'num' : '' }, typeof v === 'number' ? fmt(v, hs[j]?.digits ?? 2) : rich(v) ?? ''))))));
 }
 
 /** Schlüssel-Wert-Liste für Berichte. rows: [[label, value, unit, digits]] */
 export function repKV(rows) {
   return h('table', { class: 'kv', style: { margin: '4px 0 10px', maxWidth: '520px' } }, h('tbody', {}, rows.filter(Boolean).map(([l, v, u, d]) =>
-    h('tr', {}, h('td', {}, l), h('td', { class: 'val' }, typeof v === 'number' ? fmt(v, d ?? 2) : v ?? ''), h('td', { class: 'unit' }, u || '')))));
+    h('tr', {}, h('td', {}, rich(l)), h('td', { class: 'val' }, typeof v === 'number' ? fmt(v, d ?? 2) : rich(v) ?? ''), h('td', { class: 'unit' }, rich(u || ''))))));
 }
 
 /** Abbildung (SVG-Element) mit Bildunterschrift. */
 export function repFigure(svg, caption) {
-  return h('figure', { class: 'rep-figure', style: { margin: '8px 0' } }, svg, caption ? h('figcaption', { class: 'muted small', style: { padding: '4px 8px' } }, caption) : null);
+  return h('figure', { class: 'rep-figure', style: { margin: '8px 0' } }, svg, caption ? h('figcaption', { class: 'muted small', style: { padding: '4px 8px' } }, rich(caption)) : null);
 }
 
 /** Formelzeile(n) in Monospace. */
 export function repFormula(text) {
-  return h('div', { class: 'formula' }, text);
+  return h('div', { class: 'formula' }, rich(text));
 }
 
-export function repP(text) { return h('p', {}, text); }
+export function repP(text) { return h('p', {}, rich(text)); }

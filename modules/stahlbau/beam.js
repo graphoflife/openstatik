@@ -7,13 +7,13 @@ import { solve } from '../../js/core/linalg.js';
 import { loadFactors } from '../../js/core/materials.js';
 
 export const SYSTEMS = [
-  { value: 'ss', label: 'Einfeldträger (gelenkig)' },
-  { value: 'cant', label: 'Kragarm (links eingespannt)' },
-  { value: 'ss-cant', label: 'Einfeldträger mit Kragarm' },
+  { value: 'ss', label: 'Einfeldträger' },
+  { value: 'cant', label: 'Kragarm' },
+  { value: 'ss-cant', label: 'Einfeldträger + Kragarm' },
   { value: 'cont', label: 'Durchlaufträger' },
   { value: 'fix-pin', label: 'Eingespannt – gelenkig' },
   { value: 'fix-fix', label: 'Beidseitig eingespannt' },
-  { value: 'free', label: 'Frei – Lager beliebig (grafisch)' },
+  { value: 'free', label: 'Frei (Lager beliebig)' },
 ];
 
 export const CATEGORIES = [
@@ -67,7 +67,7 @@ function freeEndsOf(L, sup) {
 function presetSupports(beam) {
   const sys = beam.system || 'ss';
   const spans = (beam.spans || [6]).map(Number).filter((v) => v > 0);
-  if (!spans.length) throw new Error('Bitte eine Spannweite grösser als 0 eingeben (Register «Belastung»).');
+  if (!spans.length) throw new Error('Bitte eine Spannweite grösser als 0 eingeben (Register «Lasten»).');
   switch (sys) {
     case 'cant': return { L: spans[0], sup: [{ x: 0, type: 'fix' }] };
     case 'ss-cant': {
@@ -104,8 +104,8 @@ export function beamModel(beam) {
 export function systemGeometry(beam) {
   const m = beamModel(beam);
   if (m.system === 'free') {
-    if (!(m.L > 0)) throw new Error('Bitte eine Trägerlänge grösser als 0 eingeben (Register «Belastung»).');
-    if (!m.supports.length) throw new Incomplete('Der Träger hat noch keine Lager.', 'Werkzeug «Lager» (Taste A) wählen und den Träger an der gewünschten Stelle anklicken – oder im Register «Belastung» ein System wählen.');
+    if (!(m.L > 0)) throw new Error('Bitte eine Trägerlänge grösser als 0 eingeben (Register «Lasten»).');
+    if (!m.supports.length) throw new Incomplete('Der Träger hat noch keine Lager.', 'Werkzeug «Lager» (Taste A) wählen und den Träger an der gewünschten Stelle anklicken – oder im Register «Lasten» ein System wählen.');
     if (m.supports.length === 1 && m.supports[0].type !== 'fix') throw new Incomplete('Ein einzelnes gelenkiges Lager hält den Träger nicht.', 'Ein zweites Lager setzen (Werkzeug «Lager», Taste A) oder das Lager anklicken und im Eigenschaftsfenster «eingespannt» wählen.');
   }
   return m;

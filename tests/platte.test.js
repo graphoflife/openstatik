@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import { dktCoefficients, dktB, dktStiffness, solvePlate, plateMoments, areaLoadVector, lineLoadVector } from '../modules/platte/fe.js';
 import { generateMesh, nodesOnSegment, nearestNode, hasEdge, meshQuality } from '../modules/platte/mesh.js';
 import { woodArmer, requiredAs, momentResistance, punchingSIA, punchingEC, controlPerimeter, principalMoments } from '../modules/platte/design.js';
-import { analyse, defaultCombos, withDefaults, locate, interpolate } from '../modules/platte/calc.js';
+import { analyse, defaultCombos, withDefaults, locate, interpolate, geometryOf, slabIndexAt } from '../modules/platte/calc.js';
 import { EXAMPLES, defaultProject } from '../modules/platte/examples.js';
-import { pointInPolygon, signedArea, segIntersect } from '../modules/platte/geom.js';
-import { moveSelection, copySelection, removeSelection, createElement, insertMidpoint, addWallsOnEdges, vertexIdsOf, polygonProblem } from '../modules/platte/model.js';
+import { pointInPolygon, signedArea, segIntersect, freeEdges } from '../modules/platte/geom.js';
+import { moveSelection, copySelection, removeSelection, createElement, insertMidpoint, addWallsOnEdges, addWallsOnFreeEdges, vertexIdsOf, polygonProblem, addSlabLoad, slabAt } from '../modules/platte/model.js';
 import { derivation, woodArmerSteps } from '../modules/platte/derivation.js';
 
 const close = (a, b, rel, msg) => assert.ok(Math.abs(a - b) <= rel * Math.abs(b), `${msg}: ${a} ≠ ${b} (±${rel * 100} %)`);
@@ -243,13 +243,13 @@ test('Beispiele: Gleichgewicht Σ Auflagerkräfte = Σ Lasten für alle Lastfäl
   }
 });
 
-test('Gesamtberechnung: Eigengewicht 25·h, Lastfläche und Linienlast werden exakt aufgebracht', () => {
+test('Gesamtberechnung: Eigengewicht je Plattendicke, Lasten je Platte und Linienlasten exakt aufgebracht', () => {
   const r = analyse(EXAMPLES[2].project());
   const lc1 = r.sets.find((s) => s.key === 'lc:LF1');
-  // L-Platte inkl. Balkon minus Treppenauge: 12·5 + 6·4 + 6·1.8 − 2.6·1.4 = 91.16 m²
-  close(lc1.sumF, 25 * 0.24 * 91.16, 1e-9, 'Eigengewicht');
-  const lc4 = r.sets.find((s) => s.key === 'lc:LF4');
-  close(lc4.sumF, 2.0 * 6 * 1.8, 1e-9, 'Balkonlast');
+  // Wohnungsdecke 12·5 + 6·4 − 2.6·1.4 = 80.36 m² (h 0.24), Balkon 6·1.8 = 10.8 m² (h 0.20)
+  close(lc1.sumF, 25 * (0.24 * 80.36 + 0.20 * 10.8), 1e-9, 'Eigengewicht');
+  close(r.sets.find((s) => s.key === 'lc:LF3').sumF, 2.0 * 80.36, 1e-9, 'Nutzlast auf der Wohnungsdecke');
+  close(r.sets.find((s) => s.key === 'lc:LF4').sumF, 3.0 * 10.8, 1e-9, 'Balkonlast auf der Balkonplatte');
   const lc2 = r.sets.find((s) => s.key === 'lc:LF2');
   close(lc2.sumF, 1.5 * 91.16 + 1.5 * 6 + 6.0 * 4.5 + 25, 1e-9, 'Auflast + Linienlasten + Punktlast');
 });
@@ -275,11 +275,11 @@ test('Fehlermeldungen: ungelagerte bzw. kinematische Platte', () => {
 
 test('Neues Projekt ist leer (ohne Geometrie, Lager und Lasten), Baustoffe vorbelegt', () => {
   const p = defaultProject();
-  assert.equal(p.outline.length, 0);
+  assert.equal(p.slabs.length, 0);
   assert.equal(p.pointSupports.length + p.lineSupports.length, 0);
   assert.equal(p.areaLoads.length + p.lineLoads.length + p.pointLoads.length + p.loadAreas.length, 0);
   assert.ok(p.h > 0 && p.concrete && p.meshSize > 0 && p.loadCases.length > 0);
-  assert.throws(() => analyse(p), /Plattenrand/);
+  assert.throws(() => analyse(p), /keine Platte/);
 });
 
 test('Flachdecke: Durchstanznachweise mit Stützentyp-Erkennung', () => {
@@ -295,20 +295,20 @@ test('Flachdecke: Durchstanznachweise mit Stützentyp-Erkennung', () => {
   // Symmetrie: Innenstützen gleich belastet
   const inner = r.punching.filter((pc) => pc.type === 'innen');
   close(inner[0].Vd, inner[1].Vd, 0.01, 'Symmetrie');
-  assert.ok(signedArea(r.outline) > 0);
+  assert.ok(signedArea(r.outlines[0]) > 0);
 });
 
 // ------------------------------------------------------------------ Grafische Bearbeitung (model.js)
 
 const rectProject = () => {
   const p = defaultProject();
-  createElement(p, 'outline', [[0, 0], [6, 0], [6, 4], [0, 4]]);
+  createElement(p, 'slab', [[0, 0], [6, 0], [6, 4], [0, 4]]);
   return p;
 };
 
 test('Editor: Umriss zeichnen, Wände an allen Rändern, Lastfläche – Berechnung im Gleichgewicht', () => {
   const p = rectProject();
-  assert.equal(p.outline.length, 4);
+  assert.equal(p.slabs[0].outline.length, 4);
   assert.equal(addWallsOnEdges(p, [0, 1, 2, 3]), 4);
   assert.equal(addWallsOnEdges(p, [0, 1]), 0, 'keine doppelten Wände');
   const r1 = createElement(p, 'area', [[1, 1], [3, 1], [3, 3], [1, 3]]);
@@ -325,8 +325,8 @@ test('Editor: Umriss zeichnen, Wände an allen Rändern, Lastfläche – Berechn
 
 test('Editor: ungültige Polygone werden mit verständlicher Meldung abgewiesen', () => {
   const p = defaultProject();
-  assert.throws(() => createElement(p, 'outline', [[0, 0], [4, 4], [4, 0], [0, 4]]), /überschneidet sich/);
-  assert.throws(() => createElement(p, 'outline', [[0, 0], [4, 0]]), /mindestens drei/);
+  assert.throws(() => createElement(p, 'slab', [[0, 0], [4, 4], [4, 0], [0, 4]]), /überschneidet sich/);
+  assert.throws(() => createElement(p, 'slab', [[0, 0], [4, 0]]), /mindestens drei/);
   const q = rectProject();
   assert.throws(() => createElement(q, 'opening', [[5, 3], [7, 3], [7, 5], [5, 5]]), /innerhalb der Platte/);
   assert.equal(polygonProblem([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }]), null);
@@ -336,41 +336,130 @@ test('Editor: Verschieben nimmt zusammenfallende Punkte mit (Ecke → Wandenden)
   const p = rectProject();
   addWallsOnEdges(p, [0, 1, 2, 3]);
   createElement(p, 'column', [[3, 2]]);
-  moveSelection(p, ['ov:2'], [1, 0.5]); // Ecke (6,4) → (7,4.5)
-  assert.deepEqual([p.outline[2].x, p.outline[2].y], [7, 4.5]);
+  const o = p.slabs[0].outline;
+  moveSelection(p, ['sv:0:2'], [1, 0.5]); // Ecke (6,4) → (7,4.5)
+  assert.deepEqual([o[2].x, o[2].y], [7, 4.5]);
   assert.deepEqual([p.lineSupports[1].x2, p.lineSupports[1].y2], [7, 4.5], 'Wand 2 endet an der Ecke');
   assert.deepEqual([p.lineSupports[2].x1, p.lineSupports[2].y1], [7, 4.5], 'Wand 3 beginnt an der Ecke');
   assert.deepEqual([p.pointSupports[0].x, p.pointSupports[0].y], [3, 2], 'Stütze bleibt');
   moveSelection(p, ['c:0'], [-1, 0]);
-  assert.deepEqual([p.pointSupports[0].x, p.outline[0].x], [2, 0]);
-  moveSelection(p, ['slab'], [10, 10]);
-  assert.deepEqual([p.outline[0].x, p.outline[0].y, p.pointSupports[0].x, p.lineSupports[0].y1], [10, 10, 12, 10], 'ganzes Projekt');
-  assert.deepEqual([...vertexIdsOf(p, ['oe:3'])].sort(), ['ov:0', 'ov:3']);
+  assert.deepEqual([p.pointSupports[0].x, o[0].x], [2, 0]);
+  // ganze Platte: Ränder und die Wände darauf gehen mit, die Stütze nicht
+  moveSelection(p, ['s:0'], [10, 10]);
+  assert.deepEqual([o[0].x, o[0].y, p.lineSupports[0].y1, p.pointSupports[0].x], [10, 10, 10, 2]);
+  assert.deepEqual([...vertexIdsOf(p, ['se:0:3'])].sort(), ['sv:0:0', 'sv:0:3']);
 });
 
 test('Editor: Kopieren und Löschen', () => {
   const p = rectProject();
   createElement(p, 'column', [[2, 2]]);
   createElement(p, 'area', [[1, 1], [2, 1], [2, 2]]);
-  const ids = copySelection(p, ['c:0', 'a:0', 'ov:1'], [1, 0]);
+  const ids = copySelection(p, ['c:0', 'a:0', 'sv:0:1'], [1, 0]);
   assert.deepEqual(ids, ['c:1', 'a:1']);
   assert.equal(p.pointSupports[1].x, 3);
   assert.equal(p.areaLoads.length, 2, 'Last der Lastfläche mitkopiert');
   assert.notEqual(p.loadAreas[1].id, p.loadAreas[0].id);
   // Eckpunkt löschen nur, solange drei Punkte bleiben
-  const k = insertMidpoint(p.outline, 0);
+  const o = p.slabs[0].outline;
+  const k = insertMidpoint(o, 0);
   assert.equal(k, 1);
-  assert.deepEqual([p.outline[1].x, p.outline[1].y], [3, 0]);
-  assert.equal(removeSelection(p, ['ov:1']), 1);
-  assert.equal(p.outline.length, 4);
-  removeSelection(p, ['ov:0', 'ov:1']);
-  assert.equal(p.outline.length, 4, 'nicht unter drei Punkte – Rand bleibt');
+  assert.deepEqual([o[1].x, o[1].y], [3, 0]);
+  assert.equal(removeSelection(p, ['sv:0:1']), 1);
+  assert.equal(p.slabs[0].outline.length, 4);
+  removeSelection(p, ['sv:0:0', 'sv:0:1']);
+  assert.equal(p.slabs[0].outline.length, 4, 'nicht unter drei Punkte – Rand bleibt');
   // Lastfläche mit ihren Lasten löschen
   assert.equal(removeSelection(p, ['a:0', 'c:0', 'c:1']), 3);
   assert.equal(p.loadAreas.length, 1);
   assert.equal(p.areaLoads.length, 1);
   assert.equal(p.areaLoads[0].region, p.loadAreas[0].id);
   assert.equal(p.pointSupports.length, 0);
+  // Platte kopieren (mit ihren Flächenlasten) und löschen
+  addSlabLoad(p, p.slabs[0].id, 'LF2', 1.5);
+  const sid = copySelection(p, ['s:0'], [10, 0]);
+  assert.deepEqual(sid, ['s:1']);
+  assert.equal(p.slabs[1].outline[0].x, 10);
+  assert.equal(p.areaLoads.filter((l) => l.region === p.slabs[1].id).length, 1);
+  removeSelection(p, ['s:1']);
+  assert.equal(p.slabs.length, 1);
+  assert.equal(p.areaLoads.filter((l) => l.region !== 'all' && !p.slabs.some((x) => x.id === l.region) && !p.loadAreas.some((a) => a.id === l.region)).length, 0, 'keine verwaisten Lasten');
+});
+
+// ------------------------------------------------------------------ Mehrere Platten
+
+/** Zweifeldplatte 8 × 4 m, allseitig gelagert; optional in zwei benachbarte Platten geteilt. */
+function twoBays({ split = false, h2 = 0.22, load = null } = {}) {
+  const p = defaultProject();
+  p.meshSize = 0.25;
+  if (split) {
+    createElement(p, 'slab', [[0, 0], [4, 0], [4, 4], [0, 4]]);
+    createElement(p, 'slab', [[4, 0], [8, 0], [8, 4], [4, 4]]);
+    p.slabs[0].h = 0.22; p.slabs[1].h = h2;
+  } else {
+    createElement(p, 'slab', [[0, 0], [8, 0], [8, 4], [0, 4]]);
+    p.slabs[0].h = 0.22;
+  }
+  addWallsOnFreeEdges(p);
+  p.areaLoads.push({ lc: 'LF3', q: 3, region: load || 'all' });
+  return p;
+}
+
+test('Mehrere Platten: zwei benachbarte Platten gleicher Dicke = eine Platte', () => {
+  const a = analyse(twoBays());
+  const b = analyse(twoBays({ split: true }));
+  assert.equal(b.slabs.length, 2);
+  for (const key of ['lc:LF1', 'co:K1']) {
+    const sa = a.sets.find((s) => s.key === key), sb = b.sets.find((s) => s.key === key);
+    close(sb.sumF, sa.sumF, 1e-9, `Σ Lasten ${key}`);
+    close(sb.wmax, sa.wmax, 0.02, `w_max ${key}`);
+    close(sb.mExt.mx[1], sa.mExt.mx[1], 0.03, `m_x,max ${key}`);
+    close(sb.mExt.my[1], sa.mExt.my[1], 0.03, `m_y,max ${key}`);
+  }
+  // gemeinsamer Rand ist kein freier Rand: keine Wand auf x = 4
+  const p = twoBays({ split: true });
+  assert.ok(!p.lineSupports.some((w) => w.x1 === 4 && w.x2 === 4), 'keine Wand auf dem gemeinsamen Rand');
+  assert.equal(freeEdges(p.slabs.map((sl) => sl.outline.map((q) => [q.x, q.y]))).length, 6);
+});
+
+test('Mehrere Platten: Dicke je Platte (Steifigkeit, Eigengewicht) und Flächenlast auf eine ganze Platte', () => {
+  const p = twoBays({ split: true, h2: 0.30, load: 'P2' });
+  const r = analyse(p);
+  // Eigengewicht 25·(0.22·16 + 0.30·16)
+  const lc1 = r.sets.find((s) => s.key === 'lc:LF1');
+  close(lc1.sumF, 25 * (0.22 * 16 + 0.30 * 16), 1e-9, 'Eigengewicht je Dicke');
+  // Flächenlast nur auf Platte 2
+  const lc3 = r.sets.find((s) => s.key === 'lc:LF3');
+  close(lc3.sumF, 3 * 16, 1e-9, 'Last auf ganze Platte P2');
+  for (const s of r.sets) assert.ok(Math.abs(s.sumR - s.sumF) < 1e-6 * Math.max(1, s.sumF), `Gleichgewicht ${s.name}`);
+  // Steifigkeit je Element ∝ h³
+  const ratio = r.slabs[1].D / r.slabs[0].D;
+  close(ratio, (0.30 / 0.22) ** 3, 1e-9, 'D-Verhältnis');
+  const t2 = r.eSlab.findIndex((k) => k === 1);
+  close(r.elemFactor[t2], ratio, 1e-9, 'Elementsteifigkeit');
+  // dickere Platte biegt sich unter gleicher Last weniger durch: Last auf P1 statt P2
+  const q = analyse(twoBays({ split: true, h2: 0.30, load: 'P1' }));
+  const w = (res, xx) => Math.max(...Array.from(res.mesh.x).map((v, i) => (Math.abs(v - xx) < 1.5 && Math.abs(res.mesh.y[i] - 2) < 1.5 ? res.sets.find((s) => s.key === 'lc:LF3').w[i] : 0)));
+  assert.ok(w(q, 2) > w(r, 6), 'dünnere Platte unter gleicher Last weicher');
+  // statische Höhe der Bemessung aus der lokalen Dicke
+  assert.equal(r.design.depBySlab[1].bx, 300 - 30 - 6);
+  assert.equal(r.design.bySlab.length, 2);
+});
+
+test('Mehrere Platten: Verstärkung innerhalb einer Platte (Stützenkopf) und alte Dateien', () => {
+  const r = analyse(EXAMPLES[1].project());
+  const inner = r.punching.filter((pc) => pc.type === 'innen');
+  for (const pc of inner) { assert.equal(pc.hSlab, 0.40); assert.ok(pc.d > 340); }
+  const edge = r.punching.find((pc) => pc.type === 'rand');
+  assert.equal(edge.hSlab, 0.30);
+  // Eigengewicht: Flachdecke 20 × 13.5 m mit zwei Verstärkungen 2.6 × 2.6 m (h 0.40 statt 0.30)
+  const lc1 = r.sets.find((s) => s.key === 'lc:LF1');
+  close(lc1.sumF, 25 * (0.30 * 20 * 13.5 + 2 * 0.10 * 2.6 * 2.6), 1e-9, 'Eigengewicht mit Verstärkung');
+  // Migration: Projekt mit einem einzelnen Umriss
+  const old = { outline: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 4 }, { x: 0, y: 4 }], h: 0.2, lineSupports: [] };
+  const m = withDefaults(old);
+  assert.equal(m.slabs.length, 1);
+  assert.equal(m.slabs[0].h, 0.2);
+  assert.equal(m.outline, undefined);
 });
 
 // ------------------------------------------------------------------ Herleitung
@@ -405,4 +494,33 @@ test('Herleitung: Wood–Armer-Fallunterscheidung', () => {
   assert.match(k.steps[0].label, /Korrektur/);
   // oben y: my − mxy²/|mx|
   close(woodArmerSteps(10, -8, 3, 'ty').value, 8.9, 1e-12, 'oben y');
+});
+
+test('Mehrere Platten: massgebende Platte, freie Ränder einer Verstärkung, EC-Durchstanzen', () => {
+  const p = defaultProject();
+  createElement(p, 'slab', [[0, 0], [10, 0], [10, 8], [0, 8]]);
+  const r = createElement(p, 'slab', [[4, 3], [6, 3], [6, 5], [4, 5]]);
+  assert.match(r.msg, /innerhalb einer anderen Platte/);
+  p.slabs[1].h = 0.4;
+  const geo = geometryOf(p);
+  assert.equal(slabIndexAt(geo, 5, 4), 1, 'innen liegende Platte massgebend');
+  assert.equal(slabIndexAt(geo, 1, 1), 0);
+  assert.equal(slabIndexAt(geo, 6, 4, 1e-6), 0, 'auf dem Rand gilt die dünnere Platte');
+  assert.equal(slabAt(p, 5, 4), 1);
+  // Ränder der Verstärkung sind keine freien Ränder
+  assert.equal(addWallsOnFreeEdges(p), 4);
+  assert.ok(p.lineSupports.every((w) => [0, 10].includes(w.x1) || [0, 8].includes(w.y1)));
+  // Eurocode-Durchstanzen mit Stütze in der Verstärkung
+  p.norm = 'EC';
+  p.lineSupports = [];
+  createElement(p, 'column', [[5, 4]]);
+  for (const [x, y] of [[0.3, 0.3], [9.7, 0.3], [9.7, 7.7], [0.3, 7.7]]) createElement(p, 'column', [[x, y]]);
+  p.areaLoads.push({ lc: 'LF3', q: 3, region: p.slabs[0].id });
+  const res = analyse(p);
+  const s1 = res.punching.find((pc) => pc.name === 'S1');
+  assert.equal(s1.hSlab, 0.4);
+  assert.equal(s1.type, 'innen');
+  assert.ok(s1.d > 340 && Number.isFinite(s1.eta));
+  for (const s of res.sets) assert.ok(Math.abs(s.sumR - s.sumF) < 1e-6 * Math.max(1, s.sumF));
+  close(res.sets.find((s) => s.key === 'lc:LF3').sumF, 3 * 80, 1e-9, 'Last auf ganze Platte inkl. Verstärkung');
 });

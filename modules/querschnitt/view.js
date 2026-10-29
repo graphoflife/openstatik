@@ -301,7 +301,7 @@ function renderGeometry(v, app) {
     { label: 'Bewehrungsstab', color: 'var(--c-rebar)', type: 'dot' },
     { label: gp.isotropic || Math.abs(Math.sin(2 * gp.alpha)) <= 1e-6 ? 'Schwerachsen y, z' : 'Hauptachsen 1, 2', color: 'var(--c-dim)', type: 'line', dash: '10 4 2 4', width: 1.2 },
   ]);
-  caption(v, `A = ${fmt(gp.A / 1e3, 1)}·10³ mm²   ·   ${g.bars.length} Stäbe, As = ${fmt(As, 0)} mm² (ρ = ${fmt(As / gp.A * 100, 2)} %)   ·   Masse in mm`);
+  caption(v, `A = ${fmt(gp.A / 1e3, 1)}·10³ mm²   ·   ${g.bars.length} Stäbe, A_s = ${fmt(As, 0)} mm² (ρ = ${fmt(As / gp.A * 100, 2)} %)   ·   Masse in mm`);
 }
 
 // ------------------------------------------------------------------ Dehnungen / Spannungen
@@ -375,7 +375,7 @@ function renderState(v, app, mode) {
       }
     }
     drawConcrete(v, gm, { fill: 'none' });
-    v.legend({ title: 'σc', unit: 'MPa', min: sigMin, max: 0, steps: 10, digits: Math.abs(sigMin) < 10 ? 2 : 1, color: (t) => diverging(0.46 * t) });
+    v.legend({ title: 'σ_c', unit: 'MPa', min: sigMin, max: 0, steps: 10, digits: Math.abs(sigMin) < 10 ? 2 : 1, color: (t) => diverging(0.46 * t) });
   } else {
     drawConcrete(v, gm, { opacity: 0.55 });
     if (emin < 0) {
@@ -417,12 +417,12 @@ function renderState(v, app, mode) {
     const eC = epsAt(vertMin);
     proj(vertMin, v0);
     const [an1, dx1] = textDir(eC);
-    lbl(P(U(vertMin), v0 + eC * sc), `εc = ${fmt(eC * 1000, 2)} ‰`, eC < 0 ? 'var(--c-pos)' : 'var(--c-neg)', dx1, -2, an1);
+    lbl(P(U(vertMin), v0 + eC * sc), `ε_c = ${fmt(eC * 1000, 2)} ‰`, eC < 0 ? 'var(--c-pos)' : 'var(--c-neg)', dx1, -2, an1);
     if (st.bars.length) {
       const bMax = st.bars.reduce((m, b) => (b.eps > m.eps ? b : m));
       proj([bMax.y, bMax.z], v0);
       const [an2, dx2] = textDir(bMax.eps);
-      lbl(P(U([bMax.y, bMax.z]), v0 + bMax.eps * sc), `εs = ${fmt(bMax.eps * 1000, 2)} ‰`, bMax.eps < 0 ? 'var(--c-pos)' : 'var(--c-neg)', bMax.eps < 0 ? dx2 : -4, 15, bMax.eps < 0 ? an2 : 'end');
+      lbl(P(U([bMax.y, bMax.z]), v0 + bMax.eps * sc), `ε_s = ${fmt(bMax.eps * 1000, 2)} ‰`, bMax.eps < 0 ? 'var(--c-pos)' : 'var(--c-neg)', bMax.eps < 0 ? dx2 : -4, 15, bMax.eps < 0 ? an2 : 'end');
     }
     // Stäbe mit Dehnung
     drawBars(v, app, gm.bars, { cy: toMm(R.gross.cy), cz: toMm(R.gross.cz), size, label: (b) => { const s = barsById.get(b.i); return s ? `${fmt(s.eps * 1000, 2)}‰` : ''; }, labelColor: 'var(--text)', mono: true });
@@ -439,7 +439,7 @@ function renderState(v, app, mode) {
       poly(pts, { fill: 'var(--c-pos-fill)', stroke: 'var(--c-pos)', width: 1.3 });
       proj(vertMin, v0);
       const sc0 = law.sigma(epsAt(vertMin));
-      lbl(P(U(vertMin), v0 + sc0 * scC), `σc = ${fmt(sc0, 1)} MPa`, 'var(--c-pos)', -8, -2, 'end');
+      lbl(P(U(vertMin), v0 + sc0 * scC), `σ_c = ${fmt(sc0, 1)} MPa`, 'var(--c-pos)', -8, -2, 'end');
     }
     const sMaxAbs = Math.max(1, ...st.bars.map((b) => Math.abs(b.sigma)));
     const scS = 0.75 * W / sMaxAbs;
@@ -453,7 +453,7 @@ function renderState(v, app, mode) {
       const bMax = st.bars.reduce((m, b) => (b.sigma > m.sigma ? b : m));
       if (bMax.sigma > 0) {
         proj([bMax.y, bMax.z], v0);
-        lbl(P(U([bMax.y, bMax.z]), v0 + bMax.sigma * scS), `σs = ${fmt(bMax.sigma, 0)} MPa`, 'var(--c-neg)', -2, -10, 'end');
+        lbl(P(U([bMax.y, bMax.z]), v0 + bMax.sigma * scS), `σ_s = ${fmt(bMax.sigma, 0)} MPa`, 'var(--c-neg)', -2, -10, 'end');
       }
     }
     line([P(umin, v0), P(umax, v0)], { stroke: 'var(--text-2)', width: 1.2 });
@@ -481,7 +481,7 @@ function renderState(v, app, mode) {
   }
   setBoundsReserved(v, x0, y0, x1, y1, isStress ? 130 : 0, 58, `${fitKeyOf(app, mode)}|${i}|${vs.key}`);
   v.keyLegend(isStress ? [
-    { label: 'Betondruckspannung σc', color: 'var(--c-pos)', type: 'fill' },
+    { label: 'Betondruckspannung σ_c', color: 'var(--c-pos)', type: 'fill' },
     { label: 'Stahl: Zug / Druck', color: 'var(--c-neg)', type: 'line' },
     { label: 'Nulllinie (ε = 0)', color: 'var(--text-2)', type: 'line', dash: '7 4', width: 1.2 },
   ] : [
@@ -492,10 +492,10 @@ function renderState(v, app, mode) {
   centroidSymbol(v, ref[0], ref[1], '', 'Schwerpunkt Beton');
   if (R.refMode !== 'gross') refSymbol(v, toMm(R.ref[0]), toMm(R.ref[1]));
 
-  const head = `${c.name}: N = ${fmt(c.N, 0)} kN, My = ${fmt(c.My, 1)}, Mz = ${fmt(c.Mz, 1)} kNm`;
+  const head = `${c.name}: N = ${fmt(c.N, 0)} kN, M_y = ${fmt(c.My, 1)}, M_z = ${fmt(c.Mz, 1)} kNm`;
   const tail = isStress
-    ? `σc,min = ${fmt(st.sigmaCmin, 1)} MPa · σs,max = ${fmt(st.sigmaSmax, 0)} MPa`
-    : `εc,min = ${fmt(st.ext.ecMin * 1000, 2)} ‰ · εs,max = ${fmt(st.ext.esMax * 1000, 2)} ‰`;
+    ? `σ_c,min = ${fmt(st.sigmaCmin, 1)} MPa · σ_s,max = ${fmt(st.sigmaSmax, 0)} MPa`
+    : `ε_c,min = ${fmt(st.ext.ecMin * 1000, 2)} ‰ · ε_s,max = ${fmt(st.ext.esMax * 1000, 2)} ‰`;
   caption(v, `${head}  ·  ${vs.label}  ·  ${tail}${st.fail ? '  ·  Grenzdehnung überschritten!' : ''}`);
 }
 
@@ -509,12 +509,12 @@ export function renderView(v, app, mode) {
 
 /** Kleine Skizze der Vorzeichenkonvention (N, My, Mz) für das Register «Lasten». */
 export function signFigure() {
-  const W = 360, H = 150;
-  const s = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img', 'aria-label': 'Vorzeichenkonvention', style: { display: 'block', maxWidth: '380px', margin: '2px auto 6px' } });
+  const W = 360, H = 166, Y0 = 44; // Y0: Oberkante der Querschnitte
+  const s = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img', 'aria-label': 'Vorzeichenkonvention', style: { display: 'block', maxWidth: '380px', margin: '0 auto' } });
   const T = (x, y, text, o = {}) => s.append(svgEl('text', { x, y, 'text-anchor': o.anchor || 'middle', style: { fontSize: `${o.size || 11}px`, fill: o.color || 'var(--text)', fontWeight: o.bold ? 700 : 400 }, text }));
   const panel = (x0, title, sub, edges) => {
-    const x = x0 + 30, y = 34, w = 56, hh = 70;
-    T(x0 + 58, 16, title, { bold: true, size: 12 });
+    const x = x0 + 30, y = Y0, w = 56, hh = 70;
+    T(x0 + 58, 14, title, { bold: true, size: 12 });
     s.append(svgEl('rect', { x, y, width: w, height: hh, rx: 3, style: { fill: 'var(--c-concrete)', stroke: 'var(--c-concrete-line)', strokeWidth: 1.2 } }));
     for (const [side, kind] of edges) {
       const col = kind === 'Zug' ? 'var(--c-neg)' : 'var(--c-pos)';
@@ -531,19 +531,19 @@ export function signFigure() {
     T(cx + 4, cy - 20, 'z', { size: 10, color: 'var(--text-2)', anchor: 'start' });
     T(x0 + 58, H - 8, sub, { size: 10.5, color: 'var(--text-2)' });
   };
-  panel(0, 'My > 0', 'Zug unten', [['bottom', 'Zug'], ['top', 'Druck']]);
-  panel(120, 'Mz > 0', 'Zug rechts', [['right', 'Zug'], ['left', 'Druck']]);
+  panel(0, 'M_y > 0', 'Zug unten', [['bottom', 'Zug'], ['top', 'Druck']]);
+  panel(120, 'M_z > 0', 'Zug rechts', [['right', 'Zug'], ['left', 'Druck']]);
   // Normalkraft
   const x0 = 240;
-  T(x0 + 58, 16, 'N > 0', { bold: true, size: 12 });
-  s.append(svgEl('rect', { x: x0 + 30, y: 34, width: 56, height: 70, rx: 3, style: { fill: 'var(--c-concrete)', stroke: 'var(--c-neg)', strokeWidth: 2.4 } }));
+  T(x0 + 58, 14, 'N > 0', { bold: true, size: 12 });
+  s.append(svgEl('rect', { x: x0 + 30, y: Y0, width: 56, height: 70, rx: 3, style: { fill: 'var(--c-concrete)', stroke: 'var(--c-neg)', strokeWidth: 2.4 } }));
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    const cx = x0 + 58 + dx * 34, cy = 69 + dy * 41;
-    const ax = dx * 14, ay = dy * 14;
+    const cx = x0 + 58 + dx * 32, cy = Y0 + 35 + dy * 39;
+    const ax = dx * 10, ay = dy * 10;
     s.append(svgEl('path', { d: `M${cx},${cy} l${ax},${ay}`, style: { stroke: 'var(--c-neg)', strokeWidth: 1.6 } }));
     s.append(svgEl('circle', { cx: cx + ax, cy: cy + ay, r: 2.2, style: { fill: 'var(--c-neg)' } }));
   }
-  T(x0 + 58, 73, 'Zug', { color: 'var(--c-neg)', size: 10.5, bold: true });
+  T(x0 + 58, Y0 + 39, 'Zug', { color: 'var(--c-neg)', size: 10.5, bold: true });
   T(x0 + 58, H - 8, 'Druck: N < 0', { size: 10.5, color: 'var(--text-2)' });
   return s;
 }

@@ -5,7 +5,7 @@ import {
   woodArmer, requiredAs, minReinforcement, effectiveDepths, controlPerimeter, punchingSIA, punchingEC,
   KE_SIA, BETA_EC, momentResistance, flexuralRigidity,
 } from './design.js';
-import { cleanPolygon, pointInPolygon, bboxOf, signedArea, distPointSeg, inDomain } from './geom.js';
+import { cleanPolygon, pointInPolygon, bboxOf, signedArea, distPointSeg, inDomain, inUnion, freeEdges } from './geom.js';
 import { concrete, rebar, chooseBars, barAreaPerM } from '../../js/core/materials.js';
 
 // ------------------------------------------------------------------ Stammdaten
@@ -43,11 +43,25 @@ const num = (v, d = NaN) => (typeof v === 'number' && Number.isFinite(v) ? v : (
 export function withDefaults(p) {
   p = p || {};
   p.norm = p.norm === 'EC' ? 'EC' : 'SIA';
-  p.outline = Array.isArray(p.outline) ? p.outline : [];
-  p.openings = Array.isArray(p.openings) ? p.openings : [];
-  for (const o of p.openings) { o.pts = Array.isArray(o.pts) ? o.pts : []; o.name = o.name || 'Öffnung'; }
   p.h = num(p.h, 0.25);
   p.concrete = p.concrete || 'C30/37';
+  // Platten: [{id, name, outline:[{x,y}], h, concrete ('' = Projektbeton)}]; ältere Dateien mit einem Umriss übernehmen
+  if (!Array.isArray(p.slabs)) {
+    p.slabs = [];
+    if (Array.isArray(p.outline) && p.outline.length) p.slabs.push({ id: 'P1', name: 'Platte 1', outline: p.outline, h: p.h, concrete: '' });
+  }
+  delete p.outline;
+  const usedIds = new Set();
+  p.slabs.forEach((sl, i) => {
+    if (!sl.id || usedIds.has(sl.id)) { let k = i + 1; while (usedIds.has(`P${k}`) || p.slabs.some((o) => o !== sl && o.id === `P${k}`)) k++; sl.id = `P${k}`; }
+    usedIds.add(sl.id);
+    sl.name = sl.name || `Platte ${i + 1}`;
+    sl.outline = Array.isArray(sl.outline) ? sl.outline : [];
+    sl.h = num(sl.h, p.h);
+    sl.concrete = sl.concrete || '';
+  });
+  p.openings = Array.isArray(p.openings) ? p.openings : [];
+  for (const o of p.openings) { o.pts = Array.isArray(o.pts) ? o.pts : []; o.name = o.name || 'Öffnung'; }
   p.nu = num(p.nu, 0.2);
   p.meshSize = num(p.meshSize, 0.5);
   p.pointSupports = Array.isArray(p.pointSupports) ? p.pointSupports : [];
@@ -56,6 +70,7 @@ export function withDefaults(p) {
   p.areaLoads = Array.isArray(p.areaLoads) ? p.areaLoads : [];
   p.loadAreas = Array.isArray(p.loadAreas) ? p.loadAreas : [];
   for (const a of p.loadAreas) { a.pts = Array.isArray(a.pts) ? a.pts : []; }
+  for (const al of p.areaLoads) { if (al.target && !al.region) al.region = al.target; delete al.target; al.region = al.region || 'all'; }
   p.lineLoads = Array.isArray(p.lineLoads) ? p.lineLoads : [];
   p.pointLoads = Array.isArray(p.pointLoads) ? p.pointLoads : [];
   p.combos = Array.isArray(p.combos) ? p.combos : [];
@@ -143,21 +158,74 @@ function lin(sets, factors, key, len) {
   return out;
 }
 
-/** Projektgeometrie aufbereiten (auch für die Darstellung). */
+/**
+ * Projektgeometrie aufbereiten (auch für die Darstellung):
+ * {slabs:[{id, name, ring, h, concrete, area, idx}], outlines:[Ring], holes:[Ring], bb}
+ * Nur Platten mit mindestens drei gültigen Eckpunkten zählen.
+ */
 export function geometryOf(p) {
-  const outline = ptsOf(p.outline);
+  const slabs = [];
+  (p.slabs || []).forEach((sl, idx) => {
+    const ring = ptsOf(sl.outline);
+    if (ring.length < 3) return;
+    slabs.push({ id: sl.id, name: sl.name || `Platte ${idx + 1}`, ring, h: num(sl.h, num(p.h, 0.25)), concrete: sl.concrete || p.concrete || 'C30/37', ownConcrete: !!sl.concrete, area: Math.abs(signedArea(ring)), idx });
+  });
+  const outlines = slabs.map((s) => s.ring);
   const holes = (p.openings || []).map((o) => ptsOf(o.pts)).filter((h) => h.length >= 3);
-  return { outline, holes };
+  return { slabs, outlines, holes, bb: outlines.length ? bboxOf(outlines.flat()) : null };
+}
+
+/**
+ * Massgebende Platte an einem Punkt: die kleinste Platte, die den Punkt enthält (innen liegende Platten
+ * – Verstärkungen oder dünnere Bereiche – überschreiben die umgebende). Auf Rändern zwischen zwei Platten
+ * (Abstand < tol) gilt die dünnere. → Index in geo.slabs oder −1
+ */
+export function slabIndexAt(geo, x, y, tol = 0) {
+  let best = -1;
+  for (let k = 0; k < geo.slabs.length; k++) {
+    const s = geo.slabs[k];
+    const inside = pointInPolygon(x, y, s.ring) || (tol > 0 && ringDist(x, y, s.ring) < tol);
+    if (!inside) continue;
+    if (best < 0) { best = k; continue; }
+    const b = geo.slabs[best];
+    const onEdge = tol > 0 && (ringDist(x, y, s.ring) < tol || ringDist(x, y, b.ring) < tol);
+    if (onEdge ? s.h < b.h : s.area < b.area - 1e-12) best = k;
+  }
+  return best;
+}
+
+function ringDist(x, y, ring) {
+  let d = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    d = Math.min(d, distPointSeg(x, y, a[0], a[1], b[0], b[1]).d);
+  }
+  return d;
+}
+
+/** Nettofläche der Plattenvereinigung (innen liegende Platten zählen nicht doppelt). */
+export function netArea(geo) {
+  let A = 0;
+  for (const s of geo.slabs) {
+    const c = polygonCentroidOf(s.ring);
+    if (!geo.slabs.some((o) => o !== s && o.area > s.area && pointInPolygon(c[0], c[1], o.ring))) A += s.area;
+  }
+  for (const h of geo.holes) A -= Math.abs(signedArea(h));
+  return A;
+}
+
+function polygonCentroidOf(r) {
+  let sx = 0, sy = 0;
+  for (const q of r) { sx += q[0]; sy += q[1]; }
+  return [sx / r.length, sy / r.length];
 }
 
 /** Grobe Knotenzahl-Abschätzung (für automatische Berechnung). */
 export function estimateNodes(p) {
-  const { outline, holes } = geometryOf(p);
-  if (outline.length < 3) return 0;
-  let A = Math.abs(signedArea(outline));
-  for (const h of holes) A -= Math.abs(signedArea(h));
+  const geo = geometryOf(p);
+  if (!geo.slabs.length) return 0;
   const s = num(p.meshSize, 0.5);
-  return s > 0 ? A / (0.866 * s * s) : Infinity;
+  return s > 0 ? netArea(geo) / (0.866 * s * s) : Infinity;
 }
 
 // ------------------------------------------------------------------ Hauptberechnung
@@ -166,15 +234,17 @@ export function estimateNodes(p) {
  * Netz eines (mit withDefaults ergänzten) Projekts erzeugen – auch für die Netzvorschau ohne Berechnung.
  */
 export function meshProject(p, warnings = []) {
-  const { outline, holes } = geometryOf(p);
-  if (outline.length < 3) throw new Error('Der Plattenrand benötigt mindestens 3 Eckpunkte (Register «Geometrie», Tabelle «Plattenrand»).');
-  const bb = bboxOf(outline);
+  const geo = geometryOf(p);
+  const { outlines, holes } = geo;
+  if (!outlines.length) throw new Error('Es ist noch keine Platte vorhanden (mindestens 3 Eckpunkte) – Werkzeug «Platte» oder Register «Platten».');
+  const bb = geo.bb;
   const Lref = Math.max(bb.w, bb.h);
   const tol = 1e-6 * Lref;
   let size = num(p.meshSize);
-  if (!(size > 0)) throw new Error('Die Netzweite muss grösser als 0 sein (Register «Geometrie», z.B. 0.5 m).');
+  if (!(size > 0)) throw new Error('Die Netzweite muss grösser als 0 sein (z.B. 0.5 m).');
   if (size < Lref / 400) { size = Lref / 400; warnings.push(`Netzweite auf ${size.toFixed(3)} m vergrössert (Rechenzeit).`); }
   if (size > Lref / 4) { size = Lref / 4; warnings.push(`Netzweite auf ${size.toFixed(2)} m verkleinert (mind. 4 Elemente über die Plattenabmessung).`); }
+  const inDom = (x, y) => inUnion(x, y, outlines, holes);
 
   // Zwangslinien und -punkte
   const segments = [];
@@ -196,12 +266,13 @@ export function meshProject(p, warnings = []) {
       const cx = num(s.x), cy = num(s.y);
       // Liegt ein freier Rand näher als ~0.6·h am Stützenrand, wird der starre Bereich bis zum Rand
       // verlängert (sonst entsteht ein schmaler, unrealistisch weicher Plattenstreifen mit Spannungsspitzen).
-      const gap = Math.max(0.6 * num(p.h, 0.25), 0.1);
+      const k = slabIndexAt(geo, cx, cy, 1e-6);
+      const gap = Math.max(0.6 * (k >= 0 ? geo.slabs[k].h : num(p.h, 0.25)), 0.1);
       let x0 = cx - b / 2, x1 = cx + b / 2, y0 = cy - hc / 2, y1 = cy + hc / 2;
-      if (!inDomain(x0 - gap, cy, outline, holes)) x0 -= gap;
-      if (!inDomain(x1 + gap, cy, outline, holes)) x1 += gap;
-      if (!inDomain(cx, y0 - gap, outline, holes)) y0 -= gap;
-      if (!inDomain(cx, y1 + gap, outline, holes)) y1 += gap;
+      if (!inDom(x0 - gap, cy)) x0 -= gap;
+      if (!inDom(x1 + gap, cy)) x1 += gap;
+      if (!inDom(cx, y0 - gap)) y0 -= gap;
+      if (!inDom(cx, y1 + gap)) y1 += gap;
       const r = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
       headRects.push(r);
       for (let k = 0; k < 4; k++) segments.push([r[k], r[(k + 1) % 4]]);
@@ -219,12 +290,12 @@ export function meshProject(p, warnings = []) {
         s0: has ? Math.min(size / 2, Math.max(size / 6, 0.6 * Math.max(b, hc))) : size / 3,
       };
     });
-    mesh = generateMesh({ outline, holes, segments, points, size, maxNodes: 20000, refine });
+    mesh = generateMesh({ outlines, holes, segments, points, size, maxNodes: 20000, refine });
   } catch (e) {
     if (e instanceof MeshError) throw new Error(`Netzerzeugung: ${e.message}`);
     throw e;
   }
-  return { mesh, outline, holes, bb, Lref, tol, size, lineSup, lineLoads, pointSup, pointLoads, areas, headRects };
+  return { mesh, geo, outlines, holes, bb, Lref, tol, size, lineSup, lineLoads, pointSup, pointLoads, areas, headRects };
 }
 
 /**
@@ -236,17 +307,32 @@ export function analyse(project) {
   const p = withDefaults(JSON.parse(JSON.stringify(project)));
   const warnings = [];
   const norm = p.norm;
-  const h = num(p.h);
-  if (!(h >= 0.05 && h <= 3)) throw new Error('Die Plattendicke h muss zwischen 0.05 m und 3 m liegen (Eingabe in Metern, z.B. 0.25).');
-  let conc;
-  try { conc = concrete(p.concrete, { norm }); } catch { conc = concrete('C30/37', { norm }); }
-  if (!Number.isFinite(conc.fck)) throw new Error('Unbekannte Betonsorte – bitte im Register «Geometrie» eine Betonsorte wählen.');
+  const concCache = new Map();
+  const concOf = (name) => {
+    if (!concCache.has(name)) {
+      let c;
+      try { c = concrete(name, { norm }); } catch { c = null; }
+      if (!c || !Number.isFinite(c.fck)) throw new Error(`Unbekannte Betonsorte «${name}» – bitte im Register «Platten» eine Betonsorte wählen.`);
+      concCache.set(name, c);
+    }
+    return concCache.get(name);
+  };
   const steel = rebar(p.design.steel, { norm });
   const nu = Math.min(0.45, Math.max(0, num(p.nu, 0.2)));
-  const E = conc.Ecm;
-  const D = flexuralRigidity(E, h, nu);
+  for (const sl of geometryOf(p).slabs) {
+    if (!(sl.h >= 0.05 && sl.h <= 3)) throw new Error(`Die Dicke von «${sl.name}» muss zwischen 0.05 m und 3 m liegen (Eingabe in Metern, z.B. 0.25).`);
+  }
 
-  const { mesh, outline, holes, bb, tol, lineSup, lineLoads, pointSup, pointLoads, areas, headRects } = meshProject(p, warnings);
+  const { mesh, geo, outlines, holes, bb, tol, lineSup, lineLoads, pointSup, pointLoads, areas, headRects } = meshProject(p, warnings);
+  const free = freeEdges(outlines, holes);
+  const dom = { outlines, holes, free };
+  // Kennwerte je Platte
+  const slabs = geo.slabs.map((sl) => {
+    const c = concOf(sl.concrete);
+    return { ...sl, conc: c, E: c.Ecm, D: flexuralRigidity(c.Ecm, sl.h, nu), nElem: 0, meshArea: 0 };
+  });
+  const Dref = slabs[0].D;
+  const conc = slabs[0].conc, h = slabs[0].h, E = slabs[0].E, D = Dref;
   const T1 = now();
   const n = mesh.nNodes, nt = mesh.nTri, { x, y, tri } = mesh;
   const ntol = Math.max(10 * tol, 1e-6);
@@ -320,6 +406,29 @@ export function analyse(project) {
     eArea[t] = ((x[b] - x[a]) * (y[c] - y[a]) - (x[c] - x[a]) * (y[b] - y[a])) / 2;
     ecx[t] = (x[a] + x[b] + x[c]) / 3; ecy[t] = (y[a] + y[b] + y[c]) / 3;
   }
+  // Platte je Element (kleinste umschliessende Platte) und je Knoten (dünnste angrenzende Platte)
+  const eSlab = new Int32Array(nt);
+  for (let t = 0; t < nt; t++) {
+    let k = slabIndexAt(geo, ecx[t], ecy[t]);
+    if (k < 0) k = 0;
+    eSlab[t] = k;
+    slabs[k].nElem++;
+    slabs[k].meshArea += eArea[t];
+  }
+  const nodeSlab = new Int32Array(n).fill(-1);
+  for (let t = 0; t < nt; t++) {
+    const k = eSlab[t];
+    for (let j = 0; j < 3; j++) {
+      const v = tri[3 * t + j];
+      if (nodeSlab[v] < 0 || slabs[k].h < slabs[nodeSlab[v]].h) nodeSlab[v] = k;
+    }
+  }
+  const slabMember = new Map();
+  for (const sl of slabs) {
+    const m = new Uint8Array(nt);
+    for (let t = 0; t < nt; t++) if (pointInPolygon(ecx[t], ecy[t], sl.ring)) m[t] = 1;
+    slabMember.set(sl.id, m);
+  }
   const areaMember = new Map();
   for (const a of areas) {
     const m = new Uint8Array(nt);
@@ -337,14 +446,14 @@ export function analyse(project) {
   for (const lc of lcs) {
     const f = new Float64Array(3 * n);
     const qe = new Float64Array(nt);
-    if (lc.sw) qe.fill(gammaC * h);
+    if (lc.sw) for (let t = 0; t < nt; t++) qe[t] = (slabs[eSlab[t]].conc.gamma ?? gammaC) * slabs[eSlab[t]].h;
     for (const al of p.areaLoads) {
       if (al.lc !== lc.id) continue;
       const q = num(al.q, 0);
       if (!q) continue;
       if (!al.region || al.region === 'all') { for (let t = 0; t < nt; t++) qe[t] += q; continue; }
-      const m = areaMember.get(al.region);
-      if (!m) { warnings.push('Eine Flächenlast verweist auf eine gelöschte Lastfläche und wird ignoriert.'); continue; }
+      const m = slabMember.get(al.region) || areaMember.get(al.region);
+      if (!m) { warnings.push('Eine Flächenlast verweist auf eine gelöschte Platte bzw. Lastfläche und wird ignoriert.'); continue; }
       for (let t = 0; t < nt; t++) if (m[t]) qe[t] += q;
     }
     for (let t = 0; t < nt; t++) {
@@ -382,16 +491,16 @@ export function analyse(project) {
   }
 
   // ---------------------------------------------------------------- Lösung
-  let elemFactor = null;
-  if (headRects.length) {
-    elemFactor = new Float64Array(nt).fill(1);
-    for (let t = 0; t < nt; t++) {
-      for (const r of headRects) {
-        if (ecx[t] > r[0][0] && ecx[t] < r[1][0] && ecy[t] > r[0][1] && ecy[t] < r[2][1]) { elemFactor[t] = HEAD_FACTOR; break; }
-      }
+  // Steifigkeit je Element: D der Platte (Dicke, Beton) relativ zu D_ref, starre Stützenköpfe × HEAD_FACTOR
+  const elemFactor = new Float64Array(nt);
+  const headMask = new Uint8Array(nt);
+  for (let t = 0; t < nt; t++) {
+    elemFactor[t] = slabs[eSlab[t]].D / Dref;
+    for (const r of headRects) {
+      if (ecx[t] > r[0][0] && ecx[t] < r[1][0] && ecy[t] > r[0][1] && ecy[t] < r[2][1]) { elemFactor[t] *= HEAD_FACTOR; headMask[t] = 1; break; }
     }
   }
-  const sol = solvePlate(mesh, { D, nu, fixW, springW, springR, rotConstraints: rotC, loads, elemFactor });
+  const sol = solvePlate(mesh, { D: Dref, nu, fixW, springW, springR, rotConstraints: rotC, loads, elemFactor });
   const T2 = now();
 
   const sets = [];
@@ -399,7 +508,7 @@ export function analyse(project) {
     const u = sol.U[k];
     const w = new Float64Array(n);
     for (let i = 0; i < n; i++) w[i] = u[3 * i];
-    const m = plateMoments(mesh, u, D, nu, elemFactor);
+    const m = plateMoments(mesh, u, Dref, nu, elemFactor, headMask);
     let sumF = 0;
     for (let i = 0; i < n; i++) sumF += loads[k][3 * i];
     const R = sol.R[k];
@@ -437,12 +546,18 @@ export function analyse(project) {
 
   // ---------------------------------------------------------------- Bemessung
   const dz = p.design;
-  const dep = effectiveDepths(h, num(dz.cBot, 30), num(dz.cTop, 30), num(dz.dBot, 12), num(dz.dTop, 14), dz.outerBot || 'x', dz.outerTop || 'x');
-  for (const [k, v] of Object.entries(dep)) if (!(v > 20)) throw new Error(`Die statische Höhe der Lage «${layerLabel(k)}» ist zu klein (${v.toFixed(0)} mm). Bitte Überdeckung bzw. Stabdurchmesser im Register «Bemessung» prüfen.`);
-  const fcd = conc.fcd, fsd = steel.fsd;
+  const LAY = ['bx', 'by', 'tx', 'ty'];
+  const depBySlab = slabs.map((sl) => effectiveDepths(sl.h, num(dz.cBot, 30), num(dz.cTop, 30), num(dz.dBot, 12), num(dz.dTop, 14), dz.outerBot || 'x', dz.outerTop || 'x'));
+  depBySlab.forEach((dep, k) => {
+    for (const [lk, v] of Object.entries(dep)) if (!(v > 20)) throw new Error(`Die statische Höhe der Lage «${layerLabel(lk)}» in «${slabs[k].name}» ist zu klein (${v.toFixed(0)} mm). Bitte Überdeckung bzw. Stabdurchmesser im Register «Bemessung» prüfen.`);
+  });
+  const fsd = steel.fsd;
   const lambda = norm === 'SIA' ? 0.85 : 0.8;
-  const asMin = {};
-  for (const k of ['bx', 'by', 'tx', 'ty']) asMin[k] = minReinforcement(dep[k], conc.fctm, steel.fsk, dz.asMinMode, num(dz.rhoMin, 0.13));
+  const asMinBySlab = slabs.map((sl, k) => {
+    const o = {};
+    for (const lk of LAY) o[lk] = minReinforcement(depBySlab[k][lk], sl.conc.fctm, steel.fsk, dz.asMinMode, num(dz.rhoMin, 0.13));
+    return o;
+  });
   const asBasic = {};
   for (const b of dz.basic) asBasic[b.layer] = num(b.d, 0) > 0 && num(b.s, 0) > 0 ? barAreaPerM(num(b.d), num(b.s)) : 0;
   const ulsSets = sets.filter((s) => s.kind === 'combo' && s.type === 'ULS');
@@ -460,36 +575,50 @@ export function analyse(project) {
         if (wa.ty > mEd.ty[i]) mEd.ty[i] = wa.ty;
       }
     }
-    const as = {}, layers = {};
+    const as = {}, asMinNode = {}, layers = {};
+    const bySlab = slabs.map((sl, k) => ({ id: sl.id, name: sl.name, h: sl.h, d: depBySlab[k], asMin: asMinBySlab[k], max: {} }));
     let failed = 0;
-    for (const k of ['bx', 'by', 'tx', 'ty']) {
-      const a = new Float64Array(n);
-      let mx = 0, im = 0, mMax = 0, xdMax = 0, nFail = 0;
+    for (const k of LAY) {
+      const a = new Float64Array(n), amin = new Float64Array(n);
+      let mx = 0, im = -1, mMax = 0, xdMax = 0, nFail = 0, reqMax = 0;
+      for (const b of bySlab) b.max[k] = { as: 0, req: b.asMin[k], node: -1 };
       for (let i = 0; i < n; i++) {
-        const r = requiredAs(mEd[k][i], dep[k], fcd, fsd, lambda);
+        const ns = Math.max(0, nodeSlab[i]);
+        amin[i] = asMinBySlab[ns][k];
+        const r = requiredAs(mEd[k][i], depBySlab[ns][k], slabs[ns].conc.fcd, fsd, lambda);
         if (!r.ok) { a[i] = NaN; nFail++; continue; }
         a[i] = r.as;
         if (r.as > mx) { mx = r.as; im = i; }
         if (mEd[k][i] > mMax) mMax = mEd[k][i];
         if (r.xd > xdMax) xdMax = r.xd;
+        const req = Math.max(r.as, amin[i]);
+        if (req > reqMax) reqMax = req;
+        const bs = bySlab[ns].max[k];
+        if (r.as > bs.as) { bs.as = r.as; bs.node = i; }
+        if (req > bs.req) bs.req = req;
       }
+      if (im < 0) im = 0;
       failed += nFail;
       as[k] = a;
-      const req = Math.max(mx, asMin[k]);
+      asMinNode[k] = amin;
+      for (const b of bySlab) b.max[k].bars = barSuggestion(b.max[k].req);
+      const ns = Math.max(0, nodeSlab[im]);
+      const req = Math.max(reqMax, mx, amin[im]);
       layers[k] = {
-        key: k, label: layerLabel(k), d: dep[k], asMax: mx, node: im, x: x[im], y: y[im], mMax, xdMax, nFail,
-        asMin: asMin[k], asReq: req, bars: barSuggestion(req), asBasic: asBasic[k] || 0,
+        key: k, label: layerLabel(k), d: depBySlab[ns][k], asMax: mx, node: im, x: x[im], y: y[im], mMax, xdMax, nFail,
+        asMin: amin[im], asReq: req, minGoverns: reqMax > mx + 1e-9, bars: barSuggestion(req), asBasic: asBasic[k] || 0,
+        slab: slabs[ns].name, slabIdx: ns, fcd: slabs[ns].conc.fcd, h: slabs[ns].h,
         extraArea: 0,
       };
     }
     // Flächenanteil mit Zulagen gegenüber Grundbewehrung
-    for (const k of ['bx', 'by', 'tx', 'ty']) {
+    for (const k of LAY) {
       const base = asBasic[k] || 0;
       if (!(base > 0)) continue;
       let A = 0, Aall = 0;
       for (let t = 0; t < nt; t++) {
         const a = tri[3 * t], b = tri[3 * t + 1], c = tri[3 * t + 2];
-        const v = Math.max(as[k][a], as[k][b], as[k][c], asMin[k]);
+        const v = Math.max(as[k][a], as[k][b], as[k][c], asMinNode[k][a], asMinNode[k][b], asMinNode[k][c]);
         Aall += eArea[t];
         if (v > base + 1e-9) A += eArea[t];
       }
@@ -497,8 +626,10 @@ export function analyse(project) {
       layers[k].extraShare = Aall > 0 ? A / Aall : 0;
     }
     if (failed) warnings.push(`An ${failed} Knoten ist die Biegedruckzone ungenügend (μ ≥ 0.5) – Platte verstärken oder Betonsorte erhöhen.`);
+    const asMin = {};
+    for (const k of LAY) asMin[k] = Math.min(...asMinBySlab.map((o) => o[k]));
     design = {
-      mEd, as, layers, asMin, asBasic, depths: dep, fcd, fsd, lambda, failed, combos: ulsSets.map((s) => s.key),
+      mEd, as, layers, asMin, asMinNode, asMinBySlab, asBasic, depths: depBySlab[0], depBySlab, bySlab, fcd: slabs[0].conc.fcd, fsd, lambda, failed, combos: ulsSets.map((s) => s.key),
       inputs: { cBot: num(dz.cBot, 30), cTop: num(dz.cTop, 30), dBot: num(dz.dBot, 12), dTop: num(dz.dTop, 14), outerBot: dz.outerBot || 'x', outerTop: dz.outerTop || 'x', asMinMode: dz.asMinMode, rhoMin: num(dz.rhoMin, 0.13), Dmax: num(dz.Dmax, 32), asPunch: num(dz.asPunch, 0) },
     };
   }
@@ -506,17 +637,19 @@ export function analyse(project) {
   // ---------------------------------------------------------------- Durchstanzen
   const punching = [];
   if (design) {
-    const dMean = (dep.tx + dep.ty) / 2;
     for (const sp of supports) {
       if (sp.kind !== 'point' || !(sp.b > 0 && sp.h > 0)) continue;
+      const ks = Math.max(0, slabIndexAt(geo, sp.x, sp.y, 1e-6));
+      const sl = slabs[ks], dep = depBySlab[ks], cs = sl.conc, asMin = asMinBySlab[ks], fcd = cs.fcd;
+      const dMean = (dep.tx + dep.ty) / 2;
       let Vd = 0, gov = null;
       for (const s of ulsSets) { const r = s.R[sp.node]; if (r > Vd) { Vd = r; gov = s; } }
       const rs = spansAt(sp, supports, bb);
-      const rec = { name: sp.name, node: sp.node, x: sp.x, y: sp.y, b: sp.b, h: sp.h, Vd, combo: gov?.name || '–', d: dMean, dv: dMean, Lx: rs.Lx, Ly: rs.Ly };
+      const rec = { name: sp.name, node: sp.node, x: sp.x, y: sp.y, b: sp.b, h: sp.h, Vd, combo: gov?.name || '–', d: dMean, dv: dMean, dTx: dep.tx, dTy: dep.ty, Lx: rs.Lx, Ly: rs.Ly, slab: sl.name, hSlab: sl.h, conc: cs };
       if (!(Vd > 0)) { rec.skip = 'keine Druckkraft'; punching.push(rec); continue; }
       if (norm === 'SIA') {
         const r = dMean / 2 / 1000;
-        const cp = controlPerimeter(sp, r, outline, holes, 5 * dMean / 1000);
+        const cp = controlPerimeter(sp, r, dom, holes, 5 * dMean / 1000);
         const type = cp.type;
         const ke = KE_SIA[type];
         const msd = Vd * (type === 'innen' ? 1 / 8 : type === 'rand' ? 1 / 4 : 1 / 2); // SIA 262 (64)–(67), eu = 0
@@ -531,15 +664,15 @@ export function analyse(project) {
         const mRdx = momentResistance(px.as, dep.tx, fcd, fsd), mRdy = momentResistance(py.as, dep.ty, fcd, fsd);
         const res = punchingSIA({
           Vd, d: dMean, dv: dMean, u: cp.u, ke, rsx: 0.22 * rs.Lx, rsy: 0.22 * rs.Ly, msd, mRdx, mRdy,
-          fsd, Es: steel.Es, tcd: conc.tcd, Dmax: num(dz.Dmax, 32),
+          fsd, Es: steel.Es, tcd: cs.tcd, Dmax: num(dz.Dmax, 32),
         });
         Object.assign(rec, { type, ke, r, u: cp.u, uFull: cp.uFull, pieces: cp.pieces, msd, asx: px, asy: py, mRdx, mRdy, rsx: 0.22 * rs.Lx, rsy: 0.22 * rs.Ly, res, VRd: res.VRdc, eta: res.eta });
       } else {
         const r = 2 * dMean / 1000;
-        const cp = controlPerimeter(sp, r, outline, holes, 6 * dMean / 1000);
+        const cp = controlPerimeter(sp, r, dom, holes, 6 * dMean / 1000);
         const type = cp.type;
         const beta = BETA_EC[type];
-        const cp0 = controlPerimeter(sp, 1e-4, outline, holes, 0);
+        const cp0 = controlPerimeter(sp, 1e-4, dom, holes, 0);
         const u0 = cp0.u;
         const asUser = num(dz.asPunch, 0);
         // ρl aus der erforderlichen oberen Bewehrung im Bereich c/2 + 3d um die Stütze (Mittelwert), mind. as,min
@@ -555,7 +688,7 @@ export function analyse(project) {
         const ax = asUser > 0 ? asUser : barSuggestion(Math.max(asMin.tx, avgAs(design.as.tx))).as;
         const ay = asUser > 0 ? asUser : barSuggestion(Math.max(asMin.ty, avgAs(design.as.ty))).as;
         const rhoL = Math.sqrt((ax / (1000 * dep.tx)) * (ay / (1000 * dep.ty)));
-        const res = punchingEC({ VEd: Vd, d: dMean, u1: cp.u, u0, beta, rhoL, fck: conc.fck, fcd, gammaC: conc.gammaC });
+        const res = punchingEC({ VEd: Vd, d: dMean, u1: cp.u, u0, beta, rhoL, fck: cs.fck, fcd, gammaC: cs.gammaC });
         Object.assign(rec, { type, beta, r, u: cp.u, uFull: cp.uFull, u0, pieces: cp.pieces, rhoL, asx: { as: ax }, asy: { as: ay }, res, VRd: res.VRdc, eta: res.eta });
       }
       punching.push(rec);
@@ -581,9 +714,9 @@ export function analyse(project) {
 
   const T3 = now();
   return {
-    mesh, owner, supports, sets, headRects, elemFactor, lcSets, combos, autoCombos, lcs,
+    mesh, owner, supports, sets, headRects, elemFactor, headMask, eSlab, nodeSlab, lcSets, combos, autoCombos, lcs,
     design, punching, sls, warnings: [...new Set(warnings)],
-    D, E, nu, h, conc, steel, norm, outline, holes, bbox: bb,
+    slabs, geo, D, E, nu, h, conc, steel, norm, outlines, holes, free, bbox: bb,
     neq: sol.neq,
     time: { mesh: T1 - T0, solve: T2 - T1, post: T3 - T2, total: T3 - T0 },
   };

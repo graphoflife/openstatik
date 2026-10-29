@@ -6,13 +6,13 @@ im Browser läuft – ohne Installation, ohne Server und ohne Build-Schritt. Die
 
 | Modul | Inhalt | Funktional vergleichbar mit |
 |-------|--------|-----------------------------|
-| **Platte** | FE-Berechnung von Decken und Bodenplatten: beliebige Grundrisse, Öffnungen, Stützen, Wände, Momente, Bewehrung (Wood–Armer), Durchstanzen | CEDRUS |
-| **Stabwerk** | Ebene Rahmen, Durchlaufträger und Fachwerke, Lastfälle und Kombinationen nach SIA 260, Theorie 2. Ordnung, Verzweigungslasten | STATIK |
+| **Platte** | FE-Berechnung von Decken und Bodenplatten: mehrere Platten mit eigener Dicke (auch Verstärkungen), Öffnungen, Stützen, Wände, Flächenlasten auf ganze Platten, Bewehrung (Wood–Armer), Durchstanzen | CEDRUS |
+| **Stabwerk** | Ebene Rahmen, Durchlaufträger und Fachwerke; Material- und Querschnittslisten (je Stab getrennt wählbar), Lastfälle und Kombinationen nach SIA 260, Theorie 2. Ordnung, Verzweigungslasten | STATIK |
 | **Querschnitt** | Beliebige Stahlbetonquerschnitte: Querschnittswerte, Spannungen, N-M- und My-Mz-Interaktion, Momenten-Krümmung | FAGUS |
 | **Mauerwerk** | Unbewehrtes Mauerwerk nach SIA 266: Normalkraft mit Knicken, Schubwände, Teilflächenlasten | MURUS |
 | **Stahlbau** | Stahlstäbe nach SIA 263 / EN 1993-1-1: Querschnittsklassen, Knicken, Biegedrillknicken, Interaktion, Profilvorschlag | AVENA |
 | **Stütze** | Stahlbetonstützen nach Theorie 2. Ordnung (nichtlinear und Modellstützenverfahren) | PYRUS |
-| **Geotechnik** | Erddruck, Grundbruch, Setzungen, Böschungsstabilität (Bishop), Winkelstützmauern | LARIX |
+| **Geotechnik** | Erddruck, Grundbruch, Setzungen, Böschungsstabilität (Bishop), Winkelstützmauern; Bodenschichten frei als Flächen gezeichnet (auch geneigt) | LARIX |
 
 > OpenStatik ist ein unabhängiges Projekt und steht in keiner Verbindung zur cubus AG. Die Produktnamen in der
 > rechten Spalte dienen nur der Einordnung des Funktionsumfangs.
@@ -36,7 +36,11 @@ und Ergebnissen. Punkte und Elemente lassen sich mit der Maus ziehen.
 | Esc | Schritt zurück |
 | Rechte Maustaste, Leertaste | Ansicht verschieben |
 
-Alle Hilfen lassen sich in beliebiger Reihenfolge kombinieren. Unter **Herleitung** im Ergebnisbereich steht der
+Alle Hilfen lassen sich in beliebiger Reihenfolge kombinieren.
+
+**Positionen:** Jedes Modul kann mehrere Instanzen in einem Projekt führen (Systeme, Decken, Querschnitte, Wände,
+Bauteile, Stützen, Nachweise) – Leiste oben links: wechseln, neu, duplizieren, umbenennen, löschen. Ein geladenes
+Beispiel kommt als neue Position hinzu, wenn bereits gearbeitet wurde. Unter **Herleitung** im Ergebnisbereich steht der
 vollständige Rechenweg (Formel, eingesetzte Werte, Ergebnis, Normbezug); jeder Nachweis verlinkt dorthin.
 
 * Jedes Modul startet mit einem leeren Projekt; fertige Beispiele stehen unter **Beispiele**.

@@ -1,16 +1,18 @@
 // Grafische Bearbeitung Geotechnik: Werkzeuge je Analyseart, anklickbare Geometrie (aus der gezeichneten
 // Szene, draw.js), Ziehen von Schichtgrenzen und Griffen, Eigenschaftsfenster.
 //
-// IDs:  L:i Schicht (Index in project.soil.layers)   B:i:k Oberkante der Schicht i   GW Grundwasserspiegel
+// IDs:  Z:k Zone (Index in project.soil.zones), Z:b Untergrund   E:k:i Kante, V:k:i Ecke, X:k:i:e Grenzende am Bildrand
+//       GW Grundwasserspiegel
 //       ep:wall/top/surf/surfEnd Wand und Gelände (Erddruck)   ld:k Streifen-/Linienlast
 //       f:foot/col/edge/plan/corner Fundament (Grundbruch, Setzung)   g:surf Gelände
 //       s:i / ss:i:j Geländepunkte/-abschnitte   w:i / ws:i:j Wasserspiegel   q Auflast   grid Suchraster
 //       w:stem/base/key/surf, h:… Griffe der Stützmauer
-import { h, numField, selectField, textField, checkField, button, kvTable, fmt, note } from '../../js/core/ui.js';
+import { h, numField, selectField, textField, checkField, button, kvTable, fmt, note, rich, subHtml } from '../../js/core/ui.js';
 import { TOOL_ICONS } from '../../js/core/editor.js';
 import { scene, markEdit } from './draw.js';
 import { SOIL_PRESETS } from './examples.js';
-import { rad, deg } from './soil.js';
+import { rad, deg, soilColor } from './soil.js';
+import { splitRing, clipSegToRing, FAR } from './ground.js';
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -27,9 +29,11 @@ const ICON_LWALL = '<path d="M9 3h4v13h8v4H4v-4h5z"/>';
 const ICON_INSERT = '<path d="M3 17l6-8 6 5 6-8"/><circle cx="12" cy="11.5" r="2.4" fill="currentColor"/><path d="M12 3v3M12 17v4"/>';
 const ICON_GRID = '<rect x="4" y="4" width="16" height="16" rx="1" stroke-dasharray="2 2"/><circle cx="9" cy="9" r="1.2" fill="currentColor"/><circle cx="15" cy="9" r="1.2" fill="currentColor"/><circle cx="9" cy="15" r="1.2" fill="currentColor"/><circle cx="15" cy="15" r="1.2" fill="currentColor"/>';
 const ICON_KEY = '<path d="M3 9h18v4H3z"/><path d="M13 13v6h4v-6"/>';
+const ICON_SPLIT = '<path d="M3 7h18M3 17h18" opacity=".55"/><path d="M3 15l7-5 4 3 7-5" stroke-dasharray="2.5 2"/><circle cx="6" cy="5" r="1.6"/><circle cx="6" cy="19" r="1.6"/>';
 
 const T = {
-  layer: { id: 'layer', label: 'Schicht', key: 'l', form: 'point', icon: TOOL_ICONS.layer, title: 'In eine Schicht klicken: in dieser Tiefe eine neue Schichtgrenze einfügen (die Schicht wird geteilt)', prompts: ['Tiefe der neuen Schichtgrenze in die Schicht klicken.'] },
+  zone: { id: 'zone', label: 'Schicht', key: 'l', form: 'polygon', icon: TOOL_ICONS.polygon, title: 'Schicht als Fläche zeichnen: Ecken anklicken (fängt an vorhandenen Ecken und Grenzen), Klick auf den ersten Punkt oder Doppelklick schliesst', prompts: ['Erste Ecke der Schicht anklicken.', 'Nächste Ecke – Klick auf den ersten Punkt oder Doppelklick schliesst.'] },
+  split: { id: 'split', label: 'Teilen', key: 'j', form: 'polyline', icon: ICON_SPLIT, title: 'Schichten entlang einer Linie teilen: Punkte anklicken, Doppelklick oder Enter beendet (die Linie wird seitlich waagrecht verlängert)', prompts: ['Anfang der Trennlinie anklicken.', 'Nächster Punkt – Doppelklick/Enter beendet.'] },
   gw: { id: 'gw', label: 'Wasserspiegel', key: 'w', form: 'point', icon: TOOL_ICONS.water, title: 'Höhe des Grundwasserspiegels anklicken', prompts: ['Höhe des Grundwasserspiegels anklicken.'] },
   wall: { id: 'wall', label: 'Wand', key: 'n', form: 'line', icon: ICON_WALL, title: 'Wandrückseite zeichnen: Wandkopf und Wandfuss anklicken (Höhe H und Neigung α)', prompts: ['Wandkopf anklicken.', 'Wandfuss anklicken.'] },
   strip: { id: 'strip', label: 'Streifenlast', key: 'q', form: 'rect', icon: TOOL_ICONS.load, title: 'Streifenlast: Anfang und Ende auf dem Gelände anklicken (Breite b, Abstand a ab Wandkopf)', prompts: ['Beginn der Streifenlast anklicken.', 'Ende der Streifenlast anklicken.'] },
@@ -45,11 +49,11 @@ const T = {
 };
 
 const TOOLS = {
-  erddruck: [T.wall, T.layer, T.gw, T.strip, T.line],
-  grundbruch: [T.foot, T.layer, T.gw],
-  setzung: [T.foot, T.layer, T.gw],
-  boeschung: [T.terrain, T.layer, T.waterLine, T.insert, T.surcharge, T.grid],
-  stuetzmauer: [T.lwall, T.layer, T.gw, T.key],
+  erddruck: [T.wall, T.zone, T.split, T.gw, T.strip, T.line],
+  grundbruch: [T.foot, T.zone, T.split, T.gw],
+  setzung: [T.foot, T.zone, T.split, T.gw],
+  boeschung: [T.terrain, T.zone, T.split, T.waterLine, T.insert, T.surcharge, T.grid],
+  stuetzmauer: [T.lwall, T.zone, T.split, T.gw, T.key],
 };
 
 const after = (app, panel) => () => { markEdit(); app.changed({ inputs: true }); if (panel) app.editor?.refreshPanel(true); };
@@ -79,7 +83,8 @@ export const editorSpec = {
   create(app, tool, pts) {
     const p = app.project;
     const zOf = scene.zOfY || ((y) => -y);
-    if (tool === 'layer') return splitLayer(app, zOf(pts[0][1]));
+    if (tool === 'zone') return createZone(app, pts);
+    if (tool === 'split') return splitZones(app, pts);
     if (tool === 'gw') {
       const z = r2(zOf(pts[0][1]));
       p.soil.gw.on = true; p.soil.gw.z = z;
@@ -199,7 +204,10 @@ export const editorSpec = {
     const done = new Set();
     for (const id of ids) {
       const [t, a, b] = parse(id);
-      if (t === 'B' && !done.has(id)) { moveBoundary(p, +a, -dy); done.add(id); }
+      if (t === 'Z' && a !== 'b') moveZone(p, +a, dx, dy);
+      else if (t === 'V' && !done.has(vkey(p, a, b))) { done.add(vkey(p, a, b)); moveVertex(p, +a, +b, dx, dy); }
+      else if (t === 'E') moveEdge(p, +a, +b, dx, dy, done);
+      else if (t === 'X') { const nid = moveCrossing(p, +a, +b, +parse(id)[3], dx, dy); if (nid) { out.push(nid); continue; } }
       else if (t === 'GW') p.soil.gw.z = r3(+p.soil.gw.z - dy);
       else if (t === 'ep') moveEP(p, a, dx, dy);
       else if (t === 'ld') { const ld = p.ep.loads[+a]; if (ld) ld.a = r2(Math.max(0, +ld.a + dx)); }
@@ -221,8 +229,9 @@ export const editorSpec = {
     const p = app.project;
     const layerIdx = [], loadIdx = [], sIdx = [], wIdx = [];
     for (const id of ids) {
-      const [t, a] = parse(id);
-      if (t === 'L' || t === 'B') layerIdx.push(+a);
+      const [t, a, b] = parse(id);
+      if (t === 'Z' && a !== 'b') layerIdx.push(+a);
+      else if (t === 'V') removeVertex(app, +a, +b);
       else if (t === 'GW') p.soil.gw.on = false;
       else if (t === 'ld') loadIdx.push(+a);
       else if (t === 's') sIdx.push(+a);
@@ -233,10 +242,7 @@ export const editorSpec = {
       else app.status('Dieses Element ist Teil der Geometrie und kann nicht gelöscht werden – Masse im Eigenschaftsfenster ändern.', 'warn');
     }
     const desc = (arr) => [...new Set(arr)].sort((x, y) => y - x);
-    for (const i of desc(layerIdx)) {
-      if (p.soil.layers.length <= 1) { app.status('Die letzte Bodenschicht kann nicht gelöscht werden.', 'warn'); break; }
-      p.soil.layers.splice(i, 1);
-    }
+    for (const i of desc(layerIdx)) p.soil.zones.splice(i, 1);
     for (const i of desc(loadIdx)) p.ep.loads.splice(i, 1);
     for (const i of desc(sIdx)) if (p.sl.surface.length > 2) p.sl.surface.splice(i, 1);
     for (const i of desc(wIdx)) p.sl.water.splice(i, 1);
@@ -248,7 +254,8 @@ export const editorSpec = {
     if (ids.length !== 1) return { title: `${ids.length} Elemente`, content: [h('div', { class: 'muted small' }, 'Mehrere Elemente gewählt. Einzeln anklicken, um Werte zu bearbeiten; «Löschen» entfernt Lasten, Schichten und Punkte.')] };
     const p = app.project;
     const [t, a] = parse(ids[0]);
-    if (t === 'L' || t === 'B') return inspectLayer(app, +a);
+    if (t === 'Z' && a === 'b') return inspectBase(app);
+    if (t === 'Z' || t === 'E' || t === 'V' || t === 'X') return inspectZone(app, +a, t);
     if (t === 'GW') return inspectWater(app);
     if (t === 'ep') return inspectEPWall(app);
     if (t === 'ld') return inspectLoad(app, +a);
@@ -265,7 +272,7 @@ export const editorSpec = {
     const p = app.project, a = p.analysis;
     if (scene.empty) {
       const first = { erddruck: ['Wand', 'N', 'Wandkopf und Wandfuss anklicken'], grundbruch: ['Fundament', 'F', 'zwei Ecken des Fundaments im Schnitt anklicken'], setzung: ['Fundament', 'F', 'zwei Ecken des Fundaments im Schnitt anklicken'], boeschung: ['Gelände', 'G', 'die Geländepunkte von links nach rechts anklicken, Doppelklick beendet'], stuetzmauer: ['Mauer', 'N', 'zuerst die Vorderkante des Fundaments unten, dann die Mauerkrone anklicken'] }[a];
-      return h('span', {}, 'Werkzeug ', h('b', {}, first[0]), ` (Taste ${first[1]}) wählen und ${first[2]}. Bodenschichten: in die Schicht klicken; «Schicht» (L) teilt sie in der angeklickten Tiefe.`);
+      return h('span', {}, 'Werkzeug ', h('b', {}, first[0]), ` (Taste ${first[1]}) wählen und ${first[2]}. Boden: Fläche anklicken; «Schicht» (L) zeichnet eine Schicht als Polygon, «Teilen» (J) trennt entlang einer Linie.`);
     }
     const extra = {
       erddruck: 'Den Wandkopf ziehen ändert Höhe und Neigung, das Geländeende die Geländeneigung β.',
@@ -274,7 +281,7 @@ export const editorSpec = {
       boeschung: 'Geländepunkte und Wasserspiegel ziehen; das Suchraster (Darstellung «Suchraster F») lässt sich verschieben.',
       stuetzmauer: 'Die Griffe an Krone, Zehe, Ferse und Sohle ziehen; Mauer oder Hinterfüllung anklicken für alle Masse.',
     }[a];
-    return h('span', {}, 'Schicht anklicken: Bodenkennwerte bearbeiten. Schichtgrenzen und Grundwasserspiegel lassen sich senkrecht ziehen. ', extra);
+    return h('span', {}, 'Schicht anklicken: Bodenart und Kennwerte. Grenzen, Ecken und die Grenzenden am Rand ziehen (neigen); «Schicht» (L) zeichnet eine Fläche, «Teilen» (J) trennt entlang einer Linie. ', extra);
   },
 };
 
@@ -287,28 +294,131 @@ function sortPts(pts) {
   return out;
 }
 
-function splitLayer(app, zRaw) {
-  const p = app.project;
-  const z = r2(zRaw);
-  if (!(z > 0.05)) { app.status('Bitte unterhalb der Geländeoberfläche in eine Schicht klicken.', 'warn'); return null; }
-  const sorted = [...p.soil.layers].sort((a, b) => a.z - b.z);
-  let host = sorted[0];
-  for (const L of sorted) if (+L.z <= z) host = L;
-  if (sorted.some((L) => Math.abs(+L.z - z) < 0.05)) { app.status('Hier liegt bereits eine Schichtgrenze.', 'warn'); return null; }
-  const nl = { ...host, name: `${host.name} (unten)`, z, col: (p.soil.layers.length % 8) + 1 };
-  p.soil.layers.push(nl);
-  markEdit();
-  app.status(`Neue Schichtgrenze in ${fmt(z, 2)} m Tiefe – Bodenart im Eigenschaftsfenster wählen`, 'ok');
-  return [`L:${p.soil.layers.length - 1}`];
+// ------------------------------------------------------------------ Zonen (frei geformte Schichten)
+
+const I = (t) => (t ? String(t).split(/(<[^>]+>)/).map((x) => (x.startsWith('<') ? x : subHtml(x))).join('') : t);
+const relPt = (P) => [r3(P[0]), r3(P[1] - (scene.ref || 0))];
+const near = (p, q, tol = 1e-6) => Math.abs(p[0] - q[0]) < tol && Math.abs(p[1] - q[1]) < tol;
+const vkey = (p, k, i) => { const v = p.soil.zones[+k]?.ring[+i]; return v ? `${v[0].toFixed(6)},${v[1].toFixed(6)}` : `${k}:${i}`; };
+
+/** Neue Bodenart (Kennwerte wie Untergrund, nächster Darstellungsstil). */
+export function newSoil(p, over = {}) {
+  const n = p.soil.soils.length;
+  const b = p.soil.soils[p.soil.base ?? 0] || {};
+  return { name: `Boden ${n + 1}`, gamma: b.gamma ?? 20, gammaP: b.gammaP ?? 10, phi: b.phi ?? 30, c: b.c ?? 0, cu: b.cu ?? 0, ME: b.ME ?? 20, dr: b.dr ?? 2 / 3, ...over, col: (n % 8) + 1 };
 }
 
-function moveBoundary(p, i, dz) {
-  const L = p.soil.layers[i];
-  if (!L) return;
-  const zs = p.soil.layers.filter((x) => x !== L).map((x) => +x.z).sort((a, b) => a - b);
-  const above = zs.filter((z) => z < +L.z).pop() ?? 0;
-  const below = zs.find((z) => z > +L.z) ?? Infinity;
-  L.z = r3(clamp(+L.z + dz, above + 0.05, below - 0.05));
+function createZone(app, pts) {
+  const p = app.project, sl = p.soil;
+  const ring = pts.map(relPt);
+  let soil = sl.active;
+  if (!(Number.isInteger(soil) && soil !== sl.base && sl.soils[soil])) { sl.soils.push(newSoil(p)); soil = sl.soils.length - 1; }
+  sl.active = soil;
+  sl.zones.push({ soil, ring });
+  markEdit();
+  app.status(`Fläche ${sl.zones.length} mit ${ring.length} Ecken – Bodenart im Eigenschaftsfenster wählen`, 'ok');
+  return [`Z:${sl.zones.length - 1}`];
+}
+
+function splitZones(app, pts) {
+  const p = app.project, sl = p.soil;
+  const line = pts.map(relPt);
+  if (line.length < 2) return null;
+  let n = 0;
+  for (let k = sl.zones.length - 1; k >= 0; k--) {
+    const r = splitRing(sl.zones[k].ring, line);
+    if (!r) continue;
+    sl.zones[k].ring = r[0].map((q) => [r3(q[0]), r3(q[1])]);
+    sl.zones.splice(k + 1, 0, { soil: sl.zones[k].soil, ring: r[1].map((q) => [r3(q[0]), r3(q[1])]) });
+    n++;
+  }
+  markEdit();
+  if (!n) {
+    // Untergrund teilen: der Bereich unter der Linie wird eine neue Schicht
+    const l = line.slice().sort((u, v) => u[0] - v[0]);
+    sl.soils.push(newSoil(p));
+    sl.zones.push({ soil: sl.soils.length - 1, ring: [[-4 * FAR, l[0][1]], ...l, [4 * FAR, l[l.length - 1][1]], [4 * FAR, -FAR], [-4 * FAR, -FAR]] });
+    sl.active = sl.soils.length - 1;
+    app.status('Neue Schicht unterhalb der Linie – Bodenart im Eigenschaftsfenster wählen', 'ok');
+    return [`Z:${sl.zones.length - 1}`];
+  }
+  app.status(`${n} Fläche${n === 1 ? '' : 'n'} geteilt – Teilflächen anklicken, um die Bodenart zu wählen`, 'ok');
+  return [];
+}
+
+/** Alle Zonenecken an der Stelle P (relativ) verschieben – gemeinsame Grenzen bleiben verbunden. */
+function moveVertexAt(p, P, dx, dy) {
+  for (const z of p.soil.zones) for (const q of z.ring) if (near(q, P)) { q[0] = r3(q[0] + dx); q[1] = r3(q[1] + dy); }
+}
+function moveVertex(p, k, i, dx, dy) {
+  const v = p.soil.zones[k]?.ring[i];
+  if (v) moveVertexAt(p, v.slice(), dx, dy);
+}
+function moveEdge(p, k, i, dx, dy, done) {
+  const r = p.soil.zones[k]?.ring;
+  if (!r) return;
+  const a = r[i].slice(), b = r[(i + 1) % r.length].slice();
+  if (Math.abs(b[1] - a[1]) < 0.05 * Math.abs(b[0] - a[0])) dx = 0; // waagrechte Grenze: nur senkrecht
+  for (const P of [a, b]) {
+    const key = `${P[0].toFixed(6)},${P[1].toFixed(6)}`;
+    if (done.has(key)) continue;
+    done.add(key);
+    moveVertexAt(p, P, dx, dy);
+  }
+}
+function moveZone(p, k, dx, dy) {
+  const z = p.soil.zones[k];
+  if (z) for (const q of z.ring) { q[0] = r3(q[0] + dx); q[1] = r3(q[1] + dy); }
+}
+/** Punkt P (relativ) auf alle Zonenkanten einfügen, auf denen er liegt. */
+function insertOnEdges(p, P) {
+  for (const z of p.soil.zones) {
+    const r = z.ring;
+    if (r.some((q) => near(q, P, 1e-3))) continue;
+    for (let j = 0; j < r.length; j++) {
+      const a = r[j], b = r[(j + 1) % r.length];
+      const L2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+      if (!L2) continue;
+      const t = ((P[0] - a[0]) * (b[0] - a[0]) + (P[1] - a[1]) * (b[1] - a[1])) / L2;
+      if (t <= 1e-9 || t >= 1 - 1e-9) continue;
+      const d = Math.hypot(a[0] + t * (b[0] - a[0]) - P[0], a[1] + t * (b[1] - a[1]) - P[1]);
+      if (d < 2e-3) { r.splice(j + 1, 0, P.slice()); break; }
+    }
+  }
+}
+/** Ende einer Grenze am Bildrand ziehen: beide Randpunkte als Ecken einfügen, dann den gezogenen verschieben. */
+function moveCrossing(p, k, i, end, dx, dy) {
+  const z = p.soil.zones[k];
+  if (!z || !scene.region) return null;
+  const r = z.ring, ref = scene.ref || 0;
+  const A = [r[i][0], ref + r[i][1]], B = [r[(i + 1) % r.length][0], ref + r[(i + 1) % r.length][1]];
+  const parts = clipSegToRing(A, B, scene.region);
+  if (!parts.length) return null;
+  const P0 = parts[0], P1 = parts[parts.length - 1];
+  const ends = [];
+  if (P0[2] > 1e-9) ends.push(relPt(P0[0]));
+  if (P1[3] < 1 - 1e-9) ends.push(relPt(P1[1]));
+  for (const P of ends) insertOnEdges(p, P);
+  const target = relPt(end === 0 ? P0[0] : P1[1]);
+  for (const zz of p.soil.zones) for (const q of zz.ring) if (near(q, target, 2e-3)) { q[0] = target[0]; q[1] = target[1]; }
+  moveVertexAt(p, target, dx, dy);
+  const moved = [r3(target[0] + dx), r3(target[1] + dy)];
+  const idx = z.ring.findIndex((q) => near(q, moved, 1e-3));
+  return idx >= 0 ? `V:${k}:${idx}` : null;
+}
+function removeVertex(app, k, i) {
+  const p = app.project;
+  const v = p.soil.zones[k]?.ring[i];
+  if (!v) return;
+  const P = v.slice();
+  let blocked = false;
+  for (const z of p.soil.zones) {
+    const hits = z.ring.filter((q) => near(q, P));
+    if (!hits.length) continue;
+    if (z.ring.length - hits.length < 3) { blocked = true; continue; }
+    z.ring = z.ring.filter((q) => !near(q, P));
+  }
+  if (blocked) app.status('Eine Fläche braucht mindestens drei Ecken – ganze Fläche anklicken und löschen.', 'warn');
 }
 
 function moveEP(p, which, dx, dy) {
@@ -374,45 +484,82 @@ function moveWall(p, which, dx, dy) {
 
 const DEPTH_TXT = { erddruck: 'ab Wandkopf', grundbruch: 'ab Gelände', setzung: 'ab Gelände', boeschung: 'ab Böschungskrone', stuetzmauer: 'ab Mauerkrone' };
 
-function inspectLayer(app, i) {
-  const p = app.project, L = p.soil.layers[i];
-  if (!L) return null;
-  const c = after(app), cp = after(app, true);
-  const sorted = [...p.soil.layers].sort((x, y) => +x.z - +y.z);
-  const next = sorted[sorted.indexOf(L) + 1];
+/** Felder einer Bodenart (für Eigenschaftsfenster und die Liste im Register «Baugrund»). */
+export function soilEditor(S, onChange) {
+  const c = () => onChange(false), cp = () => onChange(true);
   const tpl = { v: '' };
-  const out = [
-    h('div', { class: 'muted small' }, `Tiefe ${fmt(+L.z, 2)} … ${next ? fmt(+next.z, 2) : '∞'} m ${DEPTH_TXT[p.analysis]}${next ? ` · Dicke ${fmt(next.z - L.z, 2)} m` : ''}`),
-    textField('Bezeichnung', L, 'name', { onChange: cp }),
-    selectField('Bodenart', tpl, 'v', [{ value: '', label: '– aus Vorlage übernehmen –' }, ...SOIL_PRESETS.map((s, j) => ({ value: String(j), label: s.name }))], {
-      wide: true, info: 'Setzt Name, γ, γ\', φ\', c\', c_u und M_E auf typische Richtwerte der Bodenart (projektspezifisch prüfen).',
-      onChange: (v) => { const pr = SOIL_PRESETS[+v]; if (!pr) return; Object.assign(L, { name: pr.name, gamma: pr.gamma, gammaP: pr.gammaP, phi: pr.phi, c: pr.c, cu: pr.cu, ME: pr.ME }); cp(); },
+  return [
+    textField('Bezeichnung', S, 'name', { onChange: cp }),
+    selectField('Vorlage', tpl, 'v', [{ value: '', label: '– wählen –' }, ...SOIL_PRESETS.map((s, j) => ({ value: String(j), label: s.name }))], {
+      wide: true, info: I('Setzt Name, γ, γ\', φ\'_k, c\'_k, c_u,k und M_E auf typische Richtwerte (projektspezifisch prüfen).'),
+      onChange: (v) => { const pr = SOIL_PRESETS[+v]; if (!pr) return; Object.assign(S, { name: pr.name, gamma: pr.gamma, gammaP: pr.gammaP, phi: pr.phi, c: pr.c, cu: pr.cu, ME: pr.ME }); cp(); },
     }),
     h('div', { class: 'grid2' },
-      numField('Oberkante z', L, 'z', { unit: 'm', min: -50, onChange: cp, info: `Tiefe der Schichtoberkante ${DEPTH_TXT[p.analysis]}. Die Grenze lässt sich in der Grafik auch senkrecht ziehen.` }),
-      selectField('Stil', L, 'col', [1, 2, 3, 4, 5, 6, 7, 8].map((k) => ({ value: k, label: `Muster ${k}` })), { onChange: c })),
+      numField('γ', S, 'gamma', { unit: 'kN/m³', min: 1, onChange: c, info: 'Raumgewicht über dem Grundwasser.' }),
+      numField("γ'", S, 'gammaP', { unit: 'kN/m³', min: 0, onChange: c, info: 'Raumgewicht unter Auftrieb (unter dem Grundwasserspiegel).' })),
     h('div', { class: 'grid2' },
-      numField('γ', L, 'gamma', { unit: 'kN/m³', min: 1, onChange: c, info: 'Raumgewicht über dem Grundwasser.' }),
-      numField("γ'", L, 'gammaP', { unit: 'kN/m³', min: 0, onChange: c, info: 'Raumgewicht unter Auftrieb (unter dem Grundwasserspiegel).' })),
+      numField("φ'_k", S, 'phi', { unit: '°', min: 0, max: 50, onChange: c, info: 'Effektiver Reibungswinkel (charakteristisch).' }),
+      numField("c'_k", S, 'c', { unit: 'kN/m²', min: 0, onChange: c, info: 'Effektive Kohäsion (charakteristisch).' })),
     h('div', { class: 'grid2' },
-      numField("φ'_k", L, 'phi', { unit: '°', min: 0, max: 50, onChange: c, info: 'Effektiver Reibungswinkel (charakteristisch).' }),
-      numField("c'_k", L, 'c', { unit: 'kN/m²', min: 0, onChange: c, info: 'Effektive Kohäsion (charakteristisch).' })),
+      numField('c_u,k', S, 'cu', { unit: 'kN/m²', min: 0, onChange: c, info: 'Undrainierte Scherfestigkeit (0 = nicht massgebend).' }),
+      numField('M_E', S, 'ME', { unit: 'MN/m²', min: 0.1, onChange: c, info: 'Steifemodul (Oedometer) für die Setzung.' })),
     h('div', { class: 'grid2' },
-      numField('c_u,k', L, 'cu', { unit: 'kN/m²', min: 0, onChange: c, info: 'Undrainierte Scherfestigkeit (0 = nicht massgebend).' }),
-      numField('M_E', L, 'ME', { unit: 'MN/m²', min: 0.1, onChange: c, info: 'Steifemodul (Oedometer) für die Setzung.' })),
-    numField('Wandreibung δ/φ', L, 'dr', { unit: '–', min: 0, max: 1, digits: 2, onChange: c, info: 'Verhältnis Wandreibung zu Reibungswinkel für den Erddruck nach Coulomb (rauhe Betonwand 2/3).' }),
+      numField('δ/φ', S, 'dr', { unit: '–', min: 0, max: 1, digits: 2, onChange: c, info: 'Wandreibung als Anteil von φ\' (Erddruck nach Coulomb), rauhe Betonwand 2/3.' }),
+      selectField('Stil', S, 'col', [1, 2, 3, 4, 5, 6, 7, 8].map((k) => ({ value: k, label: `Farbe ${k}` })), { onChange: cp })),
   ];
-  // Ergebnisse dieser Schicht
+}
+
+function soilResults(app, si) {
   const r = app.results;
   if (r?.ep) {
-    const K = r.ep.layers.find((x) => x.idx === i);
-    if (K) out.push(h('div', { class: 'ed-sub' }, 'Ergebnisse'), kvTable([['K_h (Eigengewicht)', K.Kgh, '', 3], ['K_ch (Kohäsion)', K.Kch, '', 3], K.theta ? ['Gleitfuge ϑ_a', K.theta, '°', 1] : null]));
+    const K = r.ep.layers.find((x) => x.idx === si);
+    if (K) return [h('div', { class: 'ed-sub' }, 'Ergebnisse'), kvTable([['K_h', K.Kgh, '', 3], ['K_ch', K.Kch, '', 3], K.theta ? ['ϑ_a', K.theta, '°', 1] : null])];
   } else if (r?.st) {
-    const S = r.st.layers.find((x) => x.idx === i);
-    if (S) out.push(h('div', { class: 'ed-sub' }, 'Ergebnisse'), kvTable([['Setzungsanteil', S.ds[r.st.refKey], 'mm', 1], ['mittleres Δσ', S.dsigAvg, 'kN/m²', 1]]));
+    const rows = r.st.layers.filter((x) => x.idx === si);
+    if (rows.length) return [h('div', { class: 'ed-sub' }, 'Ergebnisse'), kvTable([['Setzungsanteil', rows.reduce((a, x) => a + x.ds[r.st.refKey], 0), 'mm', 1]])];
   }
-  out.push(h('div', { class: 'row' }, button('Schicht löschen', { small: true, icon: 'trash', danger: true, disabled: p.soil.layers.length <= 1, onClick: () => { p.soil.layers.splice(i, 1); app.editor?.select([]); after(app)(); } })));
-  return { title: `Schicht «${L.name}»`, content: out };
+  return [];
+}
+
+function soilPicker(app, obj, key, label) {
+  const p = app.project, soils = p.soil.soils;
+  return selectField(label, obj, key, [...soils.map((s, i) => ({ value: i, label: s.name })), { value: -1, label: '+ Neue Bodenart …' }], {
+    wide: true, info: I('Bodenart dieser Fläche. Die Kennwerte gelten für alle Flächen mit derselben Bodenart; die Liste der Bodenarten steht im Register «Baugrund».'),
+    onChange: (v) => { if (v === -1) { soils.push(newSoil(p)); obj[key] = soils.length - 1; } p.soil.active = obj[key]; after(app, true)(); },
+  });
+}
+
+function inspectZone(app, k, t) {
+  const p = app.project, Z = p.soil.zones[k];
+  if (!Z) return null;
+  const soils = p.soil.soils, S = soils[Z.soil] || soils[0];
+  const used = p.soil.zones.filter((z) => z.soil === Z.soil).length + (p.soil.base === Z.soil ? 1 : 0);
+  const hint = { E: 'Grenze ziehen verschiebt sie (waagrechte Grenzen nur senkrecht).', V: 'Ecke ziehen – gemeinsame Ecken benachbarter Flächen wandern mit. «Löschen» entfernt die Ecke.', X: 'Ende der Grenze ziehen, um sie zu neigen.' }[t];
+  return {
+    title: `Fläche ${k + 1}: ${S.name}`,
+    content: [
+      hint ? h('div', { class: 'muted small' }, hint) : null,
+      soilPicker(app, Z, 'soil', 'Bodenart'),
+      h('div', { class: 'ed-sub' }, used > 1 ? `Kennwerte · ${used} Flächen` : 'Kennwerte'),
+      ...soilEditor(S, (rebuild) => after(app, rebuild)()),
+      ...soilResults(app, Z.soil),
+      h('div', { class: 'row' },
+        button('Nach vorne', { small: true, icon: 'up', title: 'Fläche über die anderen legen', onClick: () => { p.soil.zones.push(p.soil.zones.splice(k, 1)[0]); app.editor?.select([`Z:${p.soil.zones.length - 1}`]); after(app, true)(); } })),
+    ],
+  };
+}
+
+function inspectBase(app) {
+  const p = app.project, S = p.soil.soils[p.soil.base ?? 0];
+  return {
+    title: `Untergrund: ${S?.name ?? ''}`,
+    content: [
+      h('div', { class: 'muted small' }, 'Bodenart ausserhalb aller gezeichneten Flächen. Eigene Schichten mit «Schicht» (L) zeichnen oder mit «Teilen» (J) abtrennen.'),
+      soilPicker(app, p.soil, 'base', 'Untergrund'),
+      ...(S ? soilEditor(S, (rebuild) => after(app, rebuild)()) : []),
+      ...soilResults(app, p.soil.base ?? 0),
+    ],
+  };
 }
 
 function inspectWater(app) {

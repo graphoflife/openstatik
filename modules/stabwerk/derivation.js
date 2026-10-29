@@ -1,7 +1,7 @@
 // Herleitung (Rechenweg) für das Stabwerk
 import { num } from '../../js/core/formula.js';
 import { LC_KINDS, pickResult } from './calc.js';
-import { sectionProps, materialById } from './sections.js';
+import { sectionProps } from './sections.js';
 
 const parse = (id) => { const [t, v] = String(id).split(':'); return { t, i: +v }; };
 
@@ -51,10 +51,10 @@ export function derivation(app) {
     if (!selM) { let best = -1; res.members.forEach((m, q) => { const v = Math.max(Math.abs(m.M.max), Math.abs(m.M.min)); if (v > best) { best = v; k = q; } }); }
     const m = p.members[k];
     const s = p.sections[m.sec - 1];
-    const sp = sectionProps(s);
+    const mat = p.materials[(m.mat || 1) - 1];
+    const sp = sectionProps(s, mat);
     const a = p.nodes[m.i - 1], b = p.nodes[m.j - 1];
     const L = Math.hypot(b.x - a.x, b.y - a.y);
-    const mat = materialById(s.mat);
     const steps = [
       { label: 'Stablänge', f: 'L = sqrt(Δx^2 + Δy^2)', v: `= sqrt(${num(b.x - a.x, 3)}^2 + ${num(b.y - a.y, 3)}^2)`, r: `= ${num(L, 3)} m` },
     ];
@@ -67,7 +67,7 @@ export function derivation(app) {
     } else {
       steps.push({ label: `Querschnittswerte ${s.type === 'profile' ? s.profile : ''}`.trim(), f: `A = ${num(sp.A * 1e4, 1)} cm², I = ${num(sp.I * 1e8, 0)} cm⁴`, note: s.type === 'profile' ? 'Tabellenwerte des Walzprofils (starke Achse).' : 'Direkt eingegebene Werte.' });
     }
-    steps.push({ label: `E-Modul (${mat.label})`, f: 'E', r: `= ${num(sp.E / 1000, 0)} MPa`, note: mat.kind === 'Beton' ? 'E_cm = 10 000·f_cm^(1/3) nach SIA 262 (3.1.2.3)' : '' });
+    steps.push({ label: `E-Modul (${mat.name})`, f: 'E', r: `= ${num(sp.E / 1000, 0)} MPa`, note: mat.type === 'Beton' && mat.grade ? 'E_cm = 10 000·f_cm^{1/3} nach SIA 262 (3.1.2.3)' : mat.grade ? `Normwert ${mat.grade}` : 'benutzerdefiniert' });
     steps.push({ label: 'Dehnsteifigkeit', f: 'E·A/L', v: `= ${num(sp.E, 0)}·${num(sp.A, 4)}/${num(L, 3)}`, r: `= ${num(sp.E * sp.A / L, 0)} kN/m` });
     steps.push({ label: 'Biegesteifigkeit (Stabende fest)', f: '4·E·I/L', v: `= 4·${num(sp.E * sp.I, 1)}/${num(L, 3)}`, r: `= ${num(4 * sp.E * sp.I / L, 1)} kNm` });
     steps.push({ label: 'Querverschiebungssteifigkeit', f: '12·E·I/L^3', v: `= 12·${num(sp.E * sp.I, 1)}/${num(L, 3)}^3`, r: `= ${num(12 * sp.E * sp.I / L ** 3, 1)} kN/m` });
@@ -83,7 +83,7 @@ export function derivation(app) {
       const q = +lc.dist[0].q1;
       steps.push({ label: 'Vergleich mit einfachem Balken (Kontrolle)', f: 'M_0 = q·L^2/8', v: `= ${num(q, 2)}·${num(L, 3)}^2/8`, r: `= ${num(q * L * L / 8, 1)} kNm`, note: 'Nur zur Orientierung – entspricht dem Feldmoment bei gelenkiger Lagerung beider Enden.' });
     }
-    out.push({ id: 'stab', title: `Stab ${k + 1} (${s.name})`, ref: 'Steifigkeit und Schnittgrössen', intro: selM ? 'Ausgewählter Stab.' : 'Stab mit dem grössten Biegemoment – einen anderen Stab in der Grafik anklicken, um seine Herleitung zu sehen.', steps });
+    out.push({ id: 'stab', title: `Stab ${k + 1} (${s.name}, ${mat.name})`, ref: 'Steifigkeit und Schnittgrössen', intro: selM ? 'Ausgewählter Stab.' : 'Stab mit dem grössten Biegemoment – einen anderen Stab in der Grafik anklicken, um seine Herleitung zu sehen.', steps });
   }
 
   // 4 Gleichgewicht
@@ -110,7 +110,7 @@ export function derivation(app) {
     ];
     crit.c.buckling.lcr.forEach((q, k) => {
       if (!q) return;
-      const sp = sectionProps(p.sections[p.members[k].sec - 1]);
+      const sp = sectionProps(p.sections[p.members[k].sec - 1], p.materials[(p.members[k].mat || 1) - 1]);
       steps.push({ label: `Stab ${k + 1}: Knicklänge`, f: 'N_cr = α_cr·|N|, L_cr = π·sqrt(E·I/N_cr)', v: `N_cr = ${num(a, 2)}·${num(Math.abs(q.N), 1)} = ${num(q.Ncr, 0)} kN; L_cr = π·sqrt(${num(sp.E * sp.I, 0)}/${num(q.Ncr, 0)})`, r: `= ${num(q.Lcr, 2)} m (β = ${num(q.beta, 2)})` });
     });
     out.push({ id: 'stabil', title: 'Stabilität und Knicklängen', ref: 'lineare Stabilitätsanalyse', steps, result: { eta: 1 / a, text: `α_cr = ${num(a, 2)}${a >= 1 ? ' > 1' : ' < 1 – instabil'}` } });

@@ -11,7 +11,7 @@
 //   5. Entfernen der Dreiecke ausserhalb des Gebietes bzw. in Öffnungen.
 //   6. Glättung (Laplace mit Qualitätskontrolle) und Delaunay-Kantentausch.
 import {
-  inDomain, distPointSeg, segIntersect, cleanPolygon, signedArea, polygonSelfIntersects,
+  inUnion, onAnyRing, distPointSeg, segIntersect, cleanPolygon, signedArea, polygonSelfIntersects,
   bboxOf, pointInPolygon, triQuality, triMinAngle,
 } from './geom.js';
 
@@ -226,13 +226,13 @@ const ekey = (a, b) => (a < b ? a * 4194304 + b : b * 4194304 + a);
 
 // ------------------------------------------------------------------ PSLG
 
-function buildPSLG(outline, holes, segments, points, tol) {
+function buildPSLG(outlines, holes, segments, points, tol) {
   const raw = [];
   const ringKind = [];
   const addRing = (ring, kind) => {
     for (let i = 0, n = ring.length; i < n; i++) raw.push({ a: ring[i], b: ring[(i + 1) % n], kind });
   };
-  addRing(outline, 0);
+  outlines.forEach((o) => addRing(o, 0));
   holes.forEach((h) => addRing(h, 1));
   ringKind.push(raw.length);
   for (const s of segments) {
@@ -296,7 +296,7 @@ function buildPSLG(outline, holes, segments, points, tol) {
 
 /**
  * Erzeugt ein Dreiecksnetz.
- * opts: {outline:[[x,y],…], holes:[[[x,y],…],…], segments:[[[x1,y1],[x2,y2]],…], points:[[x,y],…],
+ * opts: {outline:[[x,y],…] bzw. outlines:[Ring,…] (Vereinigung mehrerer Platten), holes:[[[x,y],…],…], segments:[[[x1,y1],[x2,y2]],…], points:[[x,y],…],
  *        size, smooth=4, maxNodes=20000, refine:[{x, y, r0, s0}] (Verfeinerung: Netzweite s0 bis Radius r0, dann linear wachsend)}
  * Rückgabe: {x, y (Float64Array), tri (Int32Array, 3 je Dreieck, Gegenuhrzeigersinn), nNodes, nTri,
  *            fixed (Uint8Array: Knoten auf Rand/Zwangslinie/Zwangspunkt), quality, dropped}
@@ -304,15 +304,22 @@ function buildPSLG(outline, holes, segments, points, tol) {
 export function generateMesh(opts) {
   const size = Number(opts.size);
   if (!(size > 0)) throw new MeshError('Netzweite muss grösser als 0 sein.');
-  let outline = cleanPolygon(opts.outline);
-  if (outline.length < 3) throw new MeshError('Der Plattenrand benötigt mindestens 3 Punkte.');
-  const area0 = signedArea(outline);
-  const bb = bboxOf(outline);
+  // Gebiet: Vereinigung aller Plattenpolygone (opts.outlines) bzw. ein einzelner Rand (opts.outline)
+  const raw = (opts.outlines || [opts.outline]).map((o) => cleanPolygon(o)).filter((o) => o.length > 0);
+  if (!raw.length || raw.every((o) => o.length < 3)) throw new MeshError('Der Plattenrand benötigt mindestens 3 Punkte.');
+  const bb = bboxOf(raw.flat());
   const L = Math.max(bb.w, bb.h);
-  if (!(Math.abs(area0) > 1e-8 * L * L)) throw new MeshError('Der Plattenrand umschliesst keine Fläche.');
-  if (area0 < 0) outline = outline.slice().reverse();
   const tol = Math.max(1e-9, 1e-7 * L);
-  if (polygonSelfIntersects(outline, tol)) throw new MeshError('Der Plattenrand überschneidet sich selbst.');
+  const outlines = [];
+  for (let o of raw) {
+    if (o.length < 3) throw new MeshError('Jede Platte benötigt mindestens 3 Eckpunkte.');
+    const a = signedArea(o);
+    if (!(Math.abs(a) > 1e-8 * L * L)) throw new MeshError('Ein Plattenrand umschliesst keine Fläche.');
+    if (a < 0) o = o.slice().reverse();
+    if (polygonSelfIntersects(o, tol)) throw new MeshError('Ein Plattenrand überschneidet sich selbst – Eckpunkte der Reihe nach entlang des Randes setzen.');
+    outlines.push(o);
+  }
+  const inDom = (x, y) => inUnion(x, y, outlines, holes);
   const holes = [];
   for (const h0 of opts.holes || []) {
     let h = cleanPolygon(h0);
@@ -320,11 +327,18 @@ export function generateMesh(opts) {
     if (signedArea(h) > 0) h = h.slice().reverse();
     if (polygonSelfIntersects(h, tol)) throw new MeshError('Eine Öffnung überschneidet sich selbst.');
     for (const p of h) {
-      if (!pointInPolygon(p[0], p[1], outline) && !onRing(p, outline, tol)) throw new MeshError('Eine Öffnung liegt (teilweise) ausserhalb der Platte.');
+      if (!inUnion(p[0], p[1], outlines, []) && !onAnyRing(p[0], p[1], outlines, tol)) throw new MeshError('Eine Öffnung liegt (teilweise) ausserhalb der Platte.');
     }
     holes.push(h);
   }
-  let netArea = Math.abs(signedArea(outline));
+  // Nettofläche (Platten innerhalb anderer Platten zählen nicht doppelt)
+  let netArea = 0;
+  outlines.forEach((o, i) => {
+    const c = o.reduce((s, q) => [s[0] + q[0] / o.length, s[1] + q[1] / o.length], [0, 0]);
+    const A = Math.abs(signedArea(o));
+    const nested = outlines.some((q, j) => j !== i && Math.abs(signedArea(q)) > A && pointInPolygon(c[0], c[1], q));
+    if (!nested) netArea += A;
+  });
   for (const h of holes) netArea -= Math.abs(signedArea(h));
   if (netArea <= 0) throw new MeshError('Die Öffnungen überdecken die ganze Platte.');
   const maxNodes = opts.maxNodes || 20000;
@@ -336,19 +350,19 @@ export function generateMesh(opts) {
   const points = [];
   for (const p of opts.points || []) {
     if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) continue;
-    if (inDomain(p[0], p[1], outline, holes) || onRing(p, outline, tol) || holes.some((h) => onRing(p, h, tol))) points.push([p[0], p[1]]);
+    if (inDom(p[0], p[1]) || onAnyRing(p[0], p[1], outlines, tol) || holes.some((h) => onRing(p, h, tol))) points.push([p[0], p[1]]);
     else dropped.push(p);
   }
   const segments = (opts.segments || []).filter((s) => s && s.length === 2 && s.every((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])));
 
   // 1. PSLG
-  const { V, sub } = buildPSLG(outline, holes, segments, points, tol);
+  const { V, sub } = buildPSLG(outlines, holes, segments, points, tol);
   // Zwangsstrecken ausserhalb des Gebietes entfernen
   const subs = sub.filter((s) => {
     if (s.kind < 2) return true;
     const a = V[s.a], b = V[s.b];
     const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
-    return inDomain(mx, my, outline, holes);
+    return inDom(mx, my);
   });
 
   // 2. Unterteilung
@@ -460,7 +474,7 @@ export function generateMesh(opts) {
       for (let k = 0; k < nk; k++) {
         const a = phase + 2 * Math.PI * k / nk;
         const px = z.x + r * Math.cos(a), py = z.y + r * Math.sin(a);
-        if (!inDomain(px, py, outline, holes)) continue;
+        if (!inDom(px, py)) continue;
         const hl = hAt(px, py);
         if (nearConstraint(px, py, 0.6 * hl)) continue;
         let close = false;
@@ -488,7 +502,7 @@ export function generateMesh(opts) {
     for (let i = -1; i < nx; i++) {
       const x = xStart + off + i * size;
       if (x <= bb.x0 || x >= bb.x1) continue;
-      if (!inDomain(x, y, outline, holes)) continue;
+      if (!inDom(x, y)) continue;
       if (nearConstraint(x, y)) continue;
       let inZone = false;
       for (const z of zones) if (Math.hypot(x - z.x, y - z.y) < z.rEnd + 0.25 * size) { inZone = true; break; }
@@ -544,7 +558,7 @@ export function generateMesh(opts) {
     const a = V3[3 * t], b = V3[3 * t + 1], c = V3[3 * t + 2];
     if (a < OFF || b < OFF || c < OFF) continue;
     const gx = (X[a] + X[b] + X[c]) / 3, gy = (Y[a] + Y[b] + Y[c]) / 3;
-    if (!inDomain(gx, gy, outline, holes)) continue;
+    if (!inDom(gx, gy)) continue;
     const ar = (X[b] - X[a]) * (Y[c] - Y[a]) - (X[c] - X[a]) * (Y[b] - Y[a]);
     if (ar <= 0) continue; // entartet
     triList.push(a, b, c);

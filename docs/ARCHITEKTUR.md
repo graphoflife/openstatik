@@ -167,3 +167,19 @@ Jedes Modul startet mit `defaultProject()` – einem leeren bzw. neutralen Proje
 unter «Beispiele» und per `?beispiel=N` erreichbar, `?neu` erzwingt ein leeres Projekt. Fehlt noch etwas für die
 Berechnung, wirft `compute` `new IncompleteInput(meldung, hinweis)` (aus `app.js`); der Rahmen zeigt dann einen
 freundlichen Hinweis statt einer Fehlermeldung.
+
+## Gestaltungsregeln (linke Spalte und Eigenschaftsfenster)
+
+* **Eine Gliederungsebene**: Register → Karten (`group`). Keine `details`/Karten in Karten; selten Gebrauchtes in eine
+  eigene Karte «Erweitert» (`collapsed: true`). Karten sind standardmässig einklappbar, der Zustand wird gespeichert.
+* **Sammlungen als Liste** (`listEditor`): Materialien, Querschnitte, Lastfälle, Schichten, Platten … – Zeile mit
+  Name und Kurzinfo, aufklappbarer Editor, Duplizieren/Löschen, Hinzufügen-Knöpfe. `dataTable` nur für tabellarische
+  Daten wie Koordinaten.
+* **Kurze Beschriftungen** (≤ 22 Zeichen), Einheit im Feld (`unit`), Erklärungen in `info` statt Fliesstext.
+  Zähler im Titel: `group('Lasten (3)', …)` → Plakette.
+* **Formelzeichen mit Unterstrich** schreiben (`f_cd`, `γ_M`, `d_m`, `M_Ed,II`) – Oberfläche, Tabellen, Grafik und
+  Diagramme stellen sie automatisch tief. Nie «fcd» oder «dm» ohne Tiefstellung.
+* **Positionen**: `createApp({ instance: { label: 'Querschnitt', plural: 'Querschnitte' } })` benennt die mehrfachen
+  Instanzen des Moduls (Leiste oben links: wechseln, neu, duplizieren, umbenennen, löschen). Das Modul arbeitet
+  unverändert mit `app.project` (aktive Position); Projektangaben gelten für das ganze Dokument.
+* Keine eigenen Abstände per Inline-Style; Abstände, Karten und Felder regelt das gemeinsame Stylesheet.

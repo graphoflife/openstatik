@@ -1,18 +1,18 @@
 // Stahlbau – Stabnachweise nach SIA 263 / EN 1993-1-1: Benutzeroberfläche
 import { createApp } from '../../js/core/app.js';
 import {
-  h, group, numField, selectField, checkField, dataTable, segmented, button, kvTable, resultTable,
-  checksTable, summaryCard, stats, note, emptyState, toast, utilBar, badge, fmt,
+  h, group, numField, selectField, checkField, textField, dataTable, segmented, button, kvTable, resultTable,
+  checksTable, summaryCard, stats, note, emptyState, toast, utilBar, badge, fmt, rich, listEditor, clone,
 } from '../../js/core/ui.js';
 import { SERIES, SEARCHABLE, sectionProps } from './profiles.js';
-import { CATEGORIES, systemGeometry, autoCombos, defaultFactors, patternLoading, normSupports } from './beam.js';
+import { CATEGORIES, systemGeometry, autoCombos, defaultFactors, patternLoading, normSupports, beamModel } from './beam.js';
 import { compute, suggestProfiles, latRestraintPositions } from './calc.js';
 import { defaultProject, EXAMPLES } from './examples.js';
-import { drawSystem, drawForces, drawDeflection, drawSection } from './draw.js';
+import { drawSystem, drawForces, drawDeflection, drawSection, CAT_COLOR } from './draw.js';
 import { buildReport } from './bericht.js';
 import { editorSpec, DERIV_OF } from './editing.js';
 import { derivation } from './derivation.js';
-import { INFO, profileFields, materialFields, systemFields, caseFields, newCase } from './fields.js';
+import { INFO, profileFields, materialFields, gammaFields, systemFields, ltbMainFields, caseFields, newCase } from './fields.js';
 
 const ch = (app) => () => app.changed();
 const chI = (app) => () => app.changed({ inputs: true });
@@ -41,11 +41,11 @@ function refLengths(p) {
     if (p.mode === 'forces') {
       const L = Number(p.forces.L) || 0;
       const r = latRestraintPositions(p, L, [{ x: 0 }, { x: L }], []);
-      return { Ly: L, Lz: maxGap(r, L, []), L, fields: [{ x0: 0, x1: L, L }] };
+      return { Ly: L, Lz: maxGap(r, L), L, fields: [{ x0: 0, x1: L, L }] };
     }
     const g = systemGeometry(p.beam);
     const r = latRestraintPositions(p, g.L, g.supports, g.freeEnds);
-    return { Ly: Math.max(...g.fields.map((f) => f.L)), Lz: maxGap(r, g.L, g.freeEnds), L: g.L, fields: g.fields };
+    return { Ly: Math.max(...g.fields.map((f) => f.L)), Lz: maxGap(r, g.L), L: g.L, fields: g.fields };
   } catch { return null; }
 }
 function maxGap(r, L) {
@@ -60,20 +60,22 @@ function lcList(p) {
   if (p.beam.selfWeight) l.unshift({ id: 'EG', name: 'Eigengewicht', cat: 'G', auto: true });
   return l;
 }
+const shortCombo = (n) => (n ? n.replace(/^(Tragsicherheit|Gebrauch charakt\.|Gebrauch quasi-ständig): /, '') : n);
+const catLabel = (c) => ({ G: 'ständig', Nutzlast: 'Nutzlast', Schnee: 'Schnee', Wind: 'Wind' }[c] || c);
+const beamLength = (p) => { try { return beamModel(p.beam).L; } catch { return 0; } };
 
 // ------------------------------------------------------------------ Register 1: Profil
 
 function renderProfile(el, app) {
   const p = app.project;
   const opts = { ch: ch(app), chI: chI(app) };
-  el.append(group('Querschnitt', profileFields(app, opts), { info: 'Profil wählen – hier oder durch Klick auf den Träger bzw. den Querschnitt in der Grafik. Mit − / + gelangt man zum nächstkleineren bzw. -grösseren Profil der Reihe.' }));
-  el.append(group('Werkstoff und Norm', materialFields(app, opts)));
-
+  el.append(group('Profil', profileFields(app, opts), { info: 'Profil wählen – hier oder durch Klick auf den Träger bzw. den Querschnitt in der Grafik.' }));
+  el.append(group('Werkstoff', materialFields(app, opts)));
+  el.append(group('Widerstandsbeiwerte', gammaFields(app, opts), { collapsed: true, info: INFO.gamma }));
   const search = { series: SEARCHABLE.includes(p.suggestSeries) ? p.suggestSeries : 'IPE' };
   el.append(group('Profil vorschlagen', [
-    selectField('Reihe durchsuchen', search, 'series', SERIES.filter((x) => SEARCHABLE.includes(x.id)).map((x) => ({ value: x.id, label: x.label })), { wide: true, onChange: (v) => { p.suggestSeries = v; } }),
-    h('div', { class: 'row end', style: { marginTop: '6px' } },
-      button('Leichtestes Profil suchen', { icon: 'play', primary: true, onClick: () => runSuggest(app, search.series) })),
+    selectField('Reihe', search, 'series', SERIES.filter((x) => SEARCHABLE.includes(x.id)).map((x) => ({ value: x.id, label: x.label })), { wide: true, onChange: (v) => { p.suggestSeries = v; } }),
+    h('div', { class: 'row end' }, button('Leichtestes Profil suchen', { icon: 'play', primary: true, onClick: () => runSuggest(app, search.series) })),
   ], { info: INFO.suggest }));
 }
 
@@ -93,11 +95,10 @@ function stampOf(p) { const q = { ...p, section: null, meta: null }; return JSON
 
 // ------------------------------------------------------------------ Register 2: Belastung
 
+const modeSwitch = (app) => segmented([{ id: 'beam', label: 'Träger mit Lasten' }, { id: 'forces', label: 'Schnittgrössen direkt' }], app.project.mode, (id) => { app.project.mode = id; chI(app)(); });
+
 function renderLoads(el, app) {
   const p = app.project;
-  el.append(group('Eingabeart', [
-    segmented([{ id: 'beam', label: 'Träger mit Lasten' }, { id: 'forces', label: 'Schnittgrössen direkt' }], p.mode, (id) => { p.mode = id; chI(app)(); }),
-  ], { info: INFO.mode }));
   if (p.mode === 'forces') return renderForcesInput(el, app);
   const b = p.beam;
   // System
@@ -105,9 +106,8 @@ function renderLoads(el, app) {
     if (kind === 'cont') {
       const rows = b.spans.map((L) => ({ L }));
       return dataTable([{ key: 'L', label: 'Spannweite', unit: 'm', min: 0.01 }], rows, {
-        newRow: () => ({ L: rows[rows.length - 1]?.L || 5 }), minRows: 2, hint: 'Felder von links nach rechts',
+        newRow: () => ({ L: rows[rows.length - 1]?.L || 5 }), minRows: 2, hint: 'Felder von links nach rechts (Nr. = Feld)',
         onChange: (e) => { b.spans = rows.map((r) => r.L); if (e.type === 'edit') ch(app)(); else chI(app)(); },
-        rowLabel: (i) => `Feld ${i + 1}`,
       });
     }
     b.supports = normSupports(b.supports, Number(b.length) || 0);
@@ -115,119 +115,156 @@ function renderLoads(el, app) {
       { key: 'x', label: 'Lage x', unit: 'm', min: 0, info: 'Abstand vom linken Trägerende.' },
       { key: 'type', label: 'Lagerart', type: 'select', options: [{ value: 'pin', label: 'gelenkig' }, { value: 'fix', label: 'eingespannt' }], width: '120px' },
     ], b.supports, {
-      newRow: () => ({ x: Number(b.length) || 0, type: 'pin' }), hint: 'Lager auch grafisch setzen (Werkzeug «Lager»)',
+      newRow: () => ({ x: Number(b.length) || 0, type: 'pin' }), hint: 'auch grafisch (Werkzeug «Lager»)',
       onChange: (e) => (e.type === 'edit' ? ch(app)() : chI(app)()),
     });
   };
-  el.append(group('Statisches System', systemFields(app, { ch: ch(app), chI: chI(app), spansTable }), { info: INFO.system }));
+  el.append(group('System', [modeSwitch(app), ...systemFields(app, { ch: ch(app), chI: chI(app), spansTable })], { info: `${INFO.mode}<br><br>${INFO.system}` }));
 
   // Lastfälle
   const nextId = () => { let i = 1; while (b.loadCases.some((l) => l.id === `L${i}`)) i++; return `L${i}`; };
-  el.append(group('Lastfälle', [
-    dataTable([
-      { key: 'name', label: 'Bezeichnung', type: 'text' },
-      { key: 'cat', label: 'Kategorie', type: 'select', options: CATEGORIES, width: '130px', info: 'Ständig: γG = 1.35; veränderlich: γQ = 1.5 mit ψ-Beiwerten der Kategorie.' },
-    ], b.loadCases, {
-      newRow: () => ({ id: nextId(), name: `Lastfall ${b.loadCases.length + 1}`, cat: 'Nutzlast' }), minRows: 1, hint: '',
+  const nLoads = (lc) => b.loads.filter((l) => l.lc === lc.id).length;
+  const newLC = (cat) => ({ id: nextId(), name: cat === 'G' ? 'Ständige Lasten' : `${catLabel(cat)} ${b.loadCases.filter((l) => l.cat === cat).length + 1}`, cat });
+  el.append(group(`Lastfälle (${b.loadCases.length})`, [
+    listEditor(b.loadCases, {
+      active: app.openLC ?? null, onActive: (i) => { app.openLC = i; },
+      label: (l) => l.name,
+      sub: (l) => { const n = nLoads(l); return `${catLabel(l.cat)} · ${n ? `${n} Last${n === 1 ? '' : 'en'}` : 'keine Lasten'}`; },
+      swatch: (l) => CAT_COLOR[l.cat] || 'var(--c-load)',
+      canRemove: () => b.loadCases.length > 1,
+      duplicate: (l) => {
+        const c = { ...clone(l), id: nextId(), name: `${l.name} (Kopie)` };
+        for (const ld of b.loads.filter((x) => x.lc === l.id)) b.loads.push({ ...clone(ld), lc: c.id });
+        return c;
+      },
       onChange: (e) => {
         if (e.type === 'remove') { const ids = new Set(b.loadCases.map((l) => l.id)); b.loads = b.loads.filter((l) => ids.has(l.lc)); }
         chI(app)();
       },
+      detail: (d, l) => d.append(
+        textField('Bezeichnung', l, 'name', { onChange: chI(app) }),
+        selectField('Kategorie', l, 'cat', CATEGORIES, { wide: true, onChange: chI(app), info: 'Ständig: γ<sub>G</sub>; veränderlich: γ<sub>Q</sub> mit den ψ-Beiwerten der Kategorie.' })),
+      add: [{ label: 'Ständig', create: () => newLC('G') }, { label: 'Veränderlich', create: () => newLC('Nutzlast') }],
     }),
   ], { info: INFO.loadCases }));
 
   // Lasten
-  const kids = [];
-  if (!b.loads.length) kids.push(emptyState('Noch keine Lasten', 'Mit «+ Zeile» eine Linienlast, Einzellast oder Normalkraft hinzufügen. Leere Felder bedeuten: über die ganze Länge bzw. konstant.'));
-  kids.push(dataTable([
-    { key: 'lc', label: 'Lastfall', type: 'select', options: () => b.loadCases.map((l) => ({ value: l.id, label: l.name })), width: '96px' },
-    { key: 'kind', label: 'Art', type: 'select', width: '110px', options: [
-      { value: 'qz', label: 'Linienlast ↓' }, { value: 'Pz', label: 'Einzellast ↓' },
-      { value: 'qy', label: 'Linienlast → (y)' }, { value: 'Py', label: 'Einzellast → (y)' }, { value: 'N', label: 'Normalkraft' }],
-      info: '↓ vertikal (Schwerkraft, erzeugt My); → horizontal in y (erzeugt Mz); Normalkraft als Druck positiv.' },
-    { key: 'v1', label: 'Wert', unit: 'kN/m · kN', info: 'Linienlast q [kN/m] (bei Trapezlast Anfangswert), Einzellast P [kN], Normalkraft N [kN]. Negativ = nach oben (z.B. Windsog).' },
-    { key: 'v2', label: 'Endwert', unit: 'kN/m', allowEmpty: true, info: 'Nur für Trapez- und Dreieckslasten: Wert am Ende x₂. Leer = konstant.' },
-    { key: 'x1', label: 'x₁', unit: 'm', allowEmpty: true, info: 'Linienlast: Beginn (leer = Trägeranfang). Einzellast: Position (leer = Feldmitte).' },
-    { key: 'x2', label: 'x₂', unit: 'm', allowEmpty: true, info: 'Linienlast: Ende (leer = Trägerende).' },
-  ], b.loads, {
-    newRow: () => ({ lc: b.loadCases[b.loadCases.length - 1]?.id || 'G', kind: 'qz', v1: 5, v2: null, x1: null, x2: null }),
-    onChange: (e) => (e.type === 'edit' ? ch(app)() : chI(app)()),
-    hint: 'x ab linkem Trägerende',
-  }));
-  el.append(group('Lasten', kids, { info: INFO.loads }));
+  const L = beamLength(p);
+  const lcOf = (id) => b.loadCases.find((l) => l.id === id);
+  const activeLc = () => b.loadCases.find((l) => l.id === b.activeLC)?.id || b.loadCases[b.loadCases.length - 1]?.id || 'G';
+  el.append(group(`Lasten (${b.loads.length})`, [
+    listEditor(b.loads, {
+      active: app.openLoad ?? null, onActive: (i) => { app.openLoad = i; },
+      empty: 'Noch keine Lasten – unten hinzufügen oder in der Grafik mit den Werkzeugen setzen.',
+      label: loadLabel, sub: (ld) => loadSub(ld, lcOf(ld.lc), L),
+      swatch: (ld) => CAT_COLOR[lcOf(ld.lc)?.cat] || 'var(--c-load)',
+      duplicate: (ld) => clone(ld),
+      onChange: chI(app),
+      detail: (d, ld) => d.append(...loadDetail(app, ld, L)),
+      add: [
+        { label: 'Streckenlast', create: () => ({ lc: activeLc(), kind: 'qz', v1: 5, v2: null, x1: null, x2: null }) },
+        { label: 'Einzellast', create: () => ({ lc: activeLc(), kind: 'Pz', v1: 10, v2: null, x1: +(L / 2).toFixed(3), x2: null }) },
+        { label: 'Normalkraft', create: () => ({ lc: activeLc(), kind: 'N', v1: 100, v2: null, x1: null, x2: null }) },
+      ],
+    }),
+  ], { info: INFO.loads }));
+  renderCombos(el, app);
+}
+
+const KIND = [
+  { value: 'qz', label: 'Streckenlast ↓ (z)' }, { value: 'Pz', label: 'Einzellast ↓ (z)' },
+  { value: 'qy', label: 'Streckenlast → (y)' }, { value: 'Py', label: 'Einzellast → (y)' }, { value: 'N', label: 'Normalkraft' },
+];
+
+function loadLabel(ld) {
+  const k = ld.kind || 'qz';
+  const arrow = k[1] === 'y' ? '→' : '↓';
+  if (k === 'N') return `N = ${fmt(Math.abs(ld.v1 || 0), 1)} kN (${(ld.v1 || 0) >= 0 ? 'Druck' : 'Zug'})`;
+  if (k[0] === 'P') return `P = ${fmt(ld.v1 || 0, 1)} kN ${arrow}`;
+  const v2 = Number.isFinite(ld.v2) && Math.abs(ld.v2 - ld.v1) > 1e-9 ? ` … ${fmt(ld.v2, 2)}` : '';
+  return `q = ${fmt(ld.v1 || 0, 2)}${v2} kN/m ${arrow}`;
+}
+function loadSub(ld, lc, L) {
+  const k = ld.kind || 'qz';
+  const where = k === 'N' ? 'konstant' : k[0] === 'P' ? `x = ${fmt(Number.isFinite(ld.x1) ? ld.x1 : L / 2, 2)} m`
+    : (!Number.isFinite(ld.x1) && !Number.isFinite(ld.x2) ? 'ganze Länge' : `x = ${fmt(Number.isFinite(ld.x1) ? ld.x1 : 0, 2)} … ${fmt(Number.isFinite(ld.x2) ? ld.x2 : L, 2)} m`);
+  return `${lc?.name || '–'} · ${where}`;
+}
+
+function loadDetail(app, ld, L) {
+  const b = app.project.beam;
+  const k = ld.kind || 'qz';
+  const lcOpts = [...b.loadCases.map((l) => ({ value: l.id, label: l.name })), { value: '__new', label: '+ Neuer Lastfall …' }];
+  const out = [
+    selectField('Lastfall', ld, 'lc', lcOpts, {
+      wide: true, info: INFO.loadCases,
+      onChange: (v) => {
+        if (v === '__new') { let i = 1; while (b.loadCases.some((l) => l.id === `L${i}`)) i++; b.loadCases.push({ id: `L${i}`, name: `Lastfall ${b.loadCases.length + 1}`, cat: 'Nutzlast' }); ld.lc = `L${i}`; }
+        b.activeLC = ld.lc;
+        chI(app)();
+      },
+    }),
+    selectField('Art', ld, 'kind', KIND, { wide: true, onChange: chI(app), info: INFO.loads }),
+  ];
+  if (k === 'N') out.push(numField('N (Druck +)', ld, 'v1', { unit: 'kN', onChange: ch(app), info: 'Druck positiv, Zug negativ; konstant über die Stablänge.' }));
+  else if (k[0] === 'P') {
+    out.push(h('div', { class: 'grid2' },
+      numField('P', ld, 'v1', { unit: 'kN', onChange: ch(app), info: 'Positiv nach unten bzw. in +y, negativ nach oben.' }),
+      numField('Lage x', ld, 'x1', { unit: 'm', min: 0, max: L, allowEmpty: true, onChange: ch(app), info: 'Abstand vom linken Trägerende; leer = Mitte.' })));
+  } else {
+    out.push(h('div', { class: 'grid2' },
+      numField('q', ld, 'v1', { unit: 'kN/m', onChange: ch(app), info: 'Wert am Anfang x<sub>1</sub>; positiv nach unten bzw. in +y.' }),
+      numField('q_2 (Ende)', ld, 'v2', { unit: 'kN/m', allowEmpty: true, onChange: ch(app), info: 'Nur für Trapez- und Dreieckslasten; leer = konstant.' }),
+      numField('von x_1', ld, 'x1', { unit: 'm', min: 0, max: L, allowEmpty: true, onChange: ch(app), info: 'Leer = Trägeranfang.' }),
+      numField('bis x_2', ld, 'x2', { unit: 'm', min: 0, max: L, allowEmpty: true, onChange: ch(app), info: 'Leer = Trägerende.' })));
+  }
+  return out;
 }
 
 function renderForcesInput(el, app) {
   const p = app.project, F = p.forces;
   el.append(group('Stab', [
-    numField('Stablänge L', F, 'L', { unit: 'm', min: 0.01, onChange: chI(app), info: 'Systemlänge zwischen den Gabellagern. Bezugslänge für Knicken (Lcr = β·L) und Kippen.' }),
+    modeSwitch(app),
+    numField('Stablänge L', F, 'L', { unit: 'm', min: 0.01, onChange: chI(app), info: 'Systemlänge zwischen den Gabellagern; Bezugslänge für Knicken (L<sub>cr</sub> = β·L) und Kippen.' }),
     selectField('Darstellung', F, 'orient', [{ value: 'h', label: 'Träger (horizontal)' }, { value: 'v', label: 'Stütze (vertikal)' }], { wide: true, onChange: ch(app) }),
-  ]));
+  ], { info: INFO.mode }));
   const cases = F.cases;
-  app.selCase = Math.min(app.selCase ?? 0, Math.max(0, cases.length - 1));
-  const list = h('div', { class: 'list' });
-  cases.forEach((c, i) => {
-    list.append(h('div', { class: `list-item${i === app.selCase ? ' active' : ''}`, onclick: () => { app.selCase = i; app.renderInputs(); } },
-      h('span', { class: 'badge info' }, String(i + 1)),
-      h('span', { class: 'grow' }, c.name || `Situation ${i + 1}`),
-      h('span', { class: 'muted small mono' }, `N ${fmt(c.N || 0, 0)} · My ${fmt(c.My || 0, 1)} · Mz ${fmt(c.Mz || 0, 1)}`)));
-  });
-  const add = () => { cases.push(newCase(cases.length + 1)); app.selCase = cases.length - 1; chI(app)(); };
-  const kids = [];
-  if (!cases.length) kids.push(emptyState('Noch keine Schnittgrössen', 'Mit «Situation hinzufügen» eine Bemessungssituation mit N, My, Mz … erfassen – oder den Stab in der Grafik anklicken.'));
-  else kids.push(list);
-  kids.push(h('div', { class: 'row', style: { margin: '0 0 8px' } },
-    button('Situation hinzufügen', { icon: 'plus', small: true, onClick: add }),
-    cases.length ? button('Duplizieren', { icon: 'copy', small: true, onClick: () => { cases.splice(app.selCase + 1, 0, { ...cases[app.selCase], name: `${cases[app.selCase].name} (Kopie)` }); app.selCase++; chI(app)(); } }) : null,
-    cases.length ? button('Löschen', { icon: 'trash', small: true, ghost: true, onClick: () => { cases.splice(app.selCase, 1); app.selCase = Math.max(0, app.selCase - 1); chI(app)(); } }) : null));
-  const c = cases[app.selCase];
-  if (c) {
-    kids.push(h('div', { class: 'group', style: { padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)' } },
-      ...caseFields(c, { ch: ch(app), chI: chI(app) })));
-  }
-  el.append(group('Bemessungsschnittgrössen', kids, { info: INFO.forces }));
+  el.append(group(`Bemessungssituationen (${cases.length})`, [
+    listEditor(cases, {
+      active: app.openCase ?? null, onActive: (i) => { app.openCase = i; if (i !== null) app.selCase = i; },
+      empty: 'Noch keine Schnittgrössen – «Situation» hinzufügen oder den Stab in der Grafik anklicken.',
+      label: (c) => c.name || 'Situation',
+      sub: (c) => [`N = ${fmt(c.N || 0, 0)} kN`, `M_y = ${fmt(c.My || 0, 1)} kNm`, Math.abs(c.Mz || 0) > 1e-9 ? `M_z = ${fmt(c.Mz, 1)} kNm` : null].filter(Boolean).join(' · '),
+      swatch: () => 'var(--c-pos)',
+      onChange: chI(app),
+      detail: (d, c) => d.append(...caseFields(c, { ch: ch(app), chI: chI(app) })),
+      add: [{ label: 'Situation', create: () => newCase(cases.length + 1) }],
+    }),
+  ], { info: INFO.forces }));
 }
 
 // ------------------------------------------------------------------ Register 3: Kombinationen
 
 function renderCombos(el, app) {
   const p = app.project;
-  if (p.mode === 'forces') {
-    el.append(emptyState('Keine Kombinationen nötig', 'Bei direkter Eingabe sind die Schnittgrössen bereits Bemessungswerte. Jede Situation im Register «Belastung» wird als eigene Kombination nachgewiesen.'));
-    return;
-  }
   const C = p.combos;
   const F = C.factors || (C.factors = defaultFactors(p.norm));
-  el.append(group('Beiwerte', [
-    h('div', { class: 'grid2' },
-      numField('γG (ungünstig)', F, 'gG', { min: 0, onChange: ch(app) }),
-      numField('γG,inf (günstig)', F, 'gGinf', { min: 0, onChange: ch(app), info: 'Für ständige Lasten, die entlastend wirken (Kragarm, Durchlaufträger).' }),
-      numField('γQ', F, 'gQ', { min: 0, onChange: ch(app) })),
-    (() => {
-      const rows = Object.entries(F.psi).map(([cat, a]) => ({ cat, p0: a[0], p1: a[1], p2: a[2] }));
-      return dataTable([
-        { key: 'cat', label: 'Kategorie', type: 'calc', calc: (r) => r.cat },
-        { key: 'p0', label: 'ψ0', info: 'Kombinationsbeiwert (Begleiteinwirkung)' },
-        { key: 'p1', label: 'ψ1', info: 'häufiger Wert (nur informativ)' },
-        { key: 'p2', label: 'ψ2', info: 'quasi-ständiger Wert' },
-      ], rows, { canAdd: false, canRemove: false, numbered: false, hint: '', onChange: () => { for (const r of rows) F.psi[r.cat] = [r.p0, r.p1, r.p2]; ch(app)(); } });
-    })(),
-    h('div', { class: 'row end' }, button('Normwerte', { small: true, icon: 'undo', onClick: () => { C.factors = null; chI(app)(); } })),
-  ], { info: INFO.factors }));
-
   const lcs = lcList(p);
-  const kids = [checkField('Kombinationen automatisch erzeugen (empfohlen)', C, 'auto', {
+  const pattern = patternLoading(p.beam);
+  const kids = [checkField('automatisch erzeugen', C, 'auto', {
+    info: 'Empfohlen: alle massgebenden Kombinationen nach Norm. Ausschalten, um Faktoren je Lastfall selbst festzulegen.',
     onChange: (v) => { if (!v && !(C.manual || []).length) C.manual = toManual(p); chI(app)(); },
   })];
+  let n;
   if (C.auto !== false) {
-    const pattern = patternLoading(p.beam);
     const list = autoCombos(lcs, F, { pattern });
+    n = list.length;
     kids.push(resultTable(['', 'Kombination'], list.map((c) => [badge(c.type === 'ULS' ? 'Trag.' : c.type === 'SLS-char' ? 'Gebr.' : 'q.-st.', c.type === 'ULS' ? 'info' : 'ok'), c.name.replace(/^[^:]+: /, '')])));
-    if (pattern) kids.push(note('Durchlaufträger/Kragarm: Begleitlasten werden auch weggelassen und ständige Lasten mit γG,inf kombiniert (ungünstigste Laststellung).', ''));
   } else {
+    n = C.manual.length;
     const cols = [
-      { key: 'name', label: 'Bezeichnung', type: 'text', width: '110px' },
-      { key: 'type', label: 'Typ', type: 'select', width: '96px', options: [{ value: 'ULS', label: 'Tragsicherheit' }, { value: 'SLS-char', label: 'Gebrauch char.' }, { value: 'SLS-qp', label: 'quasi-ständig' }] },
+      { key: 'name', label: 'Name', type: 'text', width: '96px' },
+      { key: 'type', label: 'Typ', type: 'select', width: '92px', options: [{ value: 'ULS', label: 'Tragsicherheit' }, { value: 'SLS-char', label: 'Gebrauch char.' }, { value: 'SLS-qp', label: 'quasi-ständig' }] },
       ...lcs.map((l) => ({ key: `f_${l.id}`, label: l.name.length > 10 ? `${l.name.slice(0, 9)}…` : l.name, title: l.name, allowEmpty: true, width: '64px' })),
     ];
     kids.push(dataTable(cols, C.manual, {
@@ -236,19 +273,33 @@ function renderCombos(el, app) {
     }));
     kids.push(h('div', { class: 'row end' }, button('Aus automatischen übernehmen', { small: true, icon: 'copy', onClick: () => { C.manual = toManual(p); chI(app)(); } })));
   }
-  el.append(group('Kombinationen', kids, { info: INFO.combos }));
+  el.append(group(`Kombinationen (${n})`, kids, { collapsed: true, info: `${INFO.combos}${pattern ? '<br><br>Durchlaufträger/Kragarm: Begleitlasten werden auch weggelassen und ständige Lasten mit γ<sub>G,inf</sub> kombiniert (ungünstigste Laststellung).' : ''}` }));
 
-  el.append(group('Durchbiegungsgrenzen', [
-    numField('charakteristisch   L /', p.sls, 'limitChar', { min: 1, onChange: ch(app), info: 'Funktionstüchtigkeit (z.B. L/300). Charakteristische Kombination.' }),
-    numField('quasi-ständig   L /', p.sls, 'limitQp', { min: 1, onChange: ch(app), info: 'Aussehen (z.B. L/250 bzw. L/300). Quasi-ständige Kombination.' }),
+  el.append(group('Durchbiegung', [
+    h('div', { class: 'grid2' },
+      numField('charakt.: L /', p.sls, 'limitChar', { min: 1, onChange: ch(app), info: 'Funktionstüchtigkeit, charakteristische Kombination (z.B. L/300).' }),
+      numField('quasi-ständig: L /', p.sls, 'limitQp', { min: 1, onChange: ch(app), info: 'Aussehen, quasi-ständige Kombination (z.B. L/250).' })),
   ], { info: INFO.sls }));
+
+  const psiRows = Object.entries(F.psi).map(([cat, a]) => ({ cat, p0: a[0], p1: a[1], p2: a[2] }));
+  el.append(group('Teilsicherheitsbeiwerte', [
+    h('div', { class: 'grid3' },
+      numField('γ_G', F, 'gG', { min: 0, onChange: ch(app), info: 'ständige Lasten, ungünstig' }),
+      numField('γ_G,inf', F, 'gGinf', { min: 0, onChange: ch(app), info: 'ständige Lasten, günstig (Kragarm, Durchlaufträger)' }),
+      numField('γ_Q', F, 'gQ', { min: 0, onChange: ch(app), info: 'veränderliche Lasten' })),
+    dataTable([
+      { key: 'cat', label: 'Kategorie', type: 'calc', calc: (r) => r.cat },
+      { key: 'p0', label: 'ψ_0', info: 'Kombinationsbeiwert (Begleiteinwirkung)' },
+      { key: 'p1', label: 'ψ_1', info: 'häufiger Wert (nur informativ)' },
+      { key: 'p2', label: 'ψ_2', info: 'quasi-ständiger Wert' },
+    ], psiRows, { canAdd: false, canRemove: false, numbered: false, hint: '', onChange: () => { for (const r of psiRows) F.psi[r.cat] = [r.p0, r.p1, r.p2]; ch(app)(); } }),
+  ], { collapsed: true, info: INFO.factors, actions: [button('Normwerte', { small: true, ghost: true, icon: 'undo', title: 'Beiwerte der gewählten Norm wiederherstellen', onClick: () => { C.factors = null; chI(app)(); } })] }));
 }
 
 function toManual(p) {
   const lcs = lcList(p);
   const F = p.combos.factors || defaultFactors(p.norm);
-  const pattern = patternLoading(p.beam);
-  return autoCombos(lcs, F, { pattern }).map((c, i) => ({
+  return autoCombos(lcs, F, { pattern: patternLoading(p.beam) }).map((c, i) => ({
     name: `${c.type === 'ULS' ? 'ULS' : c.type === 'SLS-char' ? 'SLS' : 'QS'} ${i + 1}`, type: c.type,
     ...Object.fromEntries(lcs.map((l) => [`f_${l.id}`, c.factors[l.id] || 0])),
   }));
@@ -261,55 +312,70 @@ function renderStability(el, app) {
   const ref = refLengths(p);
   let sec = null;
   try { sec = sectionProps(p.section); } catch { /* */ }
-  const hint = (beta, L, axis) => (ref ? `Lcr,${axis} = ${fmt(Number(beta) || 0, 2)} · ${fmt(L, 2)} m = ${fmt((Number(beta) || 0) * L, 2)} m` : '');
-  el.append(group('Biegeknicken', [
-    numField('βy (Knicken um y-y)', st, 'betaY', { min: 0.1, max: 10, onChange: chI(app), info: INFO.beta, help: ref ? `${hint(st.betaY, ref.Ly, 'y')} (Bezug: ${p.mode === 'forces' ? 'Stablänge' : 'grösstes Feld'})` : '' }),
-    numField('βz (Knicken um z-z)', st, 'betaZ', { min: 0.1, max: 10, onChange: chI(app), info: `${INFO.beta}<br>${INFO.betaZ}`, help: ref ? `${hint(st.betaZ, ref.Lz, 'z')} (Bezug: grösster Abstand der Halterungen)` : '' }),
-    checkField('seitenverschieblich in z (Cmy = 0.9)', st, 'swayY', { onChange: ch(app), info: INFO.sway }),
-    checkField('seitenverschieblich in y (Cmz = 0.9)', st, 'swayZ', { onChange: ch(app), info: INFO.sway }),
-  ], { info: 'Knicklängen für den Nachweis nach EN 1993-1-1 6.3.1. Die Knicklinien (a0 … d) werden aus Profiltyp, h/b, Flanschdicke und Stahlsorte bestimmt.' }));
+  const lcr = (beta, Lr, ax) => (ref ? rich(`L_cr,${ax} = ${fmt(Number(beta) || 0, 2)} · ${fmt(Lr, 2)} = ${fmt((Number(beta) || 0) * Lr, 2)} m`) : null);
+  el.append(group('Knicken', [
+    numField('β_y (um y-y)', st, 'betaY', { min: 0.1, max: 10, onChange: chI(app), info: `${INFO.beta}<br>Bezug: ${p.mode === 'forces' ? 'Stablänge' : 'grösstes Feld'}.`, help: lcr(st.betaY, ref?.Ly, 'y') }),
+    numField('β_z (um z-z)', st, 'betaZ', { min: 0.1, max: 10, onChange: chI(app), info: `${INFO.beta}<br>${INFO.betaZ}`, help: lcr(st.betaZ, ref?.Lz, 'z') }),
+  ], { info: 'Knicklängen für den Nachweis nach EN 1993-1-1 6.3.1. Die Knicklinien (a<sub>0</sub> … d) folgen aus Profiltyp, h/b, Flanschdicke und Stahlsorte.' }));
 
   const ltbKids = [];
   if (sec?.closed) ltbKids.push(note('Hohlprofile sind wegen ihrer grossen Torsionssteifigkeit nicht kippgefährdet – der Kippnachweis entfällt.', 'ok'));
   else {
     ltbKids.push(
       checkField('Kippnachweis führen', st, 'ltb', { onChange: chI(app), info: INFO.ltb }),
-      checkField('Druckgurt durchgehend seitlich gehalten', st, 'contRestraint', { onChange: chI(app), info: INFO.cont }));
-    if (st.ltb !== false && !st.contRestraint) {
-      ltbKids.push(
-        selectField('Lastangriffspunkt', st, 'loadPos', [{ value: 'top', label: 'Obergurt (destabilisierend)' }, { value: 'centroid', label: 'Schwerpunkt' }, { value: 'bottom', label: 'Untergurt (stabilisierend)' }], { wide: true, onChange: ch(app), info: INFO.loadPos }),
-        selectField('Seitliche Einspannung k', st, 'k', [{ value: 1, label: 'k = 1.0 – Gabellager' }, { value: 0.7, label: 'k = 0.7 – Anfang eingespannt' }, { value: 0.5, label: 'k = 0.5 – beide Enden' }], { wide: true, onChange: ch(app), info: INFO.k }),
-        selectField('Wölbeinspannung kw', st, 'kw', [{ value: 1, label: 'kw = 1.0 – frei' }, { value: 0.7, label: 'kw = 0.7 – Anfang wölbsteif' }, { value: 0.5, label: 'kw = 0.5 – beide Enden' }], { wide: true, onChange: ch(app), info: INFO.kw }),
-        selectField('Ermittlung Mcr', st, 'mcr', [{ value: 'formula', label: '3-Faktoren-Formel (C1, C2)' }, { value: 'fe', label: 'Eigenwertanalyse (FE)' }], { wide: true, onChange: chI(app), info: INFO.mcr }));
-      if (st.mcr !== 'fe') {
-        ltbKids.push(checkField('C1, C2 automatisch aus dem Momentenverlauf', st, 'cAuto', { onChange: chI(app), info: INFO.cAuto }));
-        if (st.cAuto === false) ltbKids.push(h('div', { class: 'grid2' },
-          numField('C1', st, 'C1', { min: 0.5, max: 4, onChange: ch(app), info: 'Momentenbeiwert (Form des Momentenverlaufs).' }),
-          numField('C2', st, 'C2', { min: 0, max: 3, onChange: ch(app), info: 'Beiwert für den Lastangriffspunkt (0 ohne Querlast).' })));
-      }
-      ltbKids.push(selectField('χLT-Verfahren', st, 'chiLT', [
-        { value: 'auto', label: `nach Norm (${p.norm === 'EC' ? 'EN' : 'SIA 263'})` }, { value: 'general', label: 'allgemein – EN 6.3.2.2' },
-        { value: 'rolled', label: 'Walzprofile – EN 6.3.2.3' }, { value: 'sia', label: 'SIA 263' }], { wide: true, onChange: ch(app), info: INFO.chiLT }));
-    }
+      st.ltb !== false ? checkField('Druckgurt durchgehend gehalten', st, 'contRestraint', { onChange: chI(app), info: INFO.cont }) : null);
+    if (st.ltb !== false && !st.contRestraint) ltbKids.push(...ltbMainFields(app, { ch: ch(app), chI: chI(app) }));
   }
-  el.append(group('Kippen (Biegedrillknicken)', ltbKids, { info: INFO.ltb }));
+  el.append(group('Kippen', ltbKids.filter(Boolean), { info: INFO.ltb }));
 
   // Seitliche Halterungen
   const L = ref?.L || 0;
-  const rows = st.restraints;
-  const kids = [];
-  if (!rows.length) kids.push(emptyState('Nur an den Auflagern gehalten', 'Zusätzliche seitliche Halterungen (z.B. Querträger) mit «+ Zeile» oder den Schnellwahl-Knöpfen ergänzen.'));
-  kids.push(dataTable([{ key: 'x', label: 'Position x', unit: 'm', min: 0, info: 'Abstand vom linken Stabende.' }], rows, {
-    newRow: () => ({ x: +(L / 2).toFixed(3) }), onChange: chI(app), hint: L ? `Stab 0 … ${fmt(L, 2)} m` : '',
-  }));
-  const setR = (fn) => { st.restraints = fn(); chI(app)(); };
-  const fields = ref?.fields || [];
-  kids.push(h('div', { class: 'row' },
-    h('span', { class: 'muted small' }, 'Schnellwahl:'),
-    button('Feldmitten', { small: true, onClick: () => setR(() => fields.filter((f) => !f.cant).map((f) => ({ x: +((f.x0 + f.x1) / 2).toFixed(3) }))) }),
-    button('Drittelspunkte', { small: true, onClick: () => setR(() => fields.filter((f) => !f.cant).flatMap((f) => [1, 2].map((k) => ({ x: +(f.x0 + f.L * k / 3).toFixed(3) })))) }),
-    button('Keine', { small: true, ghost: true, onClick: () => setR(() => []) })));
-  el.append(group('Seitliche Halterungen', kids, { info: INFO.restraints }));
+  const fields = (ref?.fields || []).filter((f) => !f.cant);
+  const setR = (list) => { st.restraints = list; app.openRestr = null; chI(app)(); return null; };
+  const midOfLongest = () => {
+    const pts = [0, ...(latRestraintPositions(p, L, (ref?.fields || []).flatMap((f) => [{ x: f.x0 }, { x: f.x1 }]), []) || []), L].sort((a, b) => a - b);
+    let best = [0, L];
+    for (let i = 1; i < pts.length; i++) if (pts[i] - pts[i - 1] > best[1] - best[0]) best = [pts[i - 1], pts[i]];
+    return +((best[0] + best[1]) / 2).toFixed(3);
+  };
+  const addOpts = [{ label: 'Halterung', create: () => ({ x: midOfLongest() }) }];
+  if (fields.length) {
+    addOpts.push({ label: 'Feldmitten', icon: 'grid', create: () => setR(fields.map((f) => ({ x: +((f.x0 + f.x1) / 2).toFixed(3) }))) });
+    addOpts.push({ label: 'Drittel', icon: 'grid', create: () => setR(fields.flatMap((f) => [1, 2].map((k) => ({ x: +(f.x0 + f.L * k / 3).toFixed(3) })))) });
+  }
+  el.append(group(`Halterungen (${st.restraints.length})`, [
+    st.contRestraint ? note('Der Druckgurt ist durchgehend gehalten – einzelne Halterungen wirken nur noch auf das Knicken um z-z.', '') : null,
+    listEditor(st.restraints, {
+      active: app.openRestr ?? null, onActive: (i) => { app.openRestr = i; },
+      empty: 'Nur an den Auflagern gehalten.',
+      label: (r) => `x = ${fmt(r.x, 2)} m`, sub: () => 'Gabellager',
+      swatch: () => 'var(--c-highlight)', duplicate: false,
+      onChange: chI(app),
+      detail: (d, r) => d.append(numField('Lage x', r, 'x', { unit: 'm', min: 0, max: L, onChange: chI(app), info: 'Abstand vom linken Stabende.' })),
+      add: addOpts,
+    }),
+  ].filter(Boolean), { info: INFO.restraints }));
+
+  // Erweitert
+  const adv = [];
+  if (!sec?.closed && st.ltb !== false && !st.contRestraint) {
+    adv.push(
+      selectField('Einspannung k', st, 'k', [{ value: 1, label: '1.0 – Gabellager' }, { value: 0.7, label: '0.7 – Anfang eingespannt' }, { value: 0.5, label: '0.5 – beide Enden' }], { wide: true, onChange: ch(app), info: INFO.k }),
+      selectField('Wölbung k_w', st, 'kw', [{ value: 1, label: '1.0 – frei' }, { value: 0.7, label: '0.7 – Anfang wölbsteif' }, { value: 0.5, label: '0.5 – beide Enden' }], { wide: true, onChange: ch(app), info: INFO.kw }),
+      selectField('χ_LT-Verfahren', st, 'chiLT', [
+        { value: 'auto', label: `nach Norm (${p.norm === 'EC' ? 'EN' : 'SIA 263'})` }, { value: 'general', label: 'allgemein (6.3.2.2)' },
+        { value: 'rolled', label: 'Walzprofile (6.3.2.3)' }, { value: 'sia', label: 'SIA 263' }], { wide: true, onChange: ch(app), info: INFO.chiLT }));
+    if (st.mcr !== 'fe') {
+      adv.push(checkField('C_1, C_2 automatisch', st, 'cAuto', { onChange: chI(app), info: INFO.cAuto }));
+      if (st.cAuto === false) adv.push(h('div', { class: 'grid2' },
+        numField('C_1', st, 'C1', { min: 0.5, max: 4, onChange: ch(app), info: 'Momentenbeiwert (Form des Momentenverlaufs).' }),
+        numField('C_2', st, 'C2', { min: 0, max: 3, onChange: ch(app), info: 'Beiwert für den Lastangriffspunkt (0 ohne Querlast).' })));
+    }
+  }
+  adv.push(
+    checkField('verschieblich in z (C_my = 0.9)', st, 'swayY', { onChange: ch(app), info: INFO.sway }),
+    checkField('verschieblich in y (C_mz = 0.9)', st, 'swayZ', { onChange: ch(app), info: INFO.sway }));
+  el.append(group('Erweitert', adv, { id: 'stab-erweitert', collapsed: true, info: 'Seltener benötigte Angaben: Endeinspannungen, Verfahren für χ<sub>LT</sub>, eigene C<sub>1</sub>/C<sub>2</sub> und seitenverschiebliche Systeme.' }));
 }
 
 // ------------------------------------------------------------------ Ergebnisse
@@ -319,10 +385,10 @@ function renderResults(el, app) {
   const s = r.sec, u = r.govUls;
   const ok = r.etaMax <= 1.0001;
   const gov = r.gov;
-  el.append(summaryCard(r.etaMax, 'Maximale Ausnutzung', h('div', { style: { marginTop: '6px' } },
-    h('div', { style: { fontWeight: 600 } }, ok ? `Alle Nachweise erfüllt – ${s.name} in ${r.mat.name} ist ausreichend.` : `Nicht erfüllt: ${gov.label} ist überschritten.`),
-    h('div', { class: 'muted small' }, `Massgebend: ${gov.label}${gov.comboName ? ` · ${gov.comboName}` : ''}`),
-    ok ? null : h('div', { class: 'small', style: { marginTop: '4px' } }, 'Abhilfe: grösseres Profil wählen («Profil vorschlagen» im Register 1), seitliche Halterungen ergänzen oder höhere Stahlsorte.'))));
+  el.append(summaryCard(r.etaMax, 'Maximale Ausnutzung', h('div', { class: 'summary-extra' },
+    h('div', {}, h('b', {}, rich(ok ? `Alle Nachweise erfüllt – ${s.name} in ${r.mat.name} genügt.` : `Nicht erfüllt: ${gov.label}`))),
+    h('div', { class: 'muted small' }, rich(`Massgebend: ${gov.label}${gov.comboName ? ` · ${shortCombo(gov.comboName)}` : ''}`)),
+    ok ? null : h('div', { class: 'small' }, 'Abhilfe: grösseres Profil («Profil vorschlagen» im Register «Profil»), seitliche Halterungen ergänzen oder höhere Stahlsorte.'))));
   // Kennzahlen
   const st = u.st;
   const segG = (() => { let b = null; for (const x of r.uls) for (const sg of x.st.segments) if (sg.etaLT !== undefined && (!b || sg.etaLT > b.etaLT)) b = sg; return b; })();
@@ -330,15 +396,13 @@ function renderResults(el, app) {
   const NbRd = hasN ? Math.min(st.NbyRd, st.NbzRd, st.NbTRd ?? Infinity) / 1e3 : null;
   el.append(stats([
     ['Profil', s.name],
-    ['Masse', s.mass, 'kg/m', 1],
-    ['Querschnittsklasse', String(u.cls)],
-    [u.cls <= 2 ? 'Mpl,y,Rd' : u.cls === 3 ? 'Mel,y,Rd' : 'Meff,y,Rd', u.R.McyRd / 1e6, 'kNm', 1],
-    hasN ? ['Nb,Rd (min)', NbRd, 'kN', 0] : ['Npl,Rd', u.R.NcRd / 1e3, 'kN', 0],
-    segG ? ['Mb,Rd', segG.MbRd / 1e6, 'kNm', 1] : ['Vpl,z,Rd', u.R.VplzRd / 1e3, 'kN', 0],
-    segG ? ['Mcr', segG.Mcr / 1e6, 'kNm', 1] : null,
-    segG ? ['χLT', segG.chiLT, '', 3] : null,
+    ['Klasse', String(u.cls)],
+    [u.cls <= 2 ? 'M_pl,y,Rd' : u.cls === 3 ? 'M_el,y,Rd' : 'M_eff,y,Rd', u.R.McyRd / 1e6, 'kNm', 1],
+    hasN ? ['N_b,Rd (min)', NbRd, 'kN', 0] : ['N_pl,Rd', u.R.NcRd / 1e3, 'kN', 0],
+    segG ? ['M_b,Rd', segG.MbRd / 1e6, 'kNm', 1] : ['V_pl,z,Rd', u.R.VplzRd / 1e3, 'kN', 0],
+    segG ? ['M_cr', segG.Mcr / 1e6, 'kNm', 1] : ['Masse', s.mass, 'kg/m', 1],
   ]));
-  for (const w of r.warnings) el.append(note(w, 'warn'));
+  for (const w of r.warnings) el.append(note(rich(w), 'warn'));
 
   // Profilsuche
   if (app.suggest) el.append(suggestBlock(app));
@@ -347,25 +411,18 @@ function renderResults(el, app) {
   for (const grp of ['Querschnitt', 'Stabilität', 'Gebrauchstauglichkeit']) {
     const list = r.checks.filter((c) => c.group === grp);
     if (!list.length) continue;
-    el.append(group(grp, [checksTable(list.map((c) => ({
+    el.append(group(`${grp} (${list.length})`, [checksTable(list.map((c) => ({
       label: c.label, ref: c.ref, Ed: c.Ed, Rd: c.Rd, unit: c.unit, digits: 1, eta: c.eta, deriv: DERIV_OF(c.id),
-      detail: [c.comboName, Number.isFinite(c.x) && c.group !== 'Stabilität' ? `x = ${fmt(c.x, 2)} m` : null, c.seg && c.group === 'Stabilität' ? `Segment ${fmt(c.seg.x0, 2)} … ${fmt(c.seg.x1, 2)} m` : null, c.detail].filter(Boolean).join(' · '),
-    })))]));
+      detail: rich([shortCombo(c.comboName), Number.isFinite(c.x) && c.group !== 'Stabilität' ? `x = ${fmt(c.x, 2)} m` : null, c.seg && c.group === 'Stabilität' ? `Segment ${fmt(c.seg.x0, 2)} … ${fmt(c.seg.x1, 2)} m` : null, c.detail].filter(Boolean).join(' · ')),
+    })), { edLabel: 'E_d', rdLabel: 'R_d' })], { id: `res-${grp}` }));
   }
-  if (r.uls.length && !r.checks.some((c) => c.group === 'Stabilität') && !st.ltbActive && st.ltbReason) el.append(note(`Kippen: ${st.ltbReason}.`, ''));
+  if (r.uls.length && !r.checks.some((c) => c.group === 'Stabilität') && !st.ltbActive && st.ltbReason) el.append(note(rich(`Kippen: ${st.ltbReason}.`), ''));
 
-  // Klassifizierung
-  el.append(group(`Querschnittsklassifizierung – Klasse ${u.cls}`, [classTable(u), h('div', { class: 'muted small', style: { marginTop: '4px' } }, `ε = √(235/fy) = ${fmt(u.klass.eps, 3)} · unter N = ${fmt(Math.max(0, u.Nc), 1)} kN, My = ${fmt(u.MyMax, 1)} kNm, Mz = ${fmt(u.MzMax, 1)} kNm (${u.combo.name})`)], { collapsible: true, collapsed: true, info: 'Klassifizierung der gedrückten Querschnittsteile nach EN 1993-1-1 Tab. 5.2 unter der tatsächlichen Beanspruchung der massgebenden Kombination.', actions: [button('Herleitung ›', { small: true, ghost: true, onClick: () => app.showDerivation('klasse') })] }));
-
-  // Stabilitätskennwerte
-  el.append(group('Stabilitätskennwerte', [stabKV(r, u)], { collapsible: true, collapsed: true, info: 'Zwischenwerte der massgebenden Kombination für Knicken, Kippen und Interaktion.' }));
-
-  // Kombinationen
-  if (r.uls.length > 1) {
-    el.append(group('Ausnutzung je Kombination', [resultTable(['Kombination', 'Ausnutzung'], r.uls.map((x) => [x.combo.name, utilBar(x.eta)]))], { collapsible: true, collapsed: true }));
-  }
-  // Querschnittswerte
-  el.append(group('Querschnittswerte', [propsKV(s, r.mat)], { collapsible: true, collapsed: true }));
+  // Details (eingeklappt)
+  el.append(group(`Klassifizierung – Klasse ${u.cls}`, [classTable(u), h('div', { class: 'muted small' }, rich(`ε = √(235/f_y) = ${fmt(u.klass.eps, 3)} · N_Ed = ${fmt(Math.max(0, u.Nc), 1)} kN, M_y,Ed = ${fmt(u.MyMax, 1)} kNm, M_z,Ed = ${fmt(u.MzMax, 1)} kNm (${u.combo.name})`))], { id: 'res-klasse', collapsed: true, info: 'Klassifizierung der gedrückten Querschnittsteile nach EN 1993-1-1 Tab. 5.2 unter der tatsächlichen Beanspruchung der massgebenden Kombination.', actions: [button('Herleitung ›', { small: true, ghost: true, onClick: () => app.showDerivation('klasse') })] }));
+  el.append(group('Stabilitätskennwerte', [stabKV(r, u)], { collapsed: true, info: 'Zwischenwerte der massgebenden Kombination für Knicken, Kippen und Interaktion.' }));
+  if (r.uls.length > 1) el.append(group(`Kombinationen (${r.uls.length})`, [resultTable(['Kombination', 'Ausnutzung'], r.uls.map((x) => [x.combo.name, utilBar(x.eta)]))], { id: 'res-kombi', collapsed: true }));
+  el.append(group('Querschnittswerte', [propsKV(s, r.mat)], { id: 'res-qs', collapsed: true }));
 }
 
 function classTable(u) {
@@ -384,31 +441,31 @@ function stabKV(r, u) {
   const st = u.st;
   const seg = st.segments.reduce((a, b) => ((b.etaLT ?? -1) > (a?.etaLT ?? -1) ? b : a), st.segments[0]);
   const rows = [
-    ['Lcr,y / Lcr,z', `${fmt(st.LcrY / 1000, 2)} / ${fmt(st.LcrZ / 1000, 2)}`, 'm'],
+    ['L_cr,y / L_cr,z', `${fmt(st.LcrY / 1000, 2)} / ${fmt(st.LcrZ / 1000, 2)}`, 'm'],
     ['Knicklinie y / z', `${st.curveY} / ${st.curveZ}`, ''],
-    ['Ncr,y', st.NcrY / 1e3, 'kN', 0], ['Ncr,z', st.NcrZ / 1e3, 'kN', 0],
-    ['λ̄y / χy', `${fmt(st.lamY, 3)} / ${fmt(st.chiY, 3)}`, ''],
-    ['λ̄z / χz', `${fmt(st.lamZ, 3)} / ${fmt(st.chiZ, 3)}`, ''],
-    st.torsional ? [r.sec.type === 'U' ? 'Ncr,TF' : 'Ncr,T', st.NcrTorsion / 1e3, 'kN', 0] : null,
-    st.torsional ? ['λ̄T / χT', `${fmt(st.lamT, 3)} / ${fmt(st.chiT, 3)}`, ''] : null,
+    ['N_cr,y', st.NcrY / 1e3, 'kN', 0], ['N_cr,z', st.NcrZ / 1e3, 'kN', 0],
+    ['λ̄_y / χ_y', `${fmt(st.lamY, 3)} / ${fmt(st.chiY, 3)}`, ''],
+    ['λ̄_z / χ_z', `${fmt(st.lamZ, 3)} / ${fmt(st.chiZ, 3)}`, ''],
+    st.torsional ? [r.sec.type === 'U' ? 'N_cr,TF' : 'N_cr,T', st.NcrTorsion / 1e3, 'kN', 0] : null,
+    st.torsional ? ['λ̄_T / χ_T', `${fmt(st.lamT, 3)} / ${fmt(st.chiT, 3)}`, ''] : null,
   ];
   if (seg?.Mcr) {
     rows.push(
       ['Kippsegment', `${fmt(seg.x0, 2)} … ${fmt(seg.x1, 2)}`, 'm'],
-      ['Mcr', seg.Mcr / 1e6, 'kNm', 1],
-      seg.mcrBy === 'formula' ? ['C1 / C2', `${fmt(seg.C1, 3)} / ${fmt(seg.C2, 3)}`, ''] : ['C1 (äquivalent, FE)', seg.C1eq, '', 3],
-      ['Ermittlung Mcr', seg.mcrBy === 'formula' ? `Formel – ${seg.csrc}` : `FE – ${seg.csrc}`, ''],
-      ['zg (Lastangriff)', seg.zg ?? 0, 'mm', 0],
-      ['k / kw', `${fmt(seg.k, 1)} / ${fmt(seg.kw, 1)}`, ''],
-      ['λ̄LT / χLT', `${fmt(seg.lamLT, 3)} / ${fmt(seg.chiLT, 3)}`, ''],
-      ['Verfahren χLT', { general: 'EN 6.3.2.2', rolled: `EN 6.3.2.3 (f = ${fmt(seg.lt.f, 3)})`, sia: 'SIA 263' }[st.ltbMethod], ''],
+      ['M_cr', seg.Mcr / 1e6, 'kNm', 1],
+      seg.mcrBy === 'formula' ? ['C_1 / C_2', `${fmt(seg.C1, 3)} / ${fmt(seg.C2, 3)}`, ''] : ['C_1 (äquivalent, FE)', seg.C1eq, '', 3],
+      ['Ermittlung M_cr', seg.mcrBy === 'formula' ? `Formel – ${seg.csrc}` : `FE – ${seg.csrc}`, ''],
+      ['z_g (Lastangriff)', seg.zg ?? 0, 'mm', 0],
+      ['k / k_w', `${fmt(seg.k, 1)} / ${fmt(seg.kw, 1)}`, ''],
+      ['λ̄_LT / χ_LT', `${fmt(seg.lamLT, 3)} / ${fmt(seg.chiLT, 3)}`, ''],
+      ['Verfahren χ_LT', { general: 'EN 6.3.2.2', rolled: `EN 6.3.2.3 (f = ${fmt(seg.lt.f, 3)})`, sia: 'SIA 263' }[st.ltbMethod], ''],
     );
   } else rows.push(['Kippen', st.ltbReason || 'nicht massgebend', '']);
   if (seg?.kf) {
     rows.push(
-      ['Cmy / Cmz / CmLT', `${fmt(seg.Cmy.Cm, 3)} / ${fmt(seg.Cmz.Cm, 3)} / ${fmt(seg.CmLT.Cm, 3)}`, ''],
-      ['kyy / kyz', `${fmt(seg.kf.kyy, 3)} / ${fmt(seg.kf.kyz, 3)}`, ''],
-      ['kzy / kzz', `${fmt(seg.kf.kzy, 3)} / ${fmt(seg.kf.kzz, 3)}`, ''],
+      ['C_my / C_mz / C_mLT', `${fmt(seg.Cmy.Cm, 3)} / ${fmt(seg.Cmz.Cm, 3)} / ${fmt(seg.CmLT.Cm, 3)}`, ''],
+      ['k_yy / k_yz', `${fmt(seg.kf.kyy, 3)} / ${fmt(seg.kf.kyz, 3)}`, ''],
+      ['k_zy / k_zz', `${fmt(seg.kf.kzy, 3)} / ${fmt(seg.kf.kzz, 3)}`, ''],
     );
   }
   return kvTable(rows);
@@ -417,20 +474,20 @@ function stabKV(r, u) {
 function propsKV(s, mat) {
   const rows = [
     ['h / b', `${fmt(s.h, 1)} / ${fmt(s.b, 1)}`, 'mm'],
-    s.tw && s.type !== 'RHS' && s.type !== 'CHS' ? ['tw / tf', `${fmt(s.tw, 1)} / ${fmt(s.tf, 1)}`, 'mm'] : null,
+    s.tw && s.type !== 'RHS' && s.type !== 'CHS' ? ['t_w / t_f', `${fmt(s.tw, 1)} / ${fmt(s.tf, 1)}`, 'mm'] : null,
     s.t ? ['t', s.t, 'mm', 1] : null,
     s.r ? ['r', s.r, 'mm', 1] : null,
     ['A', s.A / 100, 'cm²', 2],
-    ['Iy', s.Iy / 1e4, 'cm⁴', 1], ['Iz', s.Iz / 1e4, 'cm⁴', 1],
-    ['Wel,y / Wel,z', `${fmt(s.Wely / 1e3, 1)} / ${fmt(s.Welz / 1e3, 1)}`, 'cm³'],
-    ['Wpl,y / Wpl,z', `${fmt(s.Wply / 1e3, 1)} / ${fmt(s.Wplz / 1e3, 1)}`, 'cm³'],
-    ['iy / iz', `${fmt(s.iy / 10, 2)} / ${fmt(s.iz / 10, 2)}`, 'cm'],
-    ['It', s.It / 1e4, 'cm⁴', 2], ['Iw', s.Iw / 1e6, 'cm⁶', 0],
-    ['Avz / Avy', `${fmt(s.Avz / 100, 2)} / ${fmt(s.Avy / 100, 2)}`, 'cm²'],
-    s.type === 'U' ? ['Schwerpunkt ys (ab Rücken)', s.ys / 10, 'cm', 2] : null,
-    s.type === 'U' ? ['Schubmittelpunkt yM (ab S)', s.y0 / 10, 'cm', 2] : null,
+    ['I_y', s.Iy / 1e4, 'cm⁴', 1], ['I_z', s.Iz / 1e4, 'cm⁴', 1],
+    ['W_el,y / W_el,z', `${fmt(s.Wely / 1e3, 1)} / ${fmt(s.Welz / 1e3, 1)}`, 'cm³'],
+    ['W_pl,y / W_pl,z', `${fmt(s.Wply / 1e3, 1)} / ${fmt(s.Wplz / 1e3, 1)}`, 'cm³'],
+    ['i_y / i_z', `${fmt(s.iy / 10, 2)} / ${fmt(s.iz / 10, 2)}`, 'cm'],
+    ['I_t', s.It / 1e4, 'cm⁴', 2], ['I_w', s.Iw / 1e6, 'cm⁶', 0],
+    ['A_vz / A_vy', `${fmt(s.Avz / 100, 2)} / ${fmt(s.Avy / 100, 2)}`, 'cm²'],
+    s.type === 'U' ? ['Schwerpunkt y_s (ab Rücken)', s.ys / 10, 'cm', 2] : null,
+    s.type === 'U' ? ['Schubmittelpunkt y_M (ab S)', s.y0 / 10, 'cm', 2] : null,
     ['Masse', s.mass, 'kg/m', 1],
-    ['fy / fu', `${mat.fy} / ${mat.fu}`, 'N/mm²'],
+    ['f_y / f_u', `${mat.fy} / ${mat.fu}`, 'N/mm²'],
   ];
   return kvTable(rows);
 }
@@ -444,13 +501,13 @@ function suggestBlock(app) {
   // die zwei leichteren (nicht erfüllt) und die vier leichtesten erfüllten
   const show = [...sg.list.slice(Math.max(0, idx - 2), Math.max(0, idx)), ...pass.slice(0, 4)];
   const rows = (show.length ? show : sg.list.slice(-5)).map((x) => [
-    h('span', { style: { fontWeight: x === sg.best ? 700 : 400 } }, x.name, x === sg.best ? ' ★' : ''),
+    x === sg.best ? h('b', {}, `${x.name} ★`) : x.name,
     fmt(x.mass, 1), x.error ? h('span', { class: 'small muted' }, 'Fehler') : utilBar(x.eta),
     x.name === cur && app.project.section.series === sg.series ? badge('aktuell', 'info') : button('Übernehmen', { small: true, onClick: () => { app.project.section.series = sg.series; app.project.section.name = x.name; app.suggest.stamp = stampOf(app.project); app.changed({ inputs: true }); toast(`${x.name} übernommen.`, 'ok'); } }),
   ]);
   return group(`Profilvorschlag ${sg.series}`, [
     stale ? note('Die Eingaben wurden seit der Suche geändert – bitte die Suche im Register «Profil» erneut ausführen.', 'warn') : null,
-    sg.best ? h('div', { class: 'small', style: { margin: '0 0 6px' } }, 'Leichtestes Profil mit η ≤ 1: ', h('b', {}, sg.best.name), ` (${fmt(sg.best.mass, 1)} kg/m, massgebend: ${sg.best.gov})`) : note('Kein Profil dieser Reihe erfüllt alle Nachweise.', 'fail'),
+    sg.best ? h('div', { class: 'small' }, 'Leichtestes Profil mit η ≤ 1: ', h('b', {}, sg.best.name), rich(` (${fmt(sg.best.mass, 1)} kg/m, massgebend: ${sg.best.gov})`)) : note('Kein Profil dieser Reihe erfüllt alle Nachweise.', 'fail'),
     resultTable(['Profil', { label: 'kg/m', num: true }, 'Ausnutzung', ''], rows),
   ], { actions: [button('', { icon: 'close', small: true, ghost: true, title: 'Vorschlag ausblenden', onClick: () => { app.suggest = null; app.renderResults(); } })] });
 }
@@ -514,7 +571,7 @@ const HELP = `
 <li><b>Ziehen</b>: Einzellasten (am Pfeilende), Enden und Bereich von Streckenlasten, Lager und Halterungen verschieben sich entlang x; das <b>Trägerende</b> ändert die Länge (ein Lager am Ende wandert mit). Das Raster fängt die Position, Alt schaltet den Fang aus.</li>
 <li><b>Entf</b> löscht die Auswahl, <b>Esc</b> beendet ein Werkzeug bzw. hebt die Auswahl auf.</li>
 <li>Bei «Schnittgrössen direkt» öffnet ein Klick auf den Stab Länge, Profil und Bemessungssituationen.</li></ul>
-<p>Die Register links enthalten dieselben Eingaben als Formulare (z.B. Lasten als Tabelle, Kombinationen, alle Stabilitätsangaben) und bleiben mit der Grafik abgestimmt.</p>
+<p>Die Register links (1 Profil, 2 Lasten mit Kombinationen, 3 Stabilität) enthalten dieselben Eingaben als Listen und Formulare und bleiben mit der Grafik abgestimmt. Mehrere Bauteile pro Projekt verwalten Sie oben links (neu, duplizieren, umbenennen).</p>
 <h3>Ergebnisse und Herleitung</h3>
 <p>Rechts erscheinen alle Nachweise mit Ausnutzung. «Herleitung ›» neben einem Nachweis öffnet den Rechenweg mit allgemeiner Formel, eingesetzten Werten, Ergebnis und Normbezug; der Bericht enthält die Herleitung vollständig.</p>
 <h3>Vorzeichen und Einheiten</h3>
@@ -547,9 +604,15 @@ const INTRO = `<h4>So funktioniert's</h4><ol>
 
 // ------------------------------------------------------------------ App
 
+// ?offen=Erweitert,Kombinationen öffnet eingeklappte Karten (z.B. für Anleitungen)
+for (const key of (new URLSearchParams(location.search).get('offen') || '').split(',').filter(Boolean)) {
+  try { localStorage.setItem(`openstatik.grp.${location.pathname}.${key}`, '0'); } catch { /* privat */ }
+}
+
 const app = createApp({
   id: 'stahlbau',
   title: 'Stahlbau',
+  instance: { label: 'Bauteil', plural: 'Bauteile' },
   subtitle: 'Stahlstäbe nach SIA 263 / EN 1993-1-1',
   version: 1,
   defaultProject,
@@ -560,8 +623,7 @@ const app = createApp({
   derivation,
   inputTabs: [
     { id: 'profil', label: 'Profil', render: renderProfile },
-    { id: 'lasten', label: 'Belastung', render: renderLoads },
-    { id: 'kombi', label: 'Kombinationen', render: renderCombos },
+    { id: 'lasten', label: 'Lasten', render: renderLoads },
     { id: 'stab', label: 'Stabilität', render: renderStability },
   ],
   viewModes,
@@ -576,3 +638,12 @@ const app = createApp({
 
 // Fangpunkte der Lager hängen vom Zoom ab (Pixelabstand unter dem Träger)
 app.view.onChange(() => app.editor?.invalidate());
+
+// Direkteinstieg über die Adresse (z.B. für Anleitungen): ?register=stab&auswahl=beam&detail=1
+{
+  const q = new URLSearchParams(location.search);
+  if (q.get('detail')) { app.openLoad = 0; app.openLC = 0; app.openCase = 0; app.openRestr = 0; app.renderInputs(); }
+  if (q.get('register')) app.selectTab(q.get('register'));
+  if (q.get('auswahl') && app.editor) setTimeout(() => app.editor.select(q.get('auswahl').split(',')), 50);
+  if (q.get('bericht')) setTimeout(() => [...document.querySelectorAll('.topbar button')].find((b) => /Bericht/.test(b.textContent))?.click(), 300);
+}

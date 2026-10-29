@@ -53,8 +53,10 @@ function polyArea(P) {
 export function wallAnalysis(soilIn, rw, norm) {
   const g = wallGeometry(rw);
   const gc = Number(rw.gammaC) || 25;
-  const soilAll = makeSoil(soilIn);
-  const soil = makeSoil(soilIn, { ignoreWater: !rw.water });
+  // Bodenprofile: unter der Fundamentmitte (Fundation), in der Ersatzwand (Erddruck), an beliebiger Stelle x
+  const soilAll = makeSoil(soilIn, { x: g.B / 2 });
+  const soil = makeSoil(soilIn, { ignoreWater: !rw.water, x: g.B });
+  const soilX = (x) => makeSoil(soilIn, { ignoreWater: !rw.water, x });
   const warnings = [];
   if (!rw.water && soilAll.zw < g.H) warnings.push('Grundwasser liegt über der Fundamentsohle, Wasserdruck ist aber ausgeschaltet. «Wasserdruck» aktivieren oder eine wirksame Drainage nachweisen.');
   const q = Math.max(0, Number(rw.q) || 0);
@@ -79,14 +81,14 @@ export function wallAnalysis(soilIn, rw, norm) {
     for (let k = 0; k < n; k++) {
       const x = g.xb + (k + 0.5) * dx;
       const ys = g.H + (x - g.xb) * Math.tan(rad(g.beta));
-      const w = verticalStress(soil, g.H - g.d, g.H - ys, 0).sv * dx;
+      const w = verticalStress(soilX(x), g.H - g.d, g.H - ys, 0).sv * dx;
       W += w; Mx += w * x; My += w * (g.d + ys) / 2;
     }
     if (W > 0) forces.push({ name: 'Boden über Ferse', kind: 'G', Fx: 0, Fy: -W, x: Mx / W, y: My / W });
   }
   // Boden über der Zehe
   if (g.Df > g.d && g.toe > 0) {
-    const w = verticalStress(soil, g.H - g.d, g.H - g.Df, 0).sv * g.toe;
+    const w = verticalStress(soilX(g.toe / 2), g.H - g.d, g.H - g.Df, 0).sv * g.toe;
     forces.push({ name: 'Boden über Zehe', kind: 'G', Fx: 0, Fy: -w, x: g.toe / 2, y: (g.d + g.Df) / 2 });
   }
   // Auflast auf der Ferse (veränderlich, vertikal)
@@ -159,13 +161,14 @@ export function wallAnalysis(soilIn, rw, norm) {
   // Erdwiderstand vor dem Sporn (nur Spornhöhe), abgemindert mit γ_R,e
   let Ep = 0;
   if (g.key) {
-    const Lk = layerAt(soilAll.layers, g.H + g.key.depth / 2);
+    const soilKey = makeSoil(soilIn, { x: g.key.x });
+    const Lk = layerAt(soilKey.layers, g.H + g.key.depth / 2);
     const pk = designParams(Lk, norm, applyM);
     const Kp = passiveCurved({ phi: pk.phi, delta: 0 });
     const n = 20, dz = g.key.depth / n;
     for (let k = 0; k < n; k++) {
       const z = g.H + (k + 0.5) * dz;
-      const sv = verticalStress(soilAll, z, g.H - g.Df, 0).svp;
+      const sv = verticalStress(soilKey, z, g.H - g.Df, 0).svp;
       Ep += (Kp.Kpgh * sv + Kp.Kpch * pk.c) * dz;
     }
   }
@@ -215,11 +218,11 @@ export function wallAnalysis(soilIn, rw, norm) {
   const sigDesign = basePressure(cA);
 
   // ---------------------------------------------------------------- Schnittkräfte Wand (Einspannung)
-  const stemEp = earthPressureProfile({ soil, zTop: 0, zBot: g.hs, alpha: 0, beta: g.beta, kind: 'active', deltaMode, q, water: !!rw.water });
+  const stemEp = earthPressureProfile({ soil: soilX(g.xb + 0.01), zTop: 0, zBot: g.hs, alpha: 0, beta: g.beta, kind: 'active', deltaMode, q, water: !!rw.water });
   const sec = stemSections(stemEp, g.hs, norm);
 
   // ---------------------------------------------------------------- Fundamentplatte (Zehe/Ferse)
-  const slab = slabForces(g, cA, sigDesign, soil, q, norm, ep, water, gc);
+  const slab = slabForces(g, cA, sigDesign, soilX, q, norm, ep, water, gc);
 
   const checks = {
     sliding: govS, bearing: govB, eccPerm, eccDesign,
@@ -265,7 +268,7 @@ function stemSections(ep, hs, norm) {
 }
 
 /** Momente und Querkräfte der Fundamentplatte an den Wandflächen (Bemessung, Kombination γ_G, γ_Q). */
-function slabForces(g, cA, sig, soil, q, norm, ep, water, gc) {
+function slabForces(g, cA, sig, soilX, q, norm, ep, water, gc) {
   if (!(cA.N > 0)) return null;
   const sigma = (x) => {
     const p = sig.pts;
@@ -277,8 +280,8 @@ function slabForces(g, cA, sig, soil, q, norm, ep, water, gc) {
   };
   const uplift = (x) => (water ? water.uToe + (water.uHeel - water.uToe) * x / g.B : 0);
   const soilAbove = (x) => {
-    if (x <= g.toe) return g.Df > g.d ? verticalStress(soil, g.H - g.d, g.H - g.Df, 0).sv : 0;
-    if (x >= g.xb) { const ys = g.H + (x - g.xb) * Math.tan(rad(g.beta)); return verticalStress(soil, g.H - g.d, g.H - ys, 0).sv; }
+    if (x <= g.toe) return g.Df > g.d ? verticalStress(soilX(x), g.H - g.d, g.H - g.Df, 0).sv : 0;
+    if (x >= g.xb) { const ys = g.H + (x - g.xb) * Math.tan(rad(g.beta)); return verticalStress(soilX(x), g.H - g.d, g.H - ys, 0).sv; }
     return 0;
   };
   const n = 40;

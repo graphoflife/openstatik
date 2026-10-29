@@ -182,7 +182,7 @@ export function derivation(app) {
     id: `qs-${ax}`, title: `Querschnittswiderstand (${AXNAME[ax]})`, ref: ec ? 'EN 1992-1-1 6.1' : 'SIA 262 4.3.2',
     intro: 'M_Rd bei der vorhandenen Normalkraft aus dem Fasermodell: Parabel-Rechteck-Diagramm mit f_cd und bilinearer Betonstahl mit f_sd; Bruch, sobald ε_cu im Beton oder ε_ud im Stahl erreicht ist.',
     steps: [
-      { label: 'Biegewiderstand bei N_Ed', f: `${Mn},Rd(N_Ed = ${num(N, 0)} kN)`, r: `= ${num(A.MRd, 1)} kNm` },
+      { label: 'Biegewiderstand bei der vorhandenen Normalkraft', f: `${Mn},Rd(N_Ed = ${num(N, 0)} kN)`, r: `= ${num(A.MRd, 1)} kNm` },
       A.M2max !== null
         ? { label: 'Nachweis', f: `${Mn},Ed,II <= ${Mn},Rd`, v: `${num(A.M2max, 1)} <= ${num(A.MRd, 1)}`, r: `η = ${num(A.etaSec, 3)}` }
         : { label: 'Nachweis', note: 'Kein Gleichgewicht bei λ = 1 – Ausnutzung als 1/λ_u angegeben.' },
@@ -194,7 +194,7 @@ export function derivation(app) {
   const nSteps = N >= 0 ? (() => {
     const ss2 = Math.min(m.fsd, m.Es * c.ec2);
     return [
-      { label: 'Druckwiderstand (zentrische Stauchung ε_c2)', f: 'N_Rd = (A_c − A_s)·f_cd + A_s·σ_s(ε_c2)', v: `= (${num(g.Ac * 1e6, 0)} − ${num(g.As * 1e6, 0)})·${num(m.fcd, 2)} + ${num(g.As * 1e6, 0)}·${num(ss2, 1)}`, r: `= ${num(R.NRd, 0)} kN`, note: `σ_s = min(f_sd; E_s·ε_c2) = ${num(ss2, 1)} MPa` },
+      { label: 'Druckwiderstand bei zentrischer Stauchung', f: 'N_Rd = (A_c − A_s)·f_cd + A_s·σ_s(ε_c2)', v: `= (${num(g.Ac * 1e6, 0)} − ${num(g.As * 1e6, 0)})·${num(m.fcd, 2)} + ${num(g.As * 1e6, 0)}·${num(ss2, 1)}`, r: `= ${num(R.NRd, 0)} kN`, note: `σ_s = min(f_sd; E_s·ε_c2) = ${num(ss2, 1)} MPa` },
       { label: 'Nachweis', f: 'N_Ed <= N_Rd', v: `${num(N, 0)} <= ${num(R.NRd, 0)}`, r: `η = ${num(r.etaN, 3)}` },
     ];
   })() : [
@@ -207,15 +207,15 @@ export function derivation(app) {
   const gov = r.gov;
   const biaxSteps = r.combos.map((cb) => (cb.missing
     ? { label: cb.label, note: 'Kein Gleichgewicht unter Bemessungslast.' }
-    : { label: cb.label, f: 'max über x: η = |M_Ed|/|M_Rd| in Richtung (M_y, M_z)', v: `M_y = ${num(cb.My, 1)} kNm, M_z = ${num(cb.Mz, 1)} kNm bei x = ${num(cb.x, 2)} m`, r: `η = ${num(cb.eta, 3)}` }));
+    : { label: cb.label, f: 'η = max_x |M_Ed|/|M_Rd| in Richtung (M_y, M_z)', v: `M_y = ${num(cb.My, 1)} kNm, M_z = ${num(cb.Mz, 1)} kNm bei x = ${num(cb.x, 2)} m`, r: `η = ${num(cb.eta, 3)}` }));
   biaxSteps.push({
     label: 'Vergleich mit der Näherung', f: '(M_Edz/M_Rdz)^a + (M_Edy/M_Rdy)^a <= 1', ref: 'EN 1992-1-1 (5.39)',
     v: `a = ${num(r.a, 2)} (${g.shape === 'circle' ? 'Kreis' : `N_Ed/N_Rd = ${num(N / R.NRdSimple, 3)}`})`, r: `= ${num(r.eta539, 3)}`,
     note: 'Nur zum Vergleich – massgebend ist die Interaktionskurve des Fasermodells.',
   });
   out.push({
-    id: 'zweiachsig', title: g.shape === 'circle' ? 'Resultierendes Moment' : 'Zweiachsige Biegung (Interaktion My–Mz)', ref: ec ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7',
-    intro: `Beide Richtungen werden nichtlinear berechnet; die Imperfektion wirkt jeweils nur in einer Richtung. Massgebend ist die Stelle mit der grössten Ausnutzung bezüglich ${g.shape === 'circle' ? 'des Widerstands M_Rd (rotationssymmetrisch)' : 'der My-Mz-Interaktionskurve bei N_Ed (radial gemessen)'}.${p.biaxial ? '' : ' Ohne Lasten um z wirkt in z nur die Imperfektion.'}`,
+    id: 'zweiachsig', title: g.shape === 'circle' ? 'Resultierendes Moment' : 'Zweiachsige Biegung (Interaktion)', ref: ec ? 'EN 1992-1-1 5.8.9' : 'SIA 262 4.3.7',
+    intro: `Beide Richtungen werden nichtlinear berechnet; die Imperfektion wirkt jeweils nur in einer Richtung. Massgebend ist die Stelle mit der grössten Ausnutzung bezüglich ${g.shape === 'circle' ? 'des Widerstands M_Rd (rotationssymmetrisch)' : 'der M_y–M_z-Interaktionskurve bei N_Ed (radial gemessen)'}.${p.biaxial ? '' : ' Ohne Lasten um z wirkt in z nur die Imperfektion.'}`,
     steps: biaxSteps,
     result: { eta: gov.eta, text: `η = ${num(gov.eta, 3)} (${gov.label})` },
   });

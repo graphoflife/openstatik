@@ -1,18 +1,19 @@
 // Projektmodell Stabwerk: Grundstruktur und Bearbeitungsfunktionen (DOM-frei)
 import { LC_KINDS, generateCombinations } from './calc.js';
+import { newMaterial, newSection } from './sections.js';
 
 export function emptyLC(name = 'Eigengewicht', kind = 'G') {
   return { name, kind, selfWeight: kind === 'G', psi: [...LC_KINDS[kind].psi], nodal: [], dist: [], point: [], temp: [], settle: [] };
 }
 
-export const DEFAULT_SECTION = { name: 'Rechteck 30/50', type: 'rect', mat: 'C30/37', b: 300, h: 500, d: 400, profile: 'HEB 200', A: 100, I: 10000, E: 30000, gamma: 25 };
-
-/** Leeres Projekt: ein Standardquerschnitt und ein Lastfall «Eigengewicht». */
+/** Leeres Projekt: Standardmaterialien, ein Standardquerschnitt und ein Lastfall «Eigengewicht». */
 export function defaultProject() {
   return {
     nodes: [],
     members: [],
-    sections: [{ ...DEFAULT_SECTION }],
+    materials: [newMaterial('Beton', 'C25/30'), newMaterial('Baustahl', 'S235')],
+    sections: [newSection('rect')],
+    activeMat: 1,
     supports: [],
     loadCases: [emptyLC('Eigengewicht', 'G')],
     combinations: [],

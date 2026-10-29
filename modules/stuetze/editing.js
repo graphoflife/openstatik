@@ -2,8 +2,8 @@
 //
 // Darstellung «System» (bearbeitbar): Zeichenebene in m wie in allen Modulen (x waagrecht, y senkrecht) –
 // waagrecht liegt die Ausbiegungsrichtung, senkrecht die Stützenachse (0 = Fuss, L = Kopf). Bei zwei
-// Biegeebenen stehen die Bilder nebeneinander. Die Werkzeuge wirken einmal und kehren dann zur Auswahl
-// zurück, damit das Eigenschaftsfenster sofort die neuen Felder zeigt.
+// Biegeebenen stehen die Bilder nebeneinander. Die Werkzeuge wirken einmal (once) und kehren dann zur
+// Auswahl zurück, damit das Eigenschaftsfenster sofort die neuen Felder zeigt.
 // IDs (Achse ax = 'y' | 'z'):
 //   top:ax / bot:ax   Stützenkopf (ziehen ändert L) bzw. -fuss – Lagerung und Lasten am Ende
 //   N:ax H:ax Mt:ax Mb:ax  Lastsymbole (öffnen das zugehörige Stützenende)
@@ -18,7 +18,7 @@ import { systemLayout, panelGeometry, lcIndex, shownAxes } from './views.js';
 import { sectionGeometry } from './section.js';
 import {
   INFO, supportTiles, supportEndFields, sectionShapeFields, barFields, coverFields, materialFields, sectionSummary,
-  imperfectionFields, creepFields, loadFields, ensureLoadCase, activeLoadCase,
+  imperfectionFields, loadFields, ensureLoadCase, activeLoadCase, formulaLine, betaOf,
 } from './inputs.js';
 
 const parse = (id) => { const [t, ax] = String(id).split(':'); return { t, ax }; };
@@ -53,9 +53,9 @@ export const editorSpec = {
   modes: ['system'],
   canCopy: false,
   tools: [
-    { id: 'load', label: 'Last', key: 'f', form: 'pick', pick: ['point'], icon: TOOL_ICONS.pointload, title: 'Stützenkopf anklicken: Normalkraft, Horizontalkraft und Kopfmoment · Fuss anklicken: Fussmoment', hint: 'Stützenkopf oder -fuss anklicken.' },
-    { id: 'dist', label: 'Streckenlast', key: 'q', form: 'pick', pick: ['region'], icon: TOOL_ICONS.load, title: 'Stütze anklicken: gleichmässige Querlast q über die ganze Höhe', hint: 'Stütze anklicken, auf die eine Streckenlast wirkt.' },
-    { id: 'support', label: 'Lager', key: 'a', form: 'pick', pick: ['point'], icon: TOOL_ICONS.support, title: 'Stützenkopf oder -fuss anklicken: Lagerung wählen', hint: 'Stützenkopf oder -fuss anklicken.' },
+    { id: 'load', label: 'Last', key: 'f', form: 'pick', once: true, pick: ['point'], icon: TOOL_ICONS.pointload, title: 'Stützenkopf anklicken: Normalkraft, Horizontalkraft und Kopfmoment · Fuss anklicken: Fussmoment', hint: 'Stützenkopf oder -fuss anklicken.' },
+    { id: 'dist', label: 'Streckenlast', key: 'q', form: 'pick', once: true, pick: ['region'], icon: TOOL_ICONS.load, title: 'Stütze anklicken: gleichmässige Querlast q über die ganze Höhe', hint: 'Stütze anklicken, auf die eine Streckenlast wirkt.' },
+    { id: 'support', label: 'Lager', key: 'a', form: 'pick', once: true, pick: ['point'], icon: TOOL_ICONS.support, title: 'Stützenkopf oder -fuss anklicken: Lagerung wählen', hint: 'Stützenkopf oder -fuss anklicken.' },
   ],
 
   geometry(app) {
@@ -105,10 +105,7 @@ export const editorSpec = {
   create() { return null; },
 
   pick(app, tool, hit) {
-    const ids = pickOnce(app, tool, hit);
-    // nach dem Anklicken zurück zur Auswahl: das Eigenschaftsfenster zeigt die neuen Felder
-    if (ids && app.editor) setTimeout(() => app.editor.setTool('select'), 0);
-    return ids;
+    return pickOnce(app, tool, hit);
   },
 
   // Nur der Stützenkopf ist verschiebbar: senkrechte Verschiebung = neue Länge L
@@ -191,12 +188,11 @@ function pickOnce(app, tool, hit) {
 
 const changed = (app) => () => app.changed({ inputs: true });
 
-/** Lastfallwahl bzw. «Lastfall anlegen». */
+/** Lastfallwahl (bzw. «Lastfall anlegen») in einer Zeile. */
 function lcBar(app) {
   const p = app.project;
   if (!p.loadCases.length) {
-    return [h('div', { class: 'muted small' }, 'Noch kein Lastfall vorhanden.'),
-      button('Lastfall anlegen', { icon: 'plus', small: true, primary: true, onClick: () => { ensureLoadCase(app); app.changed({ inputs: true }); } })];
+    return [button('Lastfall anlegen', { icon: 'plus', small: true, primary: true, onClick: () => { ensureLoadCase(app); app.changed({ inputs: true }); } })];
   }
   const add = () => {
     const cur = activeLoadCase(app);
@@ -205,20 +201,14 @@ function lcBar(app) {
     app.changed({ inputs: true });
   };
   const o = { v: lcIndex(app) };
-  return [
-    p.loadCases.length > 1
-      ? selectField('Lastfall', o, 'v', p.loadCases.map((lc, i) => ({ value: i, label: lc.name || `LF ${i + 1}` })), {
-        wide: true, onChange: (v) => { app.viewOpts.lc = v; app.renderView(); app.renderResults(); app.editor.refreshPanel(true); },
-      })
-      : null,
-    h('div', { class: 'stz-row' },
-      p.loadCases.length === 1 ? h('span', { class: 'muted small' }, `Lastfall «${p.loadCases[0].name || 'LF 1'}»`) : null,
-      button('Lastfall', { icon: 'plus', small: true, title: 'Neuen Lastfall anlegen (Werte im Register «Lasten» oder hier)', onClick: add })),
-  ];
+  const sel = selectField('Lastfall', o, 'v', p.loadCases.map((lc, i) => ({ value: i, label: lc.name || `LF ${i + 1}` })), {
+    wide: true, onChange: (v) => { app.viewOpts.lc = v; app.renderView(); app.renderResults(); app.editor.refreshPanel(true); },
+  });
+  return [h('div', { class: 'row' }, h('div', { style: { flex: '1' } }, sel), button('', { icon: 'plus', small: true, title: 'Neuen Lastfall anlegen', onClick: add }))];
 }
 
 function derivButton(app, id) {
-  return app.results ? button('Herleitung', { small: true, ghost: true, icon: 'chevron', title: 'Rechenweg anzeigen', onClick: () => app.showDerivation(id) }) : null;
+  return app.results ? button('Herleitung ›', { small: true, ghost: true, title: 'Rechenweg anzeigen', onClick: () => app.showDerivation(id) }) : null;
 }
 
 /** Ergebnisse der Biegeachse im aktiven Lastfall. */
@@ -244,19 +234,17 @@ function resultsBlock(app, ax) {
       const k = nearestIndex(A.x, xPick);
       out.push(kvTable([
         ['Höhe x', A.x[k], 'm', 2],
-        ['Verformung w (2. Ordnung)', A.at1.w[k] * 1000, 'mm', 1],
-        ['M_I (1. Ordnung)', A.M1[k], 'kNm', 1],
-        ['M_II (2. Ordnung)', A.at1.M[k], 'kNm', 1],
+        ['w (2. Ordnung)', A.at1.w[k] * 1000, 'mm', 1],
+        ['M_I / M_II', `${fmt(A.M1[k], 1)} / ${fmt(A.at1.M[k], 1)}`, 'kNm'],
       ]));
     }
     out.push(kvTable([
-      ['Knicklänge l₀ = β·L', `${fmt(A.l0, 2)} (β = ${fmt(A.beta, 2)})`, 'm'],
-      ['Schlankheit λ / λ_lim', `${fmt(A.lam, 1)} / ${Number.isFinite(A.lamLim) ? fmt(A.lamLim, 1) : '∞'}`, ''],
+      ['λ / λ_lim', `${fmt(A.lam, 1)} / ${Number.isFinite(A.lamLim) ? fmt(A.lamLim, 1) : '∞'}`, ''],
       ['M_Ed,I / M_Ed,II', `${fmt(A.M1max, 1)} / ${A.M2max !== null ? fmt(A.M2max, 1) : '–'}`, 'kNm'],
-      ['M_Rd (bei N_Ed)', A.MRd, 'kNm', 1],
-      ['Traglastfaktor λu', A.lambdaU, '', 2],
+      ['M_Rd(N_Ed)', A.MRd, 'kNm', 1],
+      ['Traglastfaktor λ_u', A.lambdaU, '', 2],
     ]));
-    out.push(h('div', { class: 'stz-row' }, derivButton(app, `allg-${ax}`)));
+    out.push(h('div', { class: 'row' }, derivButton(app, `allg-${ax}`)));
     return out;
   });
 }
@@ -266,15 +254,19 @@ function sectionEditor(app) {
   const p = app.project, sp = p.section;
   const ch = changed(app);
   return [
-    ...sectionShapeFields(sp, ch, ch).flat(),
+    ...sectionShapeFields(sp, ch, ch),
     h('div', { class: 'ed-sub' }, 'Längsbewehrung'),
-    ...barFields(sp, ch).flat(),
-    h('div', { class: 'ed-sub' }, 'Lage der Bewehrung'),
-    ...coverFields(sp, ch, ch).flat(),
+    ...barFields(sp, ch),
+    ...coverFields(sp, ch, ch),
     h('div', { class: 'ed-sub' }, 'Baustoffe'),
     ...materialFields(p, ch),
     ...sectionSummary(p, true),
   ];
+}
+
+/** Knöpfe, die ein anderes Element der Grafik zum Bearbeiten öffnen. */
+function jumpRow(app, items) {
+  return h('div', { class: 'row' }, items.map(([label, id, title]) => button(`${label} ›`, { small: true, ghost: true, title, onClick: () => app.editor.select([id]) })));
 }
 
 // ------------------------------------------------------------------ Eigenschaftsfenster
@@ -291,30 +283,24 @@ function inspectColumn(app, ax) {
     } else p.support = proxy.v;
     ch();
   };
-  let geoLine = '';
-  try {
-    const g = sectionGeometry(p.section);
-    geoLine = `${g.shape === 'circle' ? `Ø ${p.section.D}` : `${p.section.b} × ${p.section.h}`} mm · ${g.n} Ø${p.section.dia} · ${p.concrete}`;
-  } catch (e) { geoLine = e.message; }
-  const res = axisResult(app, ax);
-  const beta = res?.A?.beta ?? SUPPORT_PRESETS[proxy.v]?.beta;
+  const beta = axisResult(app, ax)?.A?.beta ?? betaOf(p, ax, app.results);
+  const lc = activeLoadCase(app);
   const content = [
     numField('Länge L', p, 'L', { unit: 'm', min: 0.2, max: 80, onChange: ch, info: INFO.L }),
     h('div', { class: 'ed-sub' }, two(p) ? `Lagerung · ${AXNAME[ax]}` : 'Lagerung'),
     supportTiles(proxy, 'v', setTile),
-    beta ? h('div', { class: 'stz-calc' }, `β = ${fmt(beta, 2)} → l₀ = ${fmt(beta * p.L, 2)} m`) : null,
-    two(p) ? checkField('Gleiche Lagerung für beide Richtungen', { v: p.supportZ === 'same' }, 'v', {
+    beta ? formulaLine(`β = ${fmt(beta, 2)} → l_0 = ${fmt(beta * p.L, 2)} m`) : null,
+    two(p) ? checkField('Gleiche Lagerung y und z', { v: p.supportZ === 'same' }, 'v', {
       onChange: (v) => { if (v) p.supportZ = 'same'; else { p.supportZ = p.support; p.customZ = { ...p.custom }; } ch(); },
     }) : null,
-    h('div', { class: 'muted small' }, 'Einzelheiten (Drehfedern, Verschieblichkeit): Kopf oder Fuss anklicken.'),
-    h('details', { class: 'ed-details' }, h('summary', {}, `Querschnitt · ${geoLine}`), ...sectionEditor(app)),
-    h('details', { class: 'ed-details' }, h('summary', {}, 'Imperfektion und Kriechen'),
-      ...imperfectionFields(p, ch, ch), ...creepFields(p, ch)),
-    h('div', { class: 'ed-sub' }, 'Streckenlast'),
-    ...lcBar(app),
+    jumpRow(app, [
+      ['Kopf', `top:${ax}`, 'Lagerung und Lasten am Stützenkopf'],
+      ['Fuss', `bot:${ax}`, 'Lagerung und Moment am Stützenfuss'],
+      ['Querschnitt', 'sec', 'Abmessungen, Bewehrung, Baustoffe'],
+      lc ? ['Imperfektion', `imp:${ax}`, 'Schiefstellung bzw. Vorkrümmung'] : null,
+    ].filter(Boolean)),
   ];
-  const lc = activeLoadCase(app);
-  if (lc && (ax === 'y' || p.biaxial)) content.push(...loadFields(lc, ax, 'span', ch));
+  if (lc && (ax === 'y' || p.biaxial)) content.push(h('div', { class: 'ed-sub' }, 'Streckenlast'), ...lcBar(app), ...loadFields(lc, ax, 'span', ch));
   // in «Verformung»/«Momente» stehen die Werte an der angeklickten Stelle oben
   if (app.viewMode === 'deform' || app.viewMode === 'moments') content.unshift(resultsBlock(app, ax));
   else content.push(resultsBlock(app, ax));
@@ -326,14 +312,12 @@ function inspectEnd(app, ax, end) {
   const ch = changed(app);
   const st = supportState(p, ax);
   const key = presetFor(st);
-  const res = axisResult(app, ax);
-  const beta = res?.A?.beta ?? SUPPORT_PRESETS[key]?.beta;
+  const beta = axisResult(app, ax)?.A?.beta ?? SUPPORT_PRESETS[key]?.beta;
   const lc = activeLoadCase(app);
   const k = LOAD_KEYS[ax];
   const content = [
-    h('div', { class: 'ed-sub' }, 'Lagerung'),
     ...supportEndFields(p, ax, end, ch),
-    h('div', { class: 'stz-calc' }, `${SUPPORT_PRESETS[key].label}${beta ? ` · β = ${fmt(beta, 2)}` : ''}`),
+    formulaLine(`${SUPPORT_PRESETS[key].short}${beta ? ` · β = ${fmt(beta, 2)}` : ''}`),
     h('div', { class: 'ed-sub' }, end === 'top' ? 'Lasten am Kopf' : 'Last am Fuss'),
     ...lcBar(app),
   ];
@@ -341,18 +325,18 @@ function inspectEnd(app, ax, end) {
     const zOff = ax === 'z' && !p.biaxial;
     if (end === 'top') content.push(...loadFields(lc, ax, 'top', ch).slice(0, zOff ? 1 : 3));
     else if (!zOff) content.push(...loadFields(lc, ax, 'bot', ch));
-    if (zOff) content.push(checkField('Zweiachsige Biegung (Lasten auch um z)', p, 'biaxial', { onChange: ch, info: INFO.biaxial }));
+    if (zOff) content.push(checkField('Lasten auch um z', p, 'biaxial', { onChange: ch, info: INFO.biaxial }));
     const Mkey = end === 'top' ? k.Mt : k.Mb;
-    if (!zOff && st[end] === 'fixed' && +lc[Mkey]) content.push(note('Das Moment wirkt direkt ins eingespannte Auflager und erzeugt keine Stützenbiegung.', 'warn'));
-    if (!zOff && end === 'top' && !st.sway && +lc[k.H]) content.push(note('H wird vom horizontal gehaltenen Kopf aufgenommen («horizontal verschieblich» ankreuzen, falls der Kopf ausweichen kann).', 'warn'));
+    if (!zOff && st[end] === 'fixed' && +lc[Mkey]) content.push(note('Das Moment geht direkt ins eingespannte Auflager.', 'warn'));
+    if (!zOff && end === 'top' && !st.sway && +lc[k.H]) content.push(note('H wird vom gehaltenen Kopf aufgenommen – «Kopf verschieblich» ankreuzen, falls er ausweichen kann.', 'warn'));
   }
   content.push(liveBox(() => {
     const rr = axisResult(app, ax);
     if (!rr?.A?.at1) return null;
     const A = rr.A, i = end === 'top' ? A.x.length - 1 : 0;
     return [h('div', { class: 'ed-sub' }, `Ergebnisse · ${rr.r.name}`), kvTable([
-      ['Moment M_II am Ende', A.at1.M[i], 'kNm', 1],
-      end === 'top' && A.sway ? ['Kopfauslenkung w (2. Ordnung)', A.at1.w[i] * 1000, 'mm', 1] : null,
+      ['M_II am Ende', A.at1.M[i], 'kNm', 1],
+      end === 'top' && A.sway ? ['w_Kopf (2. Ordnung)', A.at1.w[i] * 1000, 'mm', 1] : null,
     ].filter(Boolean))];
   }));
   return { title: `${end === 'top' ? 'Stützenkopf' : 'Stützenfuss'}${two(p) ? ` · ${AXNAME[ax]}` : ''}`, content };
@@ -366,10 +350,9 @@ function inspectSpan(app, ax) {
     title: `Streckenlast${two(app.project) ? ` · ${AXNAME[ax]}` : ''}`,
     content: [
       ...lcBar(app),
-      lc ? loadFields(lc, ax, 'span', ch) : null,
-      lc ? button('Streckenlast entfernen', { icon: 'trash', small: true, danger: true, onClick: () => { lc[k] = 0; ch(); } }) : null,
-      h('div', { class: 'muted small' }, 'Gleichmässig über die ganze Höhe, positiv nach rechts (z.B. Wind auf die Stütze).'),
-    ].flat(),
+      ...(lc ? loadFields(lc, ax, 'span', ch) : []),
+      lc ? h('div', { class: 'row' }, button('Entfernen', { icon: 'trash', small: true, danger: true, title: 'Streckenlast in diesem Lastfall auf 0 setzen', onClick: () => { lc[k] = 0; ch(); } })) : null,
+    ],
   };
 }
 
@@ -382,12 +365,11 @@ function inspectImperfection(app, ax) {
       ...imperfectionFields(p, ch, ch),
       liveBox(() => {
         const A = axisResult(app, ax)?.A;
-        if (!A) return null;
-        return [h('div', { class: 'stz-calc' }, A.sway
-          ? `${AXNAME[ax]}: Schiefstellung θi = 1/${fmt(1 / A.thetaI, 0)} → Kopfauslenkung θi·L = ${fmt(A.impAmp * 1000, 1)} mm`
-          : `${AXNAME[ax]}: l₀ = ${fmt(A.l0, 2)} m → ei = θi·l₀/2 = ${fmt(A.ei * 1000, 1)} mm`), h('div', { class: 'stz-row' }, derivButton(app, 'imp'))];
+        if (!A || !(A.thetaI > 0)) return null;
+        return [formulaLine(A.sway
+          ? `${AXNAME[ax]}: θ_i·L = ${fmt(A.impAmp * 1000, 1)} mm (Kopfauslenkung)`
+          : `${AXNAME[ax]}: e_i = θ_i·l_0/2 = ${fmt(A.ei * 1000, 1)} mm`), h('div', { class: 'row' }, derivButton(app, 'imp'))];
       }),
-      h('div', { class: 'muted small' }, 'Die Richtung wird automatisch ungünstig gewählt (gleichsinnig mit der Verformung aus den Lasten).'),
     ],
   };
 }
@@ -400,17 +382,15 @@ function inspectBar(app, k) {
     const g = sectionGeometry(sp);
     n = g.n;
     const b = g.bars[k];
-    if (b) pos = `y = ${fmt(b.y * 1000, 0)} mm, z = ${fmt(b.z * 1000, 0)} mm`;
+    if (b) pos = `y = ${fmt(b.y * 1000, 0)} mm · z = ${fmt(b.z * 1000, 0)} mm`;
   } catch { /* ungültig */ }
   return {
-    title: `Längsbewehrung${n ? ` · Stab ${k + 1} von ${n}` : ''}`,
+    title: `Längsbewehrung${n ? ` · Stab ${k + 1}/${n}` : ''}`,
     content: [
-      pos ? h('div', { class: 'muted small' }, `Lage: ${pos}`) : null,
-      ...barFields(sp, ch).flat(),
-      h('div', { class: 'ed-sub' }, 'Lage der Bewehrung'),
-      ...coverFields(sp, ch, ch).flat(),
+      pos ? formulaLine(pos) : null,
+      ...barFields(sp, ch),
+      ...coverFields(sp, ch, ch),
       ...sectionSummary(p, true),
-      h('div', { class: 'muted small' }, 'Alle Längsstäbe haben denselben Durchmesser; ihre Lage folgt aus der Anzahl je Seite und dem Achsabstand.'),
     ],
   };
 }

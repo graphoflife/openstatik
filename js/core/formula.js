@@ -6,7 +6,7 @@
 //   v  eingesetzte Werte         '= 942 · 435 · 0.413 · 10⁻³'
 //   r  Ergebnis                  '= 169.5 kNm'
 // In Formeln: X_ab bzw. X_{a b} → Index, X^2 bzw. X^{-1} → Hochzahl, sqrt( → √(, * → ·, <= → ≤, >= → ≥.
-import { h } from './ui.js';
+import { h, rich } from './ui.js';
 import { fmt } from './format.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -52,7 +52,7 @@ function prose(tag, cls, text) {
 
 function stepEl(st) {
   return h('div', { class: 'deriv-step' },
-    st.label ? h('div', { class: 'deriv-label' }, st.label, st.ref ? h('span', { class: 'deriv-ref' }, st.ref) : null) : null,
+    st.label ? h('div', { class: 'deriv-label' }, rich(st.label), st.ref ? h('span', { class: 'deriv-ref' }, rich(st.ref)) : null) : null,
     h('div', { class: 'deriv-line' },
       st.f ? fx(st.f, 'deriv-f') : null,
       st.v ? fx(st.v, 'deriv-v') : null,
@@ -69,11 +69,11 @@ export function renderDerivation(el, sections, app) {
   if (list.length > 2) {
     el.append(h('div', { class: 'deriv-toc' }, list.map((s) => h('button', {
       type: 'button', class: 'deriv-chip', onclick: () => { const t = el.querySelector(`[data-deriv="${CSS.escape(s.id || s.title)}"]`); if (t) { t.open = true; t.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
-    }, s.title, s.result && Number.isFinite(s.result.eta) ? h('i', { class: s.result.eta <= 1.0001 ? 'ok' : 'fail' }) : null))));
+    }, rich(s.title), s.result && Number.isFinite(s.result.eta) ? h('i', { class: s.result.eta <= 1.0001 ? 'ok' : 'fail' }) : null))));
   }
   list.forEach((s, i) => {
     const det = h('details', { class: 'deriv', open: i < 3 || list.length <= 4, dataset: { deriv: s.id || s.title } },
-      h('summary', {}, h('span', { class: 'deriv-title' }, s.title), s.ref ? h('span', { class: 'deriv-ref' }, s.ref) : null, s.result && s.result.eta !== undefined ? etaBadge(s.result.eta) : null),
+      h('summary', {}, h('span', { class: 'deriv-title' }, rich(s.title)), s.ref ? h('span', { class: 'deriv-ref' }, rich(s.ref)) : null, s.result && s.result.eta !== undefined ? etaBadge(s.result.eta) : null),
       s.intro ? prose('p', 'deriv-intro', s.intro) : null,
       (s.steps || []).filter(Boolean).map(stepEl),
       s.result?.text ? h('div', { class: `deriv-result ${s.result.eta !== undefined && !(s.result.eta <= 1.0001) ? 'fail' : 'ok'}` }, fx(s.result.text)) : null);
@@ -86,11 +86,11 @@ export function renderDerivation(el, sections, app) {
 export function derivationReport(sections) {
   const content = [];
   for (const s of (sections || []).filter(Boolean)) {
-    content.push(h('h3', {}, s.title, s.ref ? ` (${s.ref})` : ''));
+    content.push(h('h3', {}, rich(s.title), s.ref ? [' (', rich(s.ref), ')'] : ''));
     if (s.intro) content.push(prose('p', '', s.intro));
     for (const st of (s.steps || []).filter(Boolean)) {
       content.push(h('div', { class: 'deriv-step rep' },
-        st.label ? h('div', { class: 'deriv-label' }, st.label, st.ref ? h('span', { class: 'deriv-ref' }, ` ${st.ref}`) : null) : null,
+        st.label ? h('div', { class: 'deriv-label' }, rich(st.label), st.ref ? h('span', { class: 'deriv-ref' }, ' ', rich(st.ref)) : null) : null,
         h('div', { class: 'deriv-line' }, st.f ? fx(st.f, 'deriv-f') : null, st.v ? fx(st.v, 'deriv-v') : null, st.r ? fx(st.r, 'deriv-r') : null),
         st.note ? prose('div', 'deriv-note', st.note) : null));
     }

@@ -1,9 +1,18 @@
 // Ergebnisdarstellung und Bericht Geotechnik
-import { h, group, stats, checksTable, summaryCard, resultTable, note, kvTable, fmt } from '../../js/core/ui.js';
+import { h, group, stats, checksTable, summaryCard, resultTable, note, kvTable, fmt, rich } from '../../js/core/ui.js';
 import { chartBox, xyChart } from '../../js/core/chart.js';
 import { repTable, repKV, repFigure, repFormula, repP } from '../../js/core/report.js';
 import { ANALYSES } from './calc.js';
-import { VIEW_MODES } from './draw.js';
+import { VIEW_MODES, setPrintMode } from './draw.js';
+import { FAR, TOP } from './ground.js';
+
+// Formelzeichen mit Unterstrich überall tiefstellen (Bericht, Hinweise, Normbezüge)
+const R_ = (x) => (typeof x === 'string' ? rich(x) : x);
+const RT = (headers, rows, opts) => repTable(headers.map((x) => (typeof x === 'string' ? { label: rich(x) } : { ...x, label: rich(x.label) })), rows.map((r) => r.map(R_)), opts);
+const RK = (rows) => repKV(rows.filter(Boolean).map(([l, v, u, d]) => [rich(l), R_(v), rich(u || ''), d]));
+const RF = (text) => repFormula(rich(text));
+const CT = (checks, opts) => checksTable(checks.map((c) => ({ ...c, ref: R_(c.ref), detail: R_(c.detail) })), opts);
+const NT = (text, kind) => note(R_(text), kind);
 
 const KIND = { active: 'aktiver Erddruck', increased: 'erhöhter aktiver Erddruck', atrest: 'Erdruhedruck', passive: 'Erdwiderstand (passiv)' };
 const DRAIN = { drained: 'drainiert', undrained: 'undrainiert', both: 'drainiert und undrainiert' };
@@ -20,25 +29,25 @@ const HINTS = {
 /** Klare Aussage: erfüllt / nicht erfüllt mit Handlungsempfehlung. */
 function verdict(items) {
   const failed = items.filter((c) => !(Number.isFinite(c.eta) && c.eta <= 1.0001));
-  if (!failed.length) return note('Alle Nachweise sind erfüllt.', 'ok');
+  if (!failed.length) return NT('Alle Nachweise sind erfüllt.', 'ok');
   return h('div', { class: 'note fail' },
     h('b', {}, failed.length === 1 ? 'Ein Nachweis ist nicht erfüllt:' : `${failed.length} Nachweise sind nicht erfüllt:`),
-    h('ul', { style: { margin: '4px 0 0', paddingLeft: '18px' } }, failed.map((c) => h('li', {}, h('b', {}, c.label), c.hint ? ` – ${c.hint}` : ''))));
+    h('ul', {}, failed.map((c) => h('li', {}, h('b', {}, rich(c.label)), c.hint ? ` – ${c.hint}` : ''))));
 }
 
 function infoCard(label, big, sub) {
-  return h('div', { class: 'summary-card' }, h('div', { class: 'label' }, label), h('div', { class: 'big' }, big), sub ? h('div', { class: 'muted small', style: { marginTop: '2px' } }, sub) : null);
+  return h('div', { class: 'summary-card' }, h('div', { class: 'label' }, rich(label)), h('div', { class: 'big' }, rich(big)), sub ? h('div', { class: 'muted small' }, rich(sub)) : null);
 }
 
 const unitF = (strip) => (strip ? 'kN/m' : 'kN');
-const warnNotes = (list) => (list || []).filter(Boolean).map((w) => note(w, 'warn'));
+const warnNotes = (list) => (list || []).filter(Boolean).map((w) => NT(w, 'warn'));
 
 // ------------------------------------------------------------------ Ergebnisbereich
 
 export function renderResults(el, app) {
   const r = app.results;
   if (!r) return;
-  if (r.type !== app.project.analysis) { el.append(note('Berechnung läuft …')); return; }
+  if (r.type !== app.project.analysis) { el.append(NT('Berechnung läuft …')); return; }
   const fn = { erddruck: resEP, grundbruch: resBC, setzung: resST, boeschung: resSL, stuetzmauer: resRW }[r.type];
   fn(el, r, app.project, app);
 }
@@ -61,8 +70,8 @@ function resEP(el, r, p) {
   el.append(...warnNotes(R.warnings));
   el.append(group('Erddruckverteilung', [chartBox(epChartOpts(R))], { info: 'Horizontalkomponente des Erddrucks über die Tiefe ab Wandkopf. Gestapelt: Erddruck aus Bodeneigengewicht (G), aus Auflasten (Q) und der Wasserdruck.' }));
   el.append(group('Erddruckbeiwerte je Schicht', [resultTable(
-    ['Schicht', { label: "φ'", num: true, digits: 1 }, { label: passive ? 'δ_p' : 'δ', num: true, digits: 1 }, { label: 'K_h', num: true, digits: 3 }, { label: 'K_ch', num: true, digits: 3 }, { label: 'K_0', num: true, digits: 3 }, { label: 'ϑ_a', num: true, digits: 1 }],
-    R.layers.map((L) => [L.name, L.phi, passive ? L.deltaP : L.delta, L.Kgh, L.Kch, L.K0 ?? '–', L.theta ?? '–']))],
+    ['Bodenart', { label: passive ? 'δ_p' : 'δ', num: true, digits: 1 }, { label: 'K_h', num: true, digits: 3 }, { label: 'K_ch', num: true, digits: 3 }, R.kind === 'atrest' || R.kind === 'increased' ? { label: 'K_0', num: true, digits: 3 } : { label: 'ϑ_a', num: true, digits: 1 }],
+    R.layers.map((L) => [L.name, passive ? L.deltaP : L.delta, L.Kgh, L.Kch, R.kind === 'atrest' || R.kind === 'increased' ? L.K0 : L.theta ?? '–']))],
   { info: 'K_h: Beiwert für die Horizontalkomponente aus Bodeneigengewicht (e = K_h·σ\'_v), K_ch: Kohäsionsbeiwert, K_0: Erdruhedruckbeiwert, ϑ_a: Neigung der Gleitfuge gegen die Horizontale.' }));
   const cmp = R.cmp;
   el.append(group('Vergleich der Erddruckarten', [resultTable(['Erddruckart', { label: 'E_h [kN/m]', num: true, digits: 1 }, { label: 'Angriff [m]', num: true, digits: 2 }],
@@ -130,8 +139,8 @@ function resBC(el, r, p) {
       R.charRes ? ['Globale Sicherheit R_k/V_k', R.charRes.F, '', 2] : null,
     ]));
   }
-  el.append(group('Nachweise', [checksTable(checks)], { info: 'Bemessungswert der Einwirkung E_d (Ed) gegenüber dem Bemessungswert des Widerstands R_d (Rd). Erfüllt, wenn die Ausnutzung η = E_d/R_d ≤ 1.0.' }));
-  if (g.soil?.phiSpread > 5) el.append(note(`Die Reibungswinkel im Einflussbereich unterscheiden sich um ${fmt(g.soil.phiSpread, 1)}° (> 5°): Die Mittelung ist nur eine Näherung. Massgebende Schicht separat prüfen (z.B. Durchstanzen einer weichen Schicht).`, 'warn'));
+  el.append(group('Nachweise', [CT(checks)], { info: 'Bemessungswert der Einwirkung E_d (Ed) gegenüber dem Bemessungswert des Widerstands R_d (Rd). Erfüllt, wenn die Ausnutzung η = E_d/R_d ≤ 1.0.' }));
+  if (g.soil?.phiSpread > 5) el.append(NT(`Die Reibungswinkel im Einflussbereich unterscheiden sich um ${fmt(g.soil.phiSpread, 1)}° (> 5°): Die Mittelung ist nur eine Näherung. Massgebende Schicht separat prüfen (z.B. Durchstanzen einer weichen Schicht).`, 'warn'));
   if (!g.error) {
     const G = g.gov;
     el.append(group(`Beiwerte (${G.drained ? 'drainiert' : 'undrainiert'}, massgebend)`, [
@@ -162,7 +171,7 @@ function resBC(el, r, p) {
       xLabel: 'Fundamentbreite B [m]', yLabel: `[${unitF(strip)}]`, height: 240,
     })], { collapsible: true, info: 'Grundriss affin skaliert (Eigengewicht angepasst). Wo R_d über V_d liegt, ist der Grundbruchnachweis erfüllt.' }));
   }
-  if (R.Wf + R.Ws > 0) el.append(note(`Eigengewicht berücksichtigt: Fundament ${fmt(R.Wf, 1)} ${unitF(strip)}, Hinterfüllung ${fmt(R.Ws, 1)} ${unitF(strip)} (in V_G enthalten).`));
+  if (R.Wf + R.Ws > 0) el.append(NT(`Eigengewicht berücksichtigt: Fundament ${fmt(R.Wf, 1)} ${unitF(strip)}, Hinterfüllung ${fmt(R.Ws, 1)} ${unitF(strip)} (in V_G enthalten).`));
 }
 
 // ---------------------------------------------------------------- Setzung
@@ -172,7 +181,7 @@ function resST(el, r, p) {
   const eta = sAllow > 0 ? R.sRef / sAllow : NaN;
   const refLabel = R.refKey === 'char' ? 'kennzeichnender Punkt (starres Fundament)' : 'Fundamentmitte (schlaffes Fundament)';
   const checks = sAllow > 0 ? [{ id: 'settle', label: 'Setzung', hint: HINTS.settle, deriv: 'st-s', ref: `s ≤ s_zul (Gebrauchstauglichkeit, SIA 267 / EN 1997-1, 6.6) · ${refLabel}`, Ed: R.sRef, Rd: sAllow, unit: 'mm', eta }] : [];
-  if (sAllow > 0) el.append(summaryCard(eta, 'Setzung / zulässige Setzung', h('div', {}, h('div', { class: 'big', style: { fontSize: '16px', margin: '2px 0' } }, `s = ${fmt(R.sRef, 1)} mm`), verdict(checks))));
+  if (sAllow > 0) el.append(summaryCard(eta, 'Setzung / zulässige Setzung', h('div', {}, h('div', { class: 'big' }, `s = ${fmt(R.sRef, 1)} mm`), verdict(checks))));
   else el.append(infoCard('Setzung', `s = ${fmt(R.sRef, 1)} mm`, refLabel));
   el.append(stats([
     ['Setzung Mitte', R.sCentre, 'mm', 1],
@@ -183,7 +192,7 @@ function resST(el, r, p) {
     ['Netto-Sohlspannung', R.pNet, 'kN/m²', 1],
   ]));
   el.append(...warnNotes(R.warnings));
-  if (checks.length) el.append(group('Nachweis', [checksTable(checks)]));
+  if (checks.length) el.append(group('Nachweis', [CT(checks)]));
   el.append(group('Spannungen über die Tiefe', [chartBox({
     series: [
       { points: R.profile.map((q) => [q.svp, q.z]), label: "σ'_v0", color: 'var(--c-soil)' },
@@ -212,7 +221,7 @@ function resSL(el, r, p, app) {
   const R = r.sl, n = r.norm;
   const best = R.design.best || R.char.best;
   const checks = [{ id: 'slope', label: 'Gesamtstabilität', hint: HINTS.slope, deriv: 'sl-check', ref: `F_d ≥ γ_R · SIA 267 / EN 1997-1, 11.5.1 · Bishop`, Ed: n.gRs, Rd: R.Fd, unit: '', digits: 3, eta: R.eta }];
-  el.append(summaryCard(R.eta, 'Gesamtstabilität (Böschungsbruch)', h('div', {}, h('div', { class: 'small', style: { margin: '2px 0 6px' } }, `F = ${fmt(R.F, 3)} (charakteristisch) · F_d = ${fmt(R.Fd, 3)} (Bemessung, Anforderung F_d ≥ ${fmt(n.gRs, 2)})`), verdict(checks))));
+  el.append(summaryCard(R.eta, 'Gesamtstabilität (Böschungsbruch)', h('div', {}, h('div', { class: 'small' }, rich(`F = ${fmt(R.F, 3)} (charakteristisch) · F_d = ${fmt(R.Fd, 3)} (Bemessung, Anforderung F_d ≥ ${fmt(n.gRs, 2)})`)), verdict(checks))));
   el.append(stats([
     ['F Bishop (charakt.)', R.F, '', 3],
     ['F Fellenius (charakt.)', R.FF, '', 3],
@@ -221,9 +230,9 @@ function resSL(el, r, p, app) {
     ['Mittelpunkt x / y', `${fmt(R.M.tx(best.xc), 2)} / ${fmt(best.yc, 2)}`, 'm'],
     ['Untersuchte Kreise', `${R.circles} (${R.ms} ms)`, ''],
   ]));
-  el.append(group('Nachweis', [checksTable(checks, { edLabel: 'erforderlich', rdLabel: 'vorhanden' })], { info: 'Die Bemessungswerte der Scherparameter (tan φ\'/γ_φ, c\'/γ_c, c_u/γ_cu) und der veränderlichen Lasten (γ_Q) gehen direkt in die Gleitkreisberechnung ein. Erfüllt, wenn F_d ≥ γ_R.' }));
-  if (best.clipped) el.append(note(`Bei ${best.clipped} Lamelle(n) war m_α < 0.2 (steile Basis am Kreisaustritt); m_α wurde auf 0.2 begrenzt.`, 'warn'));
-  if (R.ms > 400) el.append(note('Die Suche dauert relativ lange. Im Register «Böschung» das Suchraster gröber wählen (weniger Mittelpunkte oder Radien).', 'warn'));
+  el.append(group('Nachweis', [CT(checks, { edLabel: 'erforderlich', rdLabel: 'vorhanden' })], { info: 'Die Bemessungswerte der Scherparameter (tan φ\'/γ_φ, c\'/γ_c, c_u/γ_cu) und der veränderlichen Lasten (γ_Q) gehen direkt in die Gleitkreisberechnung ein. Erfüllt, wenn F_d ≥ γ_R.' }));
+  if (best.clipped) el.append(NT(`Bei ${best.clipped} Lamelle(n) war m_α < 0.2 (steile Basis am Kreisaustritt); m_α wurde auf 0.2 begrenzt.`, 'warn'));
+  if (R.ms > 400) el.append(NT('Die Suche dauert relativ lange. Im Register «Böschung» das Suchraster gröber wählen (weniger Mittelpunkte oder Radien).', 'warn'));
   const S = best.slices || [];
   if (S.length) {
     el.append(group(`Lamellen des massgebenden Kreises (${R.design.best ? 'Bemessung' : 'charakteristisch'})`, [resultTable(
@@ -231,7 +240,7 @@ function resSL(el, r, p, app) {
       S.map((s, i) => [i + 1, R.M.tx(s.xm), s.b, s.alpha * 180 / Math.PI, s.W + s.Q, s.u, s.c, Math.atan(s.tanPhi) * 180 / Math.PI, s.layer]))],
     { collapsible: true, collapsed: true, info: 'W enthält Auflast und Wasserauflast. c und φ sind die in der Berechnung verwendeten Werte (Bemessungswerte, falls angezeigt).' }));
   }
-  el.append(note(`Böschung fällt nach ${R.M.dir === 1 ? 'rechts' : 'links'} ab. Suchraster: ${R.grid.nx} × ${R.grid.ny} Mittelpunkte × ${R.grid.nr} Radien, anschliessend lokale Verfeinerung.`));
+  el.append(NT(`Böschung fällt nach ${R.M.dir === 1 ? 'rechts' : 'links'} ab. Suchraster: ${R.grid.nx} × ${R.grid.ny} Mittelpunkte × ${R.grid.nr} Radien, anschliessend lokale Verfeinerung.`));
   void app;
 }
 
@@ -261,7 +270,7 @@ function resRW(el, r) {
     ['Kippsicherheit M_stb/M_dst', R.Fkipp, '', 2],
   ]));
   el.append(...warnNotes(R.warnings));
-  el.append(group('Nachweise', [checksTable(checks)], { info: 'Gleiten, Grundbruch und Ausmittigkeit in der Fundamentsohle. Erddruck auf die lotrechte Ersatzwand durch das Fersenende; der Boden über der Ferse wirkt als Teil des Stützkörpers.' }));
+  el.append(group('Nachweise', [CT(checks)], { info: 'Gleiten, Grundbruch und Ausmittigkeit in der Fundamentsohle. Erddruck auf die lotrechte Ersatzwand durch das Fersenende; der Boden über der Ferse wirkt als Teil des Stützkörpers.' }));
   el.append(group('Schnittkräfte Wand (Bemessung)', [chartBox({
     series: [
       { points: R.sec.rows.map((q) => [q.Md, q.s]), label: 'M_Ed [kNm/m]', color: 'var(--c-pos)', fill: true, area: 'x' },
@@ -290,17 +299,19 @@ export function buildReport(app) {
   const r = app.results, p = app.project, n = r.norm;
   const A = ANALYSES.find((a) => a.id === r.type);
   const out = [];
-  out.push({ title: `Aufgabe: ${A.label}`, content: [repP(A.desc + '.'), repKV([
-    ['Nachweiskonzept', NORM_LABEL(n)],
+  out.push({ title: `Aufgabe: ${A.label}`, content: [repP(A.desc + '.'), RK([
+    ['Norm', n.code === 'EC' ? 'EN 1997-1, Verfahren 2' : 'SIA 267 / SIA 260'],
+    r.type === 'grundbruch' || r.type === 'stuetzmauer' ? ['Grundbruch und Gleiten', n.geoMode === 'M' ? 'Bodenkennwerte mit γ_M' : 'Widerstandsbeiwerte γ_R'] : null,
     ['Bodenverhalten', r.type === 'grundbruch' ? DRAIN[p.bc.drainage] : r.type === 'boeschung' ? DRAIN[p.sl.drainage] : r.type === 'stuetzmauer' ? DRAIN[p.rw.drainage] : 'drainiert (effektive Spannungen)'],
   ])] });
   out.push({ title: 'Baugrund', content: [
-    repP(`Schichttiefen ab ${DEPTH_REF[r.type]}. Charakteristische Werte.`),
-    repTable(['Schicht', { label: 'OK z [m]', num: true, digits: 2 }, { label: 'γ [kN/m³]', num: true, digits: 1 }, { label: "γ' [kN/m³]", num: true, digits: 1 }, { label: "φ'_k [°]", num: true, digits: 1 }, { label: "c'_k [kN/m²]", num: true, digits: 1 }, { label: 'c_u,k [kN/m²]', num: true, digits: 1 }, { label: 'M_E [MN/m²]', num: true, digits: 1 }, { label: 'δ/φ', num: true, digits: 2 }],
-      [...p.soil.layers].sort((a, b) => a.z - b.z).map((l) => [l.name, +l.z, +l.gamma, +l.gammaP, +l.phi, +l.c, +l.cu, +l.ME, +l.dr])),
+    repP(`Bezugsniveau: ${DEPTH_REF[r.type]}. Charakteristische Werte.`),
+    RT(['Bodenart', { label: 'γ [kN/m³]', num: true, digits: 1 }, { label: "γ' [kN/m³]", num: true, digits: 1 }, { label: "φ'_k [°]", num: true, digits: 1 }, { label: "c'_k [kN/m²]", num: true, digits: 1 }, { label: 'c_u,k [kN/m²]', num: true, digits: 1 }, { label: 'M_E [MN/m²]', num: true, digits: 1 }, { label: 'δ/φ', num: true, digits: 2 }],
+      p.soil.soils.map((l, i) => [`${l.name}${i === (p.soil.base ?? 0) ? ' (Untergrund)' : ''}`, +l.gamma, +l.gammaP, +l.phi, +l.c, +l.cu, +l.ME, +l.dr])),
+    p.soil.zones.length ? RT(['Fläche', 'Bodenart', 'Lage'], p.soil.zones.map((z, k) => [String(k + 1), p.soil.soils[z.soil]?.name ?? '?', zoneText(z)])) : null,
     repP(r.type === 'boeschung' && p.sl.waterMode === 'line' ? 'Wasserspiegel als Sickerlinie (siehe Eingaben).' : r.type === 'boeschung' && p.sl.waterMode === 'none' ? 'Kein Wasser angesetzt.' : p.soil.gw?.on ? `Grundwasserspiegel ${fmt(+p.soil.gw.z, 2)} m unter der Bezugsebene, γ_w = ${fmt(+p.soil.gammaW || 10, 1)} kN/m³.` : 'Kein Grundwasser angesetzt.'),
   ] });
-  out.push({ title: 'Partialfaktoren', content: [repTable(['Faktor', { label: 'Wert', num: true, digits: 2 }, 'Verwendung'], [
+  out.push({ title: 'Partialfaktoren', content: [RT(['Faktor', { label: 'Wert', num: true, digits: 2 }, 'Verwendung'], [
     ['γ_φ (auf tan φ\')', n.gPhi, n.geoMode === 'M' ? 'Grundbruch, Gleiten, Böschung' : 'Böschung'],
     ["γ_c (auf c')", n.gC, n.geoMode === 'M' ? 'Grundbruch, Gleiten, Böschung' : 'Böschung'],
     ['γ_cu (auf c_u)', n.gCu, n.geoMode === 'M' ? 'Grundbruch, Gleiten, Böschung' : 'Böschung'],
@@ -310,7 +321,7 @@ export function buildReport(app) {
     ['γ_R,v / γ_R,h / γ_R,e', `${fmt(n.gRv, 2)} / ${fmt(n.gRh, 2)} / ${fmt(n.gRe, 2)}`, 'Grundbruch / Gleiten / Erdwiderstand'],
     ['γ_R (Böschung)', n.gRs, 'Gesamtstabilität: F_d ≥ γ_R'],
   ])] });
-  const fig = (mode, cap) => repFigure(app.snapshot(mode), cap);
+  const fig = (mode, cap) => { setPrintMode(true); try { return repFigure(app.snapshot(mode), cap); } finally { setPrintMode(false); } };
   const modes = VIEW_MODES[r.type] || [];
   out.push({ title: 'Darstellungen', content: modes.map((m) => fig(m.id, m.label)) });
   const fn = { erddruck: repEP, grundbruch: repBC, setzung: repST, boeschung: repSL, stuetzmauer: repRW }[r.type];
@@ -319,7 +330,15 @@ export function buildReport(app) {
   return out;
 }
 
-const NORM_LABEL = (n) => `${n.code === 'EC' ? 'EN 1997-1, Nachweisverfahren 2' : 'SIA 267 / SIA 260'}; Grundbruch/Gleiten mit ${n.geoMode === 'M' ? 'Bemessungswerten der Bodenkennwerte (γ_M)' : 'charakteristischen Bodenkennwerten und Widerstandsbeiwerten γ_R'}`;
+function zoneText(z) {
+  const ys = z.ring.map((q) => q[1]);
+  if (z.ring.length === 4 && z.ring.every((q) => Math.abs(Math.abs(q[0]) - FAR) < 1e-6)) {
+    const top = Math.max(...ys), bot = Math.min(...ys);
+    return `waagrecht, Tiefe ${top >= TOP - 1e-6 ? 'ab Oberfläche' : `${fmt(-top, 2)} m`} bis ${fmt(-bot, 2)} m`;
+  }
+  return `Polygon: ${z.ring.map((q) => `(${fmt(q[0], 2)}; ${fmt(q[1], 2)})`).join(' ')}`;
+}
+
 
 export const DEPTH_REF = {
   erddruck: 'Wandkopf (Gelände an der Wandrückseite)',
@@ -330,13 +349,13 @@ export const DEPTH_REF = {
 };
 
 const checkRows = (checks) => checks.map((c) => [c.label + (c.ref ? ` (${c.ref})` : ''), c.Ed === undefined ? '' : `${fmt(c.Ed, c.digits ?? 1)} ${c.unit || ''}`, c.Rd === undefined ? '' : `${fmt(c.Rd, c.digits ?? 1)} ${c.unit || ''}`, c.eta, Number.isFinite(c.eta) && c.eta <= 1.0001 ? 'erfüllt' : 'nicht erfüllt']);
-const checkTable = (checks, ed = 'E_d', rd = 'R_d') => repTable(['Nachweis', { label: ed, num: true }, { label: rd, num: true }, { label: 'η', num: true, digits: 2 }, 'Status'], checkRows(checks));
+const checkTable = (checks, ed = 'E_d', rd = 'R_d') => RT(['Nachweis', { label: ed, num: true }, { label: rd, num: true }, { label: 'η', num: true, digits: 2 }, 'Status'], checkRows(checks));
 
 function repEP(r, p, n) {
   const R = r.ep, e = p.ep;
   const passive = R.passive;
   return [
-    { title: 'Eingaben', content: repKV([
+    { title: 'Eingaben', content: RK([
       ['Erddruckart', KIND[R.kind]], ['Wandhöhe H', +e.H, 'm', 2], ['Wandneigung α', +e.alpha || 0, '°', 1], ['Geländeneigung β', +e.beta || 0, '°', 1],
       passive ? ['Verfahren', e.passiveMethod === 'coulomb' ? 'ebene Gleitfläche (Coulomb)' : 'gekrümmte Gleitfläche (Lancellotta 2002)'] : ['Verfahren', e.method === 'rankine' ? 'Rankine (δ = β)' : 'Coulomb (δ = δ/φ · φ je Schicht)'],
       passive ? ['δ_p/φ', +e.dpRatio, '', 2] : null,
@@ -344,14 +363,14 @@ function repEP(r, p, n) {
       ['Flächenlast q', +e.q || 0, 'kN/m²', 1], ['Wasserdruck', e.water ? 'ja' : 'nein'],
     ]) },
     { title: 'Berechnung', content: [
-      repFormula(passive
+      RF(passive
         ? "Erdwiderstand: e_ph = K_pgh·σ'_v + K_pqh·q + K_pch·c'\nGekrümmt (Lancellotta): K_p = cos δ/(1−sin φ)·[cos δ + √(sin²φ − sin²δ)]·exp(2θ·tan φ), 2θ = asin(sin δ/sin φ) + δ"
         : "e_ah(z) = K_agh·σ'_v(z) + K_aqh·q − K_ach·c'  ≥ 0   (DIN 4085, Coulomb/Müller-Breslau)\nK_agh = cos²(φ−α) / {cos²α·[1 + √(sin(φ+δ)·sin(φ−β)/(cos(α−β)·cos(α+δ)))]²}\nK_ach = 2·cos(α−β)·cos φ·cos(α+δ) / [(1+sin(φ+α+δ−β))·cos β],   K_aqh = K_agh·cos α·cos β/cos(α−β)\nK_0 = (1 − sin φ)·√OCR·(1 + sin β)   (EN 1997-1, 9.5.2)"),
-      repTable(['Schicht', { label: "φ'", num: true, digits: 1 }, { label: 'δ', num: true, digits: 1 }, { label: 'K_h', num: true, digits: 3 }, { label: 'K_ch', num: true, digits: 3 }, { label: 'ϑ_a', num: true, digits: 1 }],
+      RT(['Schicht', { label: "φ'", num: true, digits: 1 }, { label: 'δ', num: true, digits: 1 }, { label: 'K_h', num: true, digits: 3 }, { label: 'K_ch', num: true, digits: 3 }, { label: 'ϑ_a', num: true, digits: 1 }],
         R.layers.map((L) => [L.name, L.phi, passive ? L.deltaP : L.delta, L.Kgh, L.Kch, L.theta ?? '–'])),
-      repTable([{ label: 'z [m]', num: true, digits: 2 }, { label: "σ'_v [kN/m²]", num: true, digits: 1 }, { label: 'e_h [kN/m²]', num: true, digits: 1 }, { label: 'u [kN/m²]', num: true, digits: 1 }], edgeRows(R).map((q) => [q.z, q.svp, q.eh, q.u])),
+      RT([{ label: 'z [m]', num: true, digits: 2 }, { label: "σ'_v [kN/m²]", num: true, digits: 1 }, { label: 'e_h [kN/m²]', num: true, digits: 1 }, { label: 'u [kN/m²]', num: true, digits: 1 }], edgeRows(R).map((q) => [q.z, q.svp, q.eh, q.u])),
       repFigure(xyChart({ ...epChartOpts(R), crosshair: false, width: 520, height: 320 }), 'Erddruckverteilung über die Tiefe'),
-      repKV([
+      RK([
         [passive ? 'E_ph,k' : 'E_ah,k', R.Eh, 'kN/m', 1], [passive ? 'E_pv,k' : 'E_av,k', R.Ev, 'kN/m', 1], ['Angriff über Fuss', R.hE, 'm', 2],
         R.U > 0 ? ['Wasserdruck W', R.U, 'kN/m', 1] : null,
         [passive ? 'E_ph,d = E_ph,k/γ_R,e' : `E_d = ${fmt(n.gG, 2)}·(E_G + W) + ${fmt(n.gQ, 2)}·E_Q`, R.Ed, 'kN/m', 1],
@@ -367,12 +386,12 @@ function repBC(r, p, n) {
   const content = [];
   if (!g.error) {
     const G = g.gov;
-    content.push(repFormula(G.drained
+    content.push(RF(G.drained
       ? "R/A' = c'·N_c·b_c·s_c·i_c + q'·N_q·b_q·s_q·i_q + 0.5·γ'·B'·N_γ·b_γ·s_γ·i_γ   (EN 1997-1, Anh. D.4)\nN_q = e^(π·tan φ)·tan²(45°+φ/2),  N_c = (N_q−1)·cot φ,  N_γ = 2·(N_q−1)·tan φ\ns_q = 1 + (B'/L')·sin φ,  s_γ = 1 − 0.3·B'/L',  i_q = [1 − H/(V + A'·c'·cot φ)]^m,  i_γ = [...]^(m+1)"
       : "R/A' = (π+2)·c_u·b_c·s_c·i_c + q   (EN 1997-1, Anh. D.3)\ns_c = 1 + 0.2·B'/L',  i_c = ½·[1 + √(1 − H/(A'·c_u))]"));
-    content.push(repTable(['Term', { label: 'N', num: true, digits: 2 }, { label: 'b', num: true, digits: 3 }, { label: 's', num: true, digits: 3 }, { label: 'i', num: true, digits: 3 }, { label: 'Anteil [kN/m²]', num: true, digits: 1 }],
+    content.push(RT(['Term', { label: 'N', num: true, digits: 2 }, { label: 'b', num: true, digits: 3 }, { label: 's', num: true, digits: 3 }, { label: 'i', num: true, digits: 3 }, { label: 'Anteil [kN/m²]', num: true, digits: 1 }],
       G.drained ? [["c'", G.N.Nc, G.b.c, G.s.c, G.i.c, G.terms.c], ["q'", G.N.Nq, G.b.q, G.s.q, G.i.q, G.terms.q], ["γ'", G.N.Ng, G.b.g, G.s.g, G.i.g, G.terms.g]] : [['c_u', G.N.Nc, G.b.c, G.s.c, G.i.c, G.terms.c], ['q', 1, 1, 1, 1, G.terms.q]]));
-    content.push(repKV([
+    content.push(RK([
       ['massgebende Kombination', `γ_G = ${fmt(g.ld.gG, 2)}, γ_Q = ${fmt(g.ld.gQ, 2)}`],
       ['V_d / H_d', `${fmt(g.ld.V, 1)} / ${fmt(g.H, 1)}`, unitF(strip)],
       ['Ausmitte e_B / e_L', `${fmt(g.eB, 3)} / ${fmt(g.eL, 3)}`, 'm'],
@@ -381,12 +400,12 @@ function repBC(r, p, n) {
       ['R_k / R_d = R_k/γ_R,v', `${fmt(g.R, 1)} / ${fmt(g.Rd, 1)}`, unitF(strip)],
     ]));
   }
-  content.push(repKV([
+  content.push(RK([
     ['Gleiten', `H_d = ${fmt(R.govS.Hd, 1)}, R_h,d = ${fmt(R.govS.Rd, 1)} ${unitF(strip)} (${R.govS.type}, δ = ${fmt(R.slDelta, 1)}°)`],
     ['Ausmitte ständig', `e_B = ${fmt(R.eG.eB, 3)} m, e_L = ${fmt(R.eG.eL, 3)} m`],
   ]));
   return [
-    { title: 'Eingaben', content: repKV([
+    { title: 'Eingaben', content: RK([
       ['Fundamentform', { strip: 'Streifen (je m)', rect: 'Rechteck', circle: 'Kreis' }[R.shape]],
       [R.shape === 'circle' ? 'Durchmesser' : 'Breite B', R.B, 'm', 2], R.shape === 'rect' ? ['Länge L', R.L, 'm', 2] : null,
       ['Einbindetiefe D', R.D, 'm', 2], ['Fundamentdicke t', R.t, 'm', 2], ['Sohlneigung α', +f.alphaBase || 0, '°', 1],
@@ -403,7 +422,7 @@ function repST(r, p) {
   const R = r.st, s = p.st;
   const sAllow = Number(s.sAllow) || 0;
   return [
-    { title: 'Eingaben', content: repKV([
+    { title: 'Eingaben', content: RK([
       ['Fundamentform', { strip: 'Streifen', rect: 'Rechteck', circle: 'Kreis' }[R.shape]],
       [R.shape === 'circle' ? 'Durchmesser' : 'Breite B', R.B, 'm', 2], R.shape === 'rect' ? ['Länge L', R.L, 'm', 2] : null,
       ['Gründungstiefe D', R.D, 'm', 2], ['Sohlspannung σ₀', R.p0, 'kN/m²', 1],
@@ -412,9 +431,9 @@ function repST(r, p) {
       ['Bezugspunkt', R.refKey === 'char' ? 'kennzeichnender Punkt (starr)' : 'Mitte (schlaff)'],
     ]) },
     { title: 'Berechnung', content: [
-      repFormula("Eckpunktformel (Steinbrenner, aus Boussinesq):  σ_z = p/(2π)·[arctan(ab/(zR)) + abz/R·(1/(a²+z²) + 1/(b²+z²))],  R = √(a²+b²+z²)\nÜberlagerung von vier Eckrechtecken für Mitte, kennzeichnenden Punkt (0.37·B, 0.37·L ab Mitte) und Ecke\ns = Σ Δσ_z·Δz / M_E   bis z_gr mit Δσ_z(z_gr) = f·σ'_v0(z_gr)"),
-      repKV([['p_netto', R.pNet, 'kN/m²', 1], ['Grenztiefe z_gr', R.zLim, 'm', 2], ['s Mitte / kennz. Punkt / Rand', `${fmt(R.sCentre, 1)} / ${fmt(R.sChar, 1)} / ${fmt(R.sEdge, 1)}`, 'mm']]),
-      repTable(['Schicht', { label: 'von [m]', num: true, digits: 2 }, { label: 'bis [m]', num: true, digits: 2 }, { label: 'M_E [MN/m²]', num: true, digits: 1 }, { label: 'Δσ_m [kN/m²]', num: true, digits: 1 }, { label: 's [mm]', num: true, digits: 1 }],
+      RF("Eckpunktformel (Steinbrenner, aus Boussinesq):  σ_z = p/(2π)·[arctan(ab/(zR)) + abz/R·(1/(a²+z²) + 1/(b²+z²))],  R = √(a²+b²+z²)\nÜberlagerung von vier Eckrechtecken für Mitte, kennzeichnenden Punkt (0.37·B, 0.37·L ab Mitte) und Ecke\ns = Σ Δσ_z·Δz / M_E   bis z_gr mit Δσ_z(z_gr) = f·σ'_v0(z_gr)"),
+      RK([['p_netto', R.pNet, 'kN/m²', 1], ['Grenztiefe z_gr', R.zLim, 'm', 2], ['s Mitte / kennz. Punkt / Rand', `${fmt(R.sCentre, 1)} / ${fmt(R.sChar, 1)} / ${fmt(R.sEdge, 1)}`, 'mm']]),
+      RT(['Schicht', { label: 'von [m]', num: true, digits: 2 }, { label: 'bis [m]', num: true, digits: 2 }, { label: 'M_E [MN/m²]', num: true, digits: 1 }, { label: 'Δσ_m [kN/m²]', num: true, digits: 1 }, { label: 's [mm]', num: true, digits: 1 }],
         R.layers.map((l) => [l.name, l.from, l.to, l.ME, l.dsigAvg, l.ds[R.refKey]])),
       repFigure(xyChart({
         series: [
@@ -435,21 +454,23 @@ function repSL(r, p, n) {
   const S = best.slices || [];
   const step = Math.max(1, Math.ceil(S.length / 15));
   return [
-    { title: 'Eingaben', content: repKV([
-      ['Geländelinie', (s.surface || []).map((q) => `(${fmt(+q.x, 2)}; ${fmt(+q.y, 2)})`).join('  ')],
-      ['Wasser', { none: 'kein Wasser', gw: 'horizontaler Grundwasserspiegel', line: 'Sickerlinie (Polylinie)' }[s.waterMode]],
-      ['Auflast', s.q && +s.q.p ? `q = ${fmt(+s.q.p, 1)} kN/m² von x = ${fmt(+s.q.x1, 2)} bis ${fmt(+s.q.x2, 2)} m` : 'keine'],
-      ['Lamellen', R.n, '', 0], ['Mindesttiefe Gleitkörper', +s.tMin || 0, 'm', 2],
-      ['Suchraster', `${R.grid.nx} × ${R.grid.ny} Mittelpunkte × ${R.grid.nr} Radien${s.grid?.auto === false ? ' (manuell)' : ' (automatisch)'}`],
-    ]) },
+    { title: 'Eingaben', content: [
+      RT(['Punkt', { label: 'x [m]', num: true, digits: 2 }, { label: 'y [m]', num: true, digits: 2 }], (s.surface || []).map((q, k) => [String(k + 1), +q.x, +q.y]), { caption: 'Geländelinie' }),
+      RK([
+        ['Wasser', { none: 'kein Wasser', gw: 'horizontaler Grundwasserspiegel', line: 'Sickerlinie (Polylinie)' }[s.waterMode]],
+        ['Auflast', s.q && +s.q.p ? `q = ${fmt(+s.q.p, 1)} kN/m², x = ${fmt(+s.q.x1, 2)} … ${fmt(+s.q.x2, 2)} m` : 'keine'],
+        ['Lamellen', R.n, '', 0], ['Mindesttiefe Gleitkörper', +s.tMin || 0, 'm', 2],
+        ['Suchraster', `${R.grid.nx} × ${R.grid.ny} × ${R.grid.nr}${s.grid?.auto === false ? ' (manuell)' : ' (automatisch)'}`],
+      ]),
+    ] },
     { title: 'Berechnung', content: [
-      repFormula("Bishop (vereinfacht):  F = Σ [c'·b + (W − u·b)·tan φ'] / m_α  /  Σ W·sin α,   m_α = cos α + sin α·tan φ'/F\nFellenius:  F = Σ [c'·l + (W·cos α − u·l)·tan φ']  /  Σ W·sin α\nBemessung: tan φ'_d = tan φ'/γ_φ, c'_d = c'/γ_c, c_u,d = c_u/γ_cu, q_d = γ_Q·q (nur ungünstig);  F_d ≥ γ_R"),
-      repKV([
+      RF("Bishop (vereinfacht):  F = Σ [c'·b + (W − u·b)·tan φ'] / m_α  /  Σ W·sin α,   m_α = cos α + sin α·tan φ'/F\nFellenius:  F = Σ [c'·l + (W·cos α − u·l)·tan φ']  /  Σ W·sin α\nBemessung: tan φ'_d = tan φ'/γ_φ, c'_d = c'/γ_c, c_u,d = c_u/γ_cu, q_d = γ_Q·q (nur ungünstig);  F_d ≥ γ_R"),
+      RK([
         ['F (Bishop, charakteristisch)', R.F, '', 3], ['F (Fellenius, charakteristisch)', R.FF, '', 3], ['F_d (Bishop, Bemessung)', R.Fd, '', 3],
         ['Kritischer Kreis (Bemessung)', `x_M = ${fmt(R.M.tx(best.xc), 2)} m, y_M = ${fmt(best.yc, 2)} m, R = ${fmt(best.R, 2)} m`],
         ['Ein-/Austritt', `x = ${fmt(R.M.tx(best.xa), 2)} / ${fmt(R.M.tx(best.xe), 2)} m`],
       ]),
-      S.length ? repTable([{ label: 'Nr', num: true, digits: 0 }, { label: 'x [m]', num: true, digits: 2 }, { label: 'b [m]', num: true, digits: 2 }, { label: 'α [°]', num: true, digits: 1 }, { label: 'W [kN/m]', num: true, digits: 1 }, { label: 'u [kN/m²]', num: true, digits: 1 }, { label: 'c_d', num: true, digits: 1 }, { label: 'φ_d [°]', num: true, digits: 1 }, 'Schicht'],
+      S.length ? RT([{ label: 'Nr', num: true, digits: 0 }, { label: 'x [m]', num: true, digits: 2 }, { label: 'b [m]', num: true, digits: 2 }, { label: 'α [°]', num: true, digits: 1 }, { label: 'W [kN/m]', num: true, digits: 1 }, { label: 'u [kN/m²]', num: true, digits: 1 }, { label: 'c_d', num: true, digits: 1 }, { label: 'φ_d [°]', num: true, digits: 1 }, 'Schicht'],
         S.filter((_, i) => i % step === 0).map((sl) => [S.indexOf(sl) + 1, R.M.tx(sl.xm), sl.b, sl.alpha * 180 / Math.PI, sl.W + sl.Q, sl.u, sl.c, Math.atan(sl.tanPhi) * 180 / Math.PI, sl.layer]), { caption: `Lamellen (Auszug, jede ${step}. von ${S.length})` }) : null,
     ] },
     { title: 'Nachweis', content: checkTable([{ label: 'Gesamtstabilität F_d ≥ γ_R (SIA 267 / EN 1997-1, 11.5.1)', Ed: n.gRs, Rd: R.Fd, digits: 3, eta: R.eta }], 'erforderlich', 'vorhanden') },
@@ -459,7 +480,7 @@ function repSL(r, p, n) {
 function repRW(r, p) {
   const R = r.rw, w = p.rw, g = R.g;
   return [
-    { title: 'Eingaben', content: repKV([
+    { title: 'Eingaben', content: RK([
       ['Wand h_s / t_oben / t_unten', `${fmt(g.hs, 2)} / ${fmt(g.tTop, 2)} / ${fmt(g.tBot, 2)}`, 'm'],
       ['Fundament Zehe / Ferse / Dicke / Breite', `${fmt(g.toe, 2)} / ${fmt(g.heel, 2)} / ${fmt(g.d, 2)} / ${fmt(g.B, 2)}`, 'm'],
       ['Einbindetiefe vorne D_f', g.Df, 'm', 2],
@@ -469,10 +490,10 @@ function repRW(r, p) {
       ['Wasserdruck', w.water ? 'ja' : 'nein'], ['Beton γ_c', +w.gammaC || 25, 'kN/m³', 1],
     ]) },
     { title: 'Berechnung', content: [
-      repFormula("Erddruck auf die lotrechte Ersatzwand durch das Fersenende (Bodenkörper über der Ferse gehört zum Stützkörper)\nGleiten: H_d = γ_G·E_ah,G + γ_Q·E_ah,Q ≤ R_h,d = γ_G,inf·V_G·tan δ_b/γ_R,h (+ E_p,Sporn/γ_R,e)\nAusmitte: e = B/2 − (ΣM_stb − ΣM_dst)/ΣV;  ständig e ≤ B/6, Bemessung e ≤ B/3;  Grundbruch mit B' = B − 2e"),
-      repTable(['Kraft', { label: 'V [kN/m]', num: true, digits: 1 }, { label: 'H [kN/m]', num: true, digits: 1 }, { label: 'x [m]', num: true, digits: 2 }, { label: 'y [m]', num: true, digits: 2 }],
+      RF("Erddruck auf die lotrechte Ersatzwand durch das Fersenende (Bodenkörper über der Ferse gehört zum Stützkörper)\nGleiten: H_d = γ_G·E_ah,G + γ_Q·E_ah,Q ≤ R_h,d = γ_G,inf·V_G·tan δ_b/γ_R,h (+ E_p,Sporn/γ_R,e)\nAusmitte: e = B/2 − (ΣM_stb − ΣM_dst)/ΣV;  ständig e ≤ B/6, Bemessung e ≤ B/3;  Grundbruch mit B' = B − 2e"),
+      RT(['Kraft', { label: 'V [kN/m]', num: true, digits: 1 }, { label: 'H [kN/m]', num: true, digits: 1 }, { label: 'x [m]', num: true, digits: 2 }, { label: 'y [m]', num: true, digits: 2 }],
         R.forces.map((f) => [f.name, -f.Fy, -f.Fx, f.x, f.y])),
-      repKV([
+      RK([
         ['E_ah,k (G / Q)', `${fmt(R.ep.EhG, 1)} / ${fmt(R.ep.EhQ, 1)}`, 'kN/m'],
         ['ΣV_k ständig / total', `${fmt(R.charG.N, 1)} / ${fmt(R.charAll.N, 1)}`, 'kN/m'],
         ['Ausmitte e_k (ständig)', R.charG.e, 'm', 3],
