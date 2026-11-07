@@ -62,22 +62,29 @@
         </div>
       </div>
       <div class="hero-art" aria-hidden="true">
-        <svg viewBox="0 0 360 210">
+        <!-- Zweigelenkrahmen 12 × 6 m (Stiele HEB 300, Riegel IPE 450), q = 26 kN/m; Momente auf der Zugseite,
+             Massstab 26 px ≙ 215.5 kNm: Ecke −215.5 kNm in Stiel und Riegel, Feldmitte +252.5 kNm (Summe = qL²/8) -->
+        <svg viewBox="0 0 360 230">
           <defs>
-            <linearGradient id="m" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--c-pos)" stop-opacity=".45"/><stop offset="1" stop-color="var(--c-pos)" stop-opacity=".08"/></linearGradient>
+            <linearGradient id="m" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--c-pos)" stop-opacity=".08"/><stop offset="1" stop-color="var(--c-pos)" stop-opacity=".45"/></linearGradient>
+            <clipPath id="hero-top"><rect width="360" height="100"/></clipPath>
+            <clipPath id="hero-bot"><rect y="100" width="360" height="130"/></clipPath>
           </defs>
           <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M60 70 Q180 150 300 70 Z" fill="url(#m)" stroke="var(--c-pos)" stroke-width="2"/>
-            <path d="M60 170 L60 70 L34 70 Z" stroke="var(--c-neg)" stroke-width="1.6" fill="var(--c-neg-fill)"/>
-            <path d="M300 170 L300 70 L326 70 Z" stroke="var(--c-neg)" stroke-width="1.6" fill="var(--c-neg-fill)"/>
-            <path d="M60 170V70h240v100" stroke="var(--c-struct)" stroke-width="5"/>
+            <path d="M60 100V74Q180 187 300 74V100Z" clip-path="url(#hero-bot)" fill="url(#m)" stroke="var(--c-pos)" stroke-width="2"/>
+            <path d="M60 100V74Q180 187 300 74V100Z" clip-path="url(#hero-top)" fill="var(--c-neg-fill)" stroke="var(--c-neg)" stroke-width="1.6"/>
+            <path d="M60 200V100H34Z" stroke="var(--c-neg)" stroke-width="1.6" fill="var(--c-neg-fill)"/>
+            <path d="M300 200V100H326Z" stroke="var(--c-neg)" stroke-width="1.6" fill="var(--c-neg-fill)"/>
+            <path d="M60 200V100h240v100" stroke="var(--c-struct)" stroke-width="5"/>
             <g stroke="var(--c-load)" stroke-width="1.6">
               <path d="M60 36h240M60 36v26M100 36v26M140 36v26M180 36v26M220 36v26M260 36v26M300 36v26" />
               <path d="M56 56l4 7 4-7M96 56l4 7 4-7M136 56l4 7 4-7M176 56l4 7 4-7M216 56l4 7 4-7M256 56l4 7 4-7M296 56l4 7 4-7" fill="var(--c-load)"/>
             </g>
-            <path d="M48 186h24M288 186h24M60 170l-9 15h18zM300 170l-9 15h18z" stroke="var(--c-support)" stroke-width="1.8" fill="var(--surface)"/>
+            <path d="M48 216h24M288 216h24M60 200l-9 15h18zM300 200l-9 15h18z" stroke="var(--c-support)" stroke-width="1.8" fill="var(--surface)"/>
           </g>
-          <text x="180" y="138" text-anchor="middle" font-size="13" font-weight="700" fill="var(--c-pos)">M = 178.1 kNm</text>
+          <text x="54" y="92" text-anchor="end" font-size="11" font-weight="700" fill="var(--c-neg)">−215.5</text>
+          <text x="306" y="92" font-size="11" font-weight="700" fill="var(--c-neg)">−215.5</text>
+          <text x="180" y="158" text-anchor="middle" font-size="13" font-weight="700" fill="var(--c-pos)">M = 252.5 kNm</text>
           <text x="180" y="28" text-anchor="middle" font-size="12" fill="var(--c-load)">q = 26 kN/m</text>
         </svg>
       </div>

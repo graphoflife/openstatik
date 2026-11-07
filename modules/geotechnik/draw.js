@@ -93,23 +93,31 @@ function bbox(pts) {
   return { x0, y0, x1, y1 };
 }
 
-/** Schraffur (Linien in Weltkoordinaten, auf das Polygon beschnitten). */
-function hatch(v, poly, st, gap, parent, color = 'var(--c-soil)') {
+/**
+ * Schraffur (Linien in Weltkoordinaten, auf das Polygon beschnitten). Nur im Bereich `limit` (sichtbares Modell)
+ * und als ein einziger Pfad – Bodenflächen können weit über das Modell hinausreichen.
+ */
+function hatch(v, poly, st, gap, parent, color = 'var(--c-soil)', limit = null) {
   if (st.hatch === null || st.hatch === undefined) return;
-  const g = clipGroup(v, poly, parent);
-  const b = bbox(poly);
+  let b = bbox(poly);
+  if (limit) b = { x0: Math.max(b.x0, limit.x0), y0: Math.max(b.y0, limit.y0), x1: Math.min(b.x1, limit.x1), y1: Math.min(b.y1, limit.y1) };
+  if (!(b.x1 > b.x0 && b.y1 > b.y0)) return;
   const diag = Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
   const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
   const angles = st.hatch === 'x' ? [45, -45] : [st.hatch];
-  const sp = gap * (st.gap || 1);
+  const sp = Math.max(gap * (st.gap || 1), diag / 400); // höchstens ~400 Linien je Richtung
+  const f = (x) => +x.toFixed(4);
+  let d = '';
   for (const a of angles) {
-    const d = [Math.cos(rad(a)), Math.sin(rad(a))], n = [-d[1], d[0]];
+    const dir = [Math.cos(rad(a)), Math.sin(rad(a))], n = [-dir[1], dir[0]];
     const k = Math.ceil(diag / 2 / sp);
     for (let i = -k; i <= k; i++) {
       const ox = cx + n[0] * i * sp, oy = cy + n[1] * i * sp;
-      v.line(ox - d[0] * diag / 2, oy - d[1] * diag / 2, ox + d[0] * diag / 2, oy + d[1] * diag / 2, { parent: g, stroke: color, width: 0.7, opacity: 0.6 });
+      d += `M${f(ox - dir[0] * diag / 2)} ${f(oy - dir[1] * diag / 2)}L${f(ox + dir[0] * diag / 2)} ${f(oy + dir[1] * diag / 2)}`;
     }
   }
+  const g = clipGroup(v, poly, parent);
+  g.append(svgEl('path', { d, 'vector-effect': 'non-scaling-stroke', style: { fill: 'none', stroke: color, strokeWidth: 0.7, opacity: 0.6 } }));
 }
 
 /** Gruppe in der Weltebene, auf ein Polygon beschnitten (SVG-clipPath). */
@@ -147,7 +155,7 @@ function drawGround(v, soil, region, ref, opts) {
   const paint = (poly, S) => {
     const st = layerStyle(S.col), col = soilColor(S.col);
     v.polygon(poly, { parent: gr, fill: col, fillOpacity: st.op, stroke: 'none' });
-    if (opts.hatch) hatch(v, poly, st, opts.gap, gr, col);
+    if (opts.hatch) hatch(v, poly, st, opts.gap, gr, col, rb);
   };
   paint(region, G.soils[G.base]);
   add({ type: 'region', id: 'Z:b', ring: region, label: `Untergrund «${G.soils[G.base].name}»`, movable: false });
