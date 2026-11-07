@@ -26,12 +26,14 @@ export function derivation(app) {
 
   // 2 Kombinationen
   const lcs = p.loadCases;
+  // Faktoren aus dem Ergebnis: r.combos enthält nur die tatsächlich gerechneten (nicht leeren) Kombinationen
   const comboSteps = r.combos.map((c, i) => {
-    const terms = lcs.map((lc, j) => {
-      const f = +p.combinations[i]?.factors?.[j] || 0;
-      return f ? `${num(f, 2)}·${lc.kind}_{${j + 1}}` : null;
-    }).filter(Boolean);
-    return { label: `K${i + 1}: ${c.name}`, f: `E_d = ${terms.join(' + ') || '0'}`, note: terms.length ? lcs.map((lc, j) => (+p.combinations[i]?.factors?.[j] ? `${lc.kind}${j + 1} = ${lc.name}` : null)).filter(Boolean).join(' · ') : '' };
+    const used = lcs.map((lc, j) => ({ lc, j, f: c.factors[j] })).filter((t) => t.f);
+    return {
+      label: `K${i + 1}: ${c.name}`,
+      f: `E_d = ${used.map((t) => `${num(t.f, 2)}·${t.lc.kind}_{${t.j + 1}}`).join(' + ') || '0'}`,
+      note: used.map((t) => `${t.lc.kind}${t.j + 1} = ${t.lc.name}`).join(' · '),
+    };
   });
   out.push({
     id: 'kombi', title: 'Lastfallkombinationen', ref: 'SIA 260, Gl. (10), (17), (19)',

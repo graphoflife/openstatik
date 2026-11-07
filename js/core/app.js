@@ -68,6 +68,17 @@ function newMeta() {
   return { name: 'Neues Projekt', author: '', number: '', date: new Date().toLocaleDateString('de-CH'), comment: '' };
 }
 
+/**
+ * Projektangaben beim Laden eines Beispiels in ein leeres Projekt: noch unberührte Felder (Name, Bemerkungen …)
+ * kommen aus dem Beispiel, eigene Eingaben bleiben erhalten.
+ */
+export function adoptExampleMeta(meta, ex, exMeta = {}) {
+  const untouched = (k) => !meta[k] || (k === 'name' && meta[k] === newMeta().name);
+  const out = { ...meta };
+  for (const [k, v] of Object.entries({ ...exMeta, name: ex.name })) if (v && untouched(k)) out[k] = v;
+  return out;
+}
+
 export function createApp(def) {
   applyTheme();
   const urlTheme = new URLSearchParams(location.search).get('theme');
@@ -392,13 +403,10 @@ export function createApp(def) {
 
   function loadExample(ex) {
     const p = ex.project();
-    if (!app.doc) {
-      const d = docFromProject(p, ex.name);
-      d.meta.name = ex.name;
-      app.setDocument(d);
-    } else if (isEmptyProject(app.project)) {
+    if (isEmptyProject(app.project)) {
+      // in place: app.project.meta verweist auf dasselbe Objekt
+      Object.assign(app.doc.meta, adoptExampleMeta(app.doc.meta, ex, p.meta));
       app.setProject(p, { name: ex.name });
-      if (app.doc.meta.name === 'Neues Projekt') { app.doc.meta.name = ex.name; autosave(); }
     } else {
       app.addInstance(p, ex.name);
       toast(`Beispiel als neue ${inst.label} «${ex.name}» hinzugefügt – Ihre bisherigen ${inst.plural} bleiben oben links auswählbar.`, 'ok', 5000);

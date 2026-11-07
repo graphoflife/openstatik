@@ -169,3 +169,25 @@ test('Material und Querschnitt getrennt: gleicher Querschnitt, verschiedene Mate
   assert.deepEqual(old.members.map((m) => m.mat), [2, 1]);
   assert.equal(old.sections[0].mat, undefined);
 });
+
+test('Herleitung: Kombinationsfaktoren stimmen auch nach einer leeren Kombination', async () => {
+  const { newMaterial, newSection } = await import('../modules/stabwerk/sections.js');
+  const { derivation } = await import('../modules/stabwerk/derivation.js');
+  const lc = (name, kind, q) => ({ name, kind, selfWeight: false, nodal: [], dist: [{ member: 1, dir: 'g', q1: q }], point: [], temp: [], settle: [] });
+  const p = {
+    nodes: [{ x: 0, y: 0 }, { x: 6, y: 0 }],
+    members: [{ i: 1, j: 2, sec: 1, mat: 1, hi: false, hj: false }],
+    sections: [newSection('profile')], materials: [newMaterial('Baustahl', 'S355')],
+    supports: [{ node: 1, ux: true, uy: true }, { node: 2, uy: true }],
+    loadCases: [lc('Ausbau', 'G', 5), lc('Nutzlast', 'Q', 3)],
+    combinations: [{ name: 'leer', type: 'GZT', factors: [0, 0] }, { name: 'GZT', type: 'GZT', factors: [1.35, 1.5] }],
+    analysis: {},
+  };
+  const r = analyze(p);
+  assert.equal(r.combos.length, 1, 'leere Kombination wird nicht gerechnet');
+  assert.deepEqual(r.combos[0].factors, [1.35, 1.5]);
+  const kombi = derivation({ project: p, results: r, viewOpts: {}, editor: null }).find((s) => s.id === 'kombi');
+  const k1 = kombi.steps.find((s) => s.label.startsWith('K1:'));
+  assert.equal(k1.f, 'E_d = 1.35·G_{1} + 1.50·Q_{2}');
+  assert.equal(k1.note, 'G1 = Ausbau · Q2 = Nutzlast');
+});

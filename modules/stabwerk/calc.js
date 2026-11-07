@@ -737,9 +737,10 @@ export function analyze(p) {
   const phi = an.secondOrder && an.imperfection > 0 ? 1 / an.imperfection : 0;
   const modelImp = an.secondOrder && phi ? buildModel(p, { nSub, imperfection: phi }) : modelS;
   const comboResults = combos.map((c) => {
-    const parts = p.loadCases.map((lc, i) => ({ lc, f: +c.factors[i] || 0 }));
-    const lin = superpose(lcResults, p.loadCases.map((_, i) => +c.factors[i] || 0), model1);
-    const out = { name: c.name, type: c.type, lin, res: lin };
+    const factors = p.loadCases.map((_, i) => +c.factors[i] || 0);
+    const parts = p.loadCases.map((lc, i) => ({ lc, f: factors[i] }));
+    const lin = superpose(lcResults, factors, model1);
+    const out = { name: c.name, type: c.type, factors, lin, res: lin };
     if (an.secondOrder && c.type === 'GZT') {
       try {
         const r2 = solveOne(modelImp, parts, { secondOrder: true, xs });

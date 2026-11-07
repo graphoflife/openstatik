@@ -329,7 +329,7 @@ export function analyse(project) {
   // Kennwerte je Platte
   const slabs = geo.slabs.map((sl) => {
     const c = concOf(sl.concrete);
-    return { ...sl, conc: c, E: c.Ecm, D: flexuralRigidity(c.Ecm, sl.h, nu), nElem: 0, meshArea: 0 };
+    return { ...sl, conc: c, E: c.Ecm, D: flexuralRigidity(c.Ecm, sl.h, nu), g0: c.gamma * sl.h, nElem: 0, meshArea: 0 };
   });
   const Dref = slabs[0].D;
   const conc = slabs[0].conc, h = slabs[0].h, E = slabs[0].E, D = Dref;
@@ -442,11 +442,10 @@ export function analyse(project) {
 
   const loads = [];
   const fe = new Float64Array(9);
-  const gammaC = conc.gamma ?? 25;
   for (const lc of lcs) {
     const f = new Float64Array(3 * n);
     const qe = new Float64Array(nt);
-    if (lc.sw) for (let t = 0; t < nt; t++) qe[t] = (slabs[eSlab[t]].conc.gamma ?? gammaC) * slabs[eSlab[t]].h;
+    if (lc.sw) for (let t = 0; t < nt; t++) qe[t] = slabs[eSlab[t]].g0;
     for (const al of p.areaLoads) {
       if (al.lc !== lc.id) continue;
       const q = num(al.q, 0);

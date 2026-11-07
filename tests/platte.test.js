@@ -524,3 +524,15 @@ test('Mehrere Platten: massgebende Platte, freie Ränder einer Verstärkung, EC-
   for (const s of res.sets) assert.ok(Math.abs(s.sumR - s.sumF) < 1e-6 * Math.max(1, s.sumF));
   close(res.sets.find((s) => s.key === 'lc:LF3').sumF, 3 * 80, 1e-9, 'Last auf ganze Platte inkl. Verstärkung');
 });
+
+test('Herleitung: Eigengewicht mit der Wichte des Rechenkerns, nicht fest 25 kN/m³', () => {
+  const p = EXAMPLES[1].project();
+  const r = analyse(p);
+  for (const sl of r.slabs) assert.ok(Math.abs(sl.g0 - sl.conc.gamma * sl.h) < 1e-12, sl.name);
+  // Ergebnis mit anderer Wichte (z.B. Leichtbeton): die Herleitung zeigt den Wert, mit dem gerechnet wurde
+  const lw = { ...r, slabs: r.slabs.map((s) => ({ ...s, conc: { ...s.conc, gamma: 20 }, g0: 20 * s.h })) };
+  const steps = derivation({ results: lw, project: p, viewOpts: {} }).find((x) => x.id === 'material').steps;
+  const g = steps.find((st) => st && st.label.startsWith('Eigengewicht'));
+  assert.ok(g.v.startsWith('= 20.0·'), g.v);
+  assert.equal(g.r, `= ${(20 * lw.slabs[0].h).toFixed(2)} kN/m²`);
+});

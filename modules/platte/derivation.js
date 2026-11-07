@@ -69,7 +69,7 @@ export function derivation(app) {
     const tag = slabs.length > 1 ? ` «${sl.name}»` : '';
     matSteps.push(
       { label: `Biegesteifigkeit${tag}`, f: 'D = E_{cm}·h^3/(12·(1 − ν^2))', v: `= ${n0(sl.conc.Ecm * 1000)}·${n3(sl.h)}^3/(12·(1 − ${n2(r.nu)}^2))`, r: `= ${n0(sl.D)} kNm`, note: 'E in kN/m², h in m.' },
-      { label: `Eigengewicht${tag}`, f: 'g_0 = γ_{Beton}·h', v: `= 25·${n3(sl.h)}`, r: `= ${n2(25 * sl.h)} kN/m²` },
+      { label: `Eigengewicht${tag}`, f: 'g_0 = γ_{Beton}·h', v: `= ${n1(sl.conc.gamma)}·${n3(sl.h)}`, r: `= ${n2(sl.g0)} kN/m²` },
     );
   }
   out.push({
